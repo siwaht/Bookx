@@ -5,3 +5,53 @@ expertMode = true
 [nix]
 channel = "stable-25_05"
 packages = ["ffmpeg"]
+
+[userenv]
+
+[userenv.shared]
+DATA_DIR = "./data"
+
+[userenv.development]
+PORT = "3001"
+NODE_ENV = "development"
+
+[userenv.production]
+PORT = "5000"
+NODE_ENV = "production"
+
+[workflows]
+runButton = "Project"
+
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "Start application"
+
+[[workflows.workflow]]
+name = "Start application"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "cd /home/runner/workspace && npx concurrently \"npm run dev:server\" \"npm run dev:client\""
+waitForPort = 5000
+
+[workflows.workflow.metadata]
+outputType = "webview"
+
+[[ports]]
+localPort = 3001
+externalPort = 3001
+
+[[ports]]
+localPort = 5000
+externalPort = 80
+
+[deployment]
+deploymentTarget = "vm"
+run = ["npm", "run", "start"]
+build = ["npm", "run", "build"]
