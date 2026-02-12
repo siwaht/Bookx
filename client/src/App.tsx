@@ -27,7 +27,6 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!authenticated) { setChecking(false); return; }
-    // Verify stored token is still valid
     auth.verify().then(() => {
       setAuthenticated(true);
       setChecking(false);
