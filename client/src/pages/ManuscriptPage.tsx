@@ -39,8 +39,14 @@ export function ManuscriptPage() {
   const [importing, setImporting] = useState(false);
   const [batchGenerating, setBatchGenerating] = useState(false);
   const [batchProgress, setBatchProgress] = useState('');
+  const [batchElapsed, setBatchElapsed] = useState(0);
+  const batchTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [populating, setPopulating] = useState(false);
+  const [populateElapsed, setPopulateElapsed] = useState(0);
+  const populateTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [genElapsed, setGenElapsed] = useState(0);
+  const genTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [sendingId, setSendingId] = useState<string | null>(null);
   const [sentSegments, setSentSegments] = useState<Set<string>>(new Set());
   const [aiParsing, setAiParsing] = useState(false);
@@ -239,14 +245,21 @@ export function ManuscriptPage() {
   const handleGenerate = async (segmentId: string) => {
     if (!selectedChapter) return;
     setGeneratingId(segmentId);
+    setGenElapsed(0);
+    // Start elapsed timer
+    if (genTimerRef.current) clearInterval(genTimerRef.current);
+    genTimerRef.current = setInterval(() => setGenElapsed((e) => e + 1), 1000);
     try {
       await segmentsApi.generate(selectedChapter.id, segmentId);
-      // Remove from sent set since audio changed
       setSentSegments((prev) => { const next = new Set(prev); next.delete(segmentId); return next; });
       loadSegments(selectedChapter.id);
       loadChapters();
     } catch (err: any) { alert(`Generation failed: ${err.message}`); }
-    finally { setGeneratingId(null); }
+    finally {
+      setGeneratingId(null);
+      setGenElapsed(0);
+      if (genTimerRef.current) { clearInterval(genTimerRef.current); genTimerRef.current = null; }
+    }
   };
 
   const handleSendSegmentToTimeline = async (segmentId: string) => {
@@ -266,14 +279,23 @@ export function ManuscriptPage() {
   const handleBatchGenerate = async () => {
     if (!selectedChapter) return;
     setBatchGenerating(true);
-    setBatchProgress('Starting batch generation...');
+    setBatchElapsed(0);
+    const total = segmentList.length;
+    setBatchProgress(`Generating 0/${total}...`);
+    if (batchTimerRef.current) clearInterval(batchTimerRef.current);
+    batchTimerRef.current = setInterval(() => setBatchElapsed((e) => e + 1), 1000);
     try {
       const result = await segmentsApi.batchGenerate(selectedChapter.id);
-      setBatchProgress(`Done: ${result.summary.generated} generated, ${result.summary.cached} cached, ${result.summary.failed} failed`);
+      const s = result.summary;
+      setBatchProgress(`Done: ${s.generated} generated, ${s.cached} cached, ${s.failed} failed`);
       loadSegments(selectedChapter.id);
       loadChapters();
     } catch (err: any) { setBatchProgress(`Error: ${err.message}`); }
-    finally { setBatchGenerating(false); }
+    finally {
+      setBatchGenerating(false);
+      setBatchElapsed(0);
+      if (batchTimerRef.current) { clearInterval(batchTimerRef.current); batchTimerRef.current = null; }
+    }
   };
 
   const handleAssignCharacter = async (segmentId: string, characterId: string | null) => {
@@ -309,6 +331,9 @@ export function ManuscriptPage() {
   const handlePopulateAll = async () => {
     if (!bookId) return;
     setPopulating(true);
+    setPopulateElapsed(0);
+    if (populateTimerRef.current) clearInterval(populateTimerRef.current);
+    populateTimerRef.current = setInterval(() => setPopulateElapsed((e) => e + 1), 1000);
     try {
       const result = await timelineApi.generateAndPopulate(bookId);
       const { tts, timeline: tl } = result;
@@ -321,7 +346,11 @@ export function ManuscriptPage() {
       alert(msg);
       loadChapters();
     } catch (err: any) { alert(`Generate & populate failed: ${err.message}`); }
-    finally { setPopulating(false); }
+    finally {
+      setPopulating(false);
+      setPopulateElapsed(0);
+      if (populateTimerRef.current) { clearInterval(populateTimerRef.current); populateTimerRef.current = null; }
+    }
   };
 
   const handleSendChapterToTimeline = async (chapterId: string) => {
@@ -516,7 +545,7 @@ export function ManuscriptPage() {
           <div style={styles.panelFooter}>
             <button onClick={handlePopulateAll} disabled={populating} style={styles.populateBtn}
               title="Generate TTS for all segments, then place on timeline">
-              <LayoutDashboard size={13} /> {populating ? 'Generating & Placing...' : 'Generate & Send to Timeline'}
+              <LayoutDashboard size={13} /> {populating ? `Generating... ${populateElapsed}s` : 'Generate & Send to Timeline'}
             </button>
           </div>
         )}
@@ -635,7 +664,7 @@ export function ManuscriptPage() {
               style={{ ...styles.smallBtn, background: segmentList.length > 0 && !allHaveAudio ? '#2d5a27' : '#333', color: segmentList.length > 0 && !allHaveAudio ? '#8f8' : '#666' }}
               disabled={!selectedChapter || batchGenerating || segmentList.length === 0}
               title="Generate TTS for all segments">
-              <Zap size={12} /> {batchGenerating ? '...' : 'Gen All'}
+              <Zap size={12} /> {batchGenerating ? `${batchElapsed}s...` : 'Gen All'}
             </button>
           </div>
         </div>
@@ -672,7 +701,16 @@ export function ManuscriptPage() {
         )}
 
         {batchProgress && (
-          <div style={styles.progressBar}><span style={{ fontSize: 11, color: '#aaa' }}>{batchProgress}</span></div>
+          <div style={{ ...styles.progressBar, background: batchGenerating ? '#0f1a0f' : '#111' }}>
+            {batchGenerating && (
+              <div style={{ height: 3, background: '#222', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                <div style={{ height: '100%', background: '#4A90D9', borderRadius: 2, width: '60%', animation: 'none', transition: 'width 0.5s' }} />
+              </div>
+            )}
+            <span style={{ fontSize: 11, color: batchGenerating ? '#8f8' : '#aaa' }}>
+              {batchGenerating && `⏳ ${batchElapsed}s · `}{batchProgress}
+            </span>
+          </div>
         )}
 
         {hasSegments && (
@@ -742,10 +780,15 @@ export function ManuscriptPage() {
                   </p>
                 )}
 
-                {/* Audio player + controls */}
+                {/* Audio studio: generate, play, edit, send */}
                 <div style={styles.segStudio}>
                   {hasAudio && (
-                    <audio src={`/api/audio/${seg.audio_asset_id}`} controls style={{ height: 28, width: '100%' }} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      <audio src={`/api/audio/${seg.audio_asset_id}`} controls style={{ height: 32, width: '100%' }} />
+                      <span style={{ fontSize: 9, color: '#555' }}>
+                        {charName ? `Voice: ${charName}` : ''} · Click text above to edit, then regenerate
+                      </span>
+                    </div>
                   )}
 
                   <div style={styles.segBtnRow}>
@@ -756,9 +799,25 @@ export function ManuscriptPage() {
                     }}
                       disabled={isGenerating || !hasChar}
                       title={!hasChar ? 'Assign a character first' : hasAudio ? 'Regenerate with current text' : 'Generate TTS'}>
-                      {isGenerating ? <Loader size={11} /> : hasAudio ? <RefreshCw size={11} /> : <Play size={11} />}
+                      {isGenerating ? <Loader size={12} /> : hasAudio ? <RefreshCw size={12} /> : <Play size={12} />}
                       {isGenerating ? 'Generating...' : hasAudio ? 'Regenerate' : !hasChar ? 'Needs voice' : 'Generate'}
                     </button>
+
+                    {/* Progress indicator while generating */}
+                    {isGenerating && (
+                      <div style={styles.genProgress}>
+                        <div style={styles.genProgressBar}>
+                          <div style={{
+                            ...styles.genProgressFill,
+                            width: `${Math.min(95, (genElapsed / Math.max(1, Math.ceil(seg.text.length / 200) * 3)) * 100)}%`,
+                          }} />
+                        </div>
+                        <span style={styles.genProgressText}>
+                          {genElapsed}s elapsed · ~{Math.max(1, Math.ceil(seg.text.length / 200) * 3 - genElapsed)}s left
+                          <span style={{ color: '#555' }}> ({seg.text.length} chars)</span>
+                        </span>
+                      </div>
+                    )}
 
                     {/* Send to Timeline — only when audio exists */}
                     {hasAudio && (
@@ -771,21 +830,21 @@ export function ManuscriptPage() {
                           borderColor: isSent ? '#3a2a4a' : '#2a3a5a',
                         }}
                         title={isSent ? 'Already on timeline (click to update)' : 'Send this audio to the timeline'}>
-                        {isSending ? <Loader size={11} /> : <Send size={11} />}
-                        {isSending ? 'Sending...' : isSent ? 'Sent ✓' : 'Send to Timeline'}
+                        {isSending ? <Loader size={12} /> : <Send size={12} />}
+                        {isSending ? 'Sending...' : isSent ? '✓ On Timeline' : '→ Send to Timeline'}
                       </button>
                     )}
                   </div>
 
-                  {/* Status hint */}
+                  {/* Workflow hints */}
                   {!hasChar && !hasAudio && (
-                    <span style={{ fontSize: 9, color: '#555' }}>① Assign a character → ② Generate → ③ Listen & tweak → ④ Send to timeline</span>
+                    <span style={{ fontSize: 10, color: '#555', lineHeight: 1.4 }}>① Assign a character above → ② Generate → ③ Listen & tweak → ④ Send to timeline</span>
                   )}
                   {hasChar && !hasAudio && (
-                    <span style={{ fontSize: 9, color: '#666' }}>Ready to generate. Click Generate to preview audio.</span>
+                    <span style={{ fontSize: 10, color: '#8f8' }}>Ready. Click "Generate" to create audio preview.</span>
                   )}
                   {hasAudio && !isSent && (
-                    <span style={{ fontSize: 9, color: '#4A90D9' }}>Listen, edit text & regenerate until satisfied, then send to timeline.</span>
+                    <span style={{ fontSize: 10, color: '#4A90D9' }}>Happy with it? Click "Send to Timeline". Want changes? Edit text above & regenerate.</span>
                   )}
                 </div>
               </div>
@@ -901,7 +960,7 @@ const styles: Record<string, React.CSSProperties> = {
   splitIndicator: { padding: '4px 12px', background: '#2a1a0a', color: '#D97A4A', fontSize: 11, borderBottom: '1px solid #3a2a1a', fontFamily: 'monospace' },
 
   // Segment panel
-  segmentPanel: { width: 360, background: '#1a1a1a', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
+  segmentPanel: { width: 420, background: '#1a1a1a', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
 
   workflowBar: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
@@ -918,7 +977,7 @@ const styles: Record<string, React.CSSProperties> = {
   statsRow: { display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #222', alignItems: 'center', gap: 6 },
 
   segmentList: { flex: 1, overflow: 'auto', padding: 4 },
-  segmentItem: { padding: 8, borderBottom: '1px solid #1a1a1a', display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 2, borderRadius: 6 },
+  segmentItem: { padding: 10, borderBottom: '1px solid #222', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 2, borderRadius: 8, background: '#141414' },
   segmentHeader: { display: 'flex', alignItems: 'center', gap: 4 },
   segNum: { fontSize: 9, color: '#555', fontFamily: 'monospace', minWidth: 22 },
   charSelect: {
@@ -930,17 +989,21 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 8, background: '#0f0f0f', color: '#ddd', border: '1px solid #444',
     borderRadius: 4, fontSize: 12, lineHeight: 1.5, outline: 'none', resize: 'vertical', fontFamily: 'inherit',
   },
-  segStudio: { display: 'flex', flexDirection: 'column', gap: 4 },
-  segBtnRow: { display: 'flex', gap: 4, flexWrap: 'wrap' },
+  segStudio: { display: 'flex', flexDirection: 'column', gap: 6, padding: 8, background: '#0f0f0f', borderRadius: 6, border: '1px solid #1e1e1e' },
+  segBtnRow: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' },
   segActions: { display: 'flex', alignItems: 'center', gap: 4 },
   genBtn: {
-    display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px',
-    background: '#2d5a27', color: '#8f8', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+    display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px',
+    background: '#2d5a27', color: '#8f8', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500,
   },
   sendBtn: {
-    display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px',
-    border: '1px solid #2a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+    display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px',
+    border: '1px solid #2a3a5a', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500,
   },
+  genProgress: { display: 'flex', flexDirection: 'column', gap: 3, flex: 1, minWidth: 0 },
+  genProgressBar: { height: 4, background: '#222', borderRadius: 2, overflow: 'hidden', width: '100%' },
+  genProgressFill: { height: '100%', background: '#4A90D9', borderRadius: 2, transition: 'width 1s linear' },
+  genProgressText: { fontSize: 9, color: '#888', whiteSpace: 'nowrap' },
   regenBtn: {
     padding: '3px 5px', background: '#333', color: '#888',
     border: 'none', borderRadius: 4, cursor: 'pointer',
