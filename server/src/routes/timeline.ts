@@ -1,7 +1,12 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
+import fs from 'fs';
+import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
+import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
+
+const DATA_DIR = process.env.DATA_DIR || './data';
 
 export function timelineRouter(db: SqlJsDatabase): Router {
   const router = Router({ mergeParams: true });
@@ -192,5 +197,167 @@ export function timelineRouter(db: SqlJsDatabase): Router {
     res.json({ ok: true });
   });
 
+  // ── Generate TTS + Populate Timeline (combined two-step) ──
+  router.post('/generate-and-populate', async (req: Request, res: Response) => {
+    try {
+      const bookId = req.params.bookId;
+      const { chapter_ids } = req.body;
+
+      // 1. Get chapters
+      let chapters;
+      if (chapter_ids?.length) {
+        const placeholders = chapter_ids.map(() => '?').join(',');
+        chapters = queryAll(db, `SELECT * FROM chapters WHERE book_id = ? AND id IN (${placeholders}) ORDER BY sort_order`, [bookId, ...chapter_ids]);
+      } else {
+        chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
+      }
+
+      // 2. Generate TTS for all segments missing audio
+      let ttsGenerated = 0;
+      let ttsCached = 0;
+      let ttsFailed = 0;
+      let ttsSkipped = 0;
+      const errors: string[] = [];
+
+      for (const chapter of chapters) {
+        const segments = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [chapter.id]);
+        for (const seg of segments) {
+          // Skip if already has audio
+          if (seg.audio_asset_id) {
+            const existing = queryOne(db, 'SELECT id FROM audio_assets WHERE id = ?', [seg.audio_asset_id]);
+            if (existing) { ttsSkipped++; continue; }
+          }
+
+          try {
+            const result = await generateSegmentAudioForTimeline(db, seg);
+            if (result.cached) ttsCached++; else ttsGenerated++;
+          } catch (err: any) {
+            ttsFailed++;
+            errors.push(`Seg ${seg.id}: ${err.message}`);
+          }
+        }
+      }
+
+      // 3. Now populate timeline (same logic as /populate)
+      let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]);
+      if (!narrationTrack) {
+        const trackId = uuid();
+        run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, 'Narration', 'narration', 0, '#4A90D9')`, [trackId, bookId]);
+        narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
+      }
+
+      let currentPositionMs = 0;
+      const gapBetweenSegmentsMs = 300;
+      const gapBetweenChaptersMs = 2000;
+      let clipsCreated = 0;
+      let markersCreated = 0;
+
+      run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
+
+      for (const chapter of chapters) {
+        const markerId = uuid();
+        run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
+          [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
+        markersCreated++;
+
+        const segments = queryAll(db,
+          `SELECT s.*, a.duration_ms FROM segments s
+           JOIN audio_assets a ON s.audio_asset_id = a.id
+           WHERE s.chapter_id = ? ORDER BY s.sort_order`,
+          [chapter.id]);
+
+        for (const seg of segments) {
+          const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
+          if (existing) {
+            currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
+            continue;
+          }
+
+          const clipId = uuid();
+          const durationMs = seg.duration_ms || 3000;
+          run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
+          clipsCreated++;
+          currentPositionMs += durationMs + gapBetweenSegmentsMs;
+        }
+
+        currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
+      }
+
+      res.json({
+        tts: { generated: ttsGenerated, cached: ttsCached, skipped: ttsSkipped, failed: ttsFailed, errors },
+        timeline: { clips_created: clipsCreated, markers_created: markersCreated, total_duration_ms: currentPositionMs },
+      });
+    } catch (err: any) {
+      console.error('[Generate+Populate Error]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
+}
+
+
+// Shared TTS generation logic for timeline population
+async function generateSegmentAudioForTimeline(
+  db: SqlJsDatabase,
+  segment: any
+): Promise<{ audio_asset_id: string; cached: boolean }> {
+  let voiceId = 'default';
+  let voiceSettings = { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true };
+  let modelId = 'eleven_v3';
+
+  if (segment.character_id) {
+    const char = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [segment.character_id]);
+    if (char?.voice_id) {
+      voiceId = char.voice_id;
+      modelId = char.model_id || 'eleven_v3';
+      voiceSettings = {
+        stability: char.stability ?? 0.5,
+        similarity_boost: char.similarity_boost ?? 0.75,
+        style: char.style ?? 0.0,
+        use_speaker_boost: !!char.speaker_boost,
+      };
+    }
+  }
+
+  if (voiceId === 'default') {
+    throw new Error('No voice assigned. Assign a character with a voice first.');
+  }
+
+  const hashParams = { text: segment.text, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
+  const promptHash = computePromptHash(hashParams);
+
+  // Check cache
+  const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ?', [promptHash]);
+  if (cached && fs.existsSync(cached.file_path)) {
+    run(db, `UPDATE segments SET audio_asset_id = ?, updated_at = datetime('now') WHERE id = ?`, [cached.id, segment.id]);
+    return { audio_asset_id: cached.id, cached: true };
+  }
+
+  const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [segment.chapter_id]);
+
+  const { buffer, requestId } = await generateTTS({
+    text: segment.text,
+    voice_id: voiceId,
+    model_id: modelId,
+    voice_settings: voiceSettings,
+    output_format: 'mp3_44100_192',
+  });
+
+  const assetId = uuid();
+  const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
+  fs.writeFileSync(filePath, buffer);
+
+  const estimatedDurationMs = Math.round((buffer.length / 24000) * 1000);
+
+  run(db,
+    `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
+     VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
+    [assetId, chapter.book_id, filePath, estimatedDurationMs, promptHash, requestId, JSON.stringify(hashParams), buffer.length]);
+
+  run(db, `UPDATE segments SET audio_asset_id = ?, previous_request_id = ?, updated_at = datetime('now') WHERE id = ?`,
+    [assetId, requestId, segment.id]);
+
+  return { audio_asset_id: assetId, cached: false };
 }

@@ -143,6 +143,11 @@ export const timeline = {
   populate: (bookId: string, chapterIds?: string[]) =>
     request<{ tracks: any[]; clips_created: number; markers_created: number; total_duration_ms: number }>(
       `/books/${bookId}/populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }) }),
+  generateAndPopulate: (bookId: string, chapterIds?: string[]) =>
+    request<{
+      tts: { generated: number; cached: number; skipped: number; failed: number; errors: string[] };
+      timeline: { clips_created: number; markers_created: number; total_duration_ms: number };
+    }>(`/books/${bookId}/generate-and-populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }) }),
 };
 
 // ── Import ──

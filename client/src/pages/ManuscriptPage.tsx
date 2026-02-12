@@ -285,25 +285,37 @@ export function ManuscriptPage() {
     loadChapters();
   };
 
-  // ── Timeline Actions ──
+  // ── Timeline Actions (Two-step: Generate TTS → Populate Timeline) ──
 
   const handlePopulateAll = async () => {
     if (!bookId) return;
     setPopulating(true);
     try {
-      const result = await timelineApi.populate(bookId);
-      alert(`Timeline populated: ${result.clips_created} clips, ${result.markers_created} markers.`);
+      const result = await timelineApi.generateAndPopulate(bookId);
+      const { tts, timeline: tl } = result;
+      let msg = `Step 1 — TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} already had audio`;
+      if (tts.failed > 0) msg += `, ${tts.failed} failed`;
+      msg += `\nStep 2 — Timeline: ${tl.clips_created} clips placed, ${tl.markers_created} markers.`;
+      if (tts.failed > 0 && tts.errors.length > 0) {
+        msg += `\n\nErrors:\n${tts.errors.slice(0, 5).join('\n')}`;
+      }
+      alert(msg);
       loadChapters();
-    } catch (err: any) { alert(`Populate failed: ${err.message}`); }
+    } catch (err: any) { alert(`Generate & populate failed: ${err.message}`); }
     finally { setPopulating(false); }
   };
 
   const handleSendChapterToTimeline = async (chapterId: string) => {
     if (!bookId) return;
     try {
-      const result = await timelineApi.populate(bookId, [chapterId]);
-      alert(`Sent to timeline: ${result.clips_created} clips placed.`);
+      const result = await timelineApi.generateAndPopulate(bookId, [chapterId]);
+      const { tts, timeline: tl } = result;
+      let msg = `TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} skipped`;
+      if (tts.failed > 0) msg += `, ${tts.failed} failed`;
+      msg += ` → ${tl.clips_created} clips placed on timeline.`;
+      alert(msg);
       loadChapters();
+      if (selectedChapterId === chapterId) loadSegments(chapterId);
     } catch (err: any) { alert(`Failed: ${err.message}`); }
   };
 
@@ -434,9 +446,9 @@ export function ManuscriptPage() {
                           disabled={idx === 0}><ChevronUp size={11} /> Move Up</button>
                         <button onClick={() => handleMoveChapter(ch.id, 'down')} style={styles.menuItem}
                           disabled={idx === chapterList.length - 1}><ChevronDown size={11} /> Move Down</button>
-                        {ch.stats && ch.stats.with_audio > 0 && (
+                        {ch.stats && ch.stats.total_segments > 0 && (
                           <button onClick={() => { handleSendChapterToTimeline(ch.id); setChapterMenuId(null); }}
-                            style={{ ...styles.menuItem, color: '#4A90D9' }}><Send size={11} /> Send to Timeline</button>
+                            style={{ ...styles.menuItem, color: '#4A90D9' }}><Send size={11} /> Generate & Send</button>
                         )}
                         <button onClick={() => handleDeleteChapter(ch.id)}
                           style={{ ...styles.menuItem, color: '#e55' }}><Trash2 size={11} /> Delete</button>
@@ -462,8 +474,8 @@ export function ManuscriptPage() {
         {hasChapters && (
           <div style={styles.panelFooter}>
             <button onClick={handlePopulateAll} disabled={populating} style={styles.populateBtn}
-              title="Send all chapters with audio to the timeline">
-              <LayoutDashboard size={13} /> {populating ? 'Populating...' : 'Send All to Timeline'}
+              title="Generate TTS for all segments, then place on timeline">
+              <LayoutDashboard size={13} /> {populating ? 'Generating & Placing...' : 'Generate & Send to Timeline'}
             </button>
           </div>
         )}
@@ -630,10 +642,10 @@ export function ManuscriptPage() {
             <span style={{ color: '#8f8', fontSize: 11 }}>
               <Volume2 size={10} /> {segmentsWithAudio.length}/{segmentList.length}
             </span>
-            {selectedChapter && allHaveAudio && (
+            {selectedChapter && hasSegments && (
               <button onClick={() => handleSendChapterToTimeline(selectedChapter.id)}
                 style={{ ...styles.smallBtn, background: '#4A90D9', color: '#fff', fontSize: 10, padding: '2px 8px' }}>
-                <Send size={10} /> Send
+                <Send size={10} /> Generate & Send
               </button>
             )}
           </div>
