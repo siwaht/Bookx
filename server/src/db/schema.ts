@@ -252,6 +252,21 @@ export function initializeSchema(database: SqlJsDatabase): void {
     database.run("ALTER TABLE audio_assets ADD COLUMN name TEXT");
   }
 
+  // Migration: fix clips where trim_end_ms was incorrectly set to the audio duration
+  // These clips should have trim_end_ms = 0 (no trim from end), duration comes from audio_assets
+  const badClips = queryAll(database,
+    `SELECT c.id, c.trim_end_ms, a.duration_ms FROM clips c
+     JOIN audio_assets a ON c.audio_asset_id = a.id
+     WHERE c.trim_end_ms > 0 AND c.trim_start_ms = 0
+     AND ABS(c.trim_end_ms - a.duration_ms) < 500`,
+    []);
+  if (badClips.length > 0) {
+    console.log(`[Migration] Fixing ${badClips.length} clips with trim_end_ms set to audio duration`);
+    for (const clip of badClips) {
+      database.run('UPDATE clips SET trim_end_ms = 0 WHERE id = ?', [(clip as any).id]);
+    }
+  }
+
   // Indexes
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, sort_order)',

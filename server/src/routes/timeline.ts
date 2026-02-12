@@ -161,8 +161,8 @@ export function timelineRouter(db: SqlJsDatabase): Router {
           const clipId = uuid();
           const durationMs = seg.duration_ms || 3000;
           run(db,
-            `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_end_ms) VALUES (?, ?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs, durationMs]);
+            `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
           clipsCreated.push({ id: clipId, segment_id: seg.id, position_ms: currentPositionMs, duration_ms: durationMs });
           currentPositionMs += durationMs + gapBetweenSegmentsMs;
         }
@@ -282,8 +282,8 @@ export function timelineRouter(db: SqlJsDatabase): Router {
 
           const clipId = uuid();
           const durationMs = seg.duration_ms || 3000;
-          run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_end_ms) VALUES (?, ?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs, durationMs]);
+          run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
           clipsCreated++;
           currentPositionMs += durationMs + gapBetweenSegmentsMs;
         }
@@ -342,8 +342,8 @@ export function timelineRouter(db: SqlJsDatabase): Router {
 
       const clipId = uuid();
       const clipDurationMs = asset.duration_ms || 3000;
-      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_end_ms) VALUES (?, ?, ?, ?, ?, ?)`,
-        [clipId, narrationTrack.id, seg.audio_asset_id, segment_id, positionMs, clipDurationMs]);
+      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+        [clipId, narrationTrack.id, seg.audio_asset_id, segment_id, positionMs]);
 
       res.json({ clip_id: clipId, position_ms: positionMs, duration_ms: asset.duration_ms, updated: false });
     } catch (err: any) {

@@ -158,16 +158,53 @@ export function TimelinePage() {
         // Apply speed
         source.playbackRate.value = clip.speed || 1.0;
 
+        // Apply fade in/out
+        if (clip.fade_in_ms && clip.fade_in_ms > 0) {
+          const fadeStartTime = Math.max(0, (clip.position_ms - startMs) / 1000);
+          gainNode.gain.setValueAtTime(0, ctx.currentTime + fadeStartTime);
+          gainNode.gain.linearRampToValueAtTime(
+            Math.pow(10, (trackGainDb + clipGainDb) / 20),
+            ctx.currentTime + fadeStartTime + clip.fade_in_ms / 1000
+          );
+        }
+        if (clip.fade_out_ms && clip.fade_out_ms > 0) {
+          const fadeOutStart = Math.max(0, (clip.position_ms + clipDur - clip.fade_out_ms - startMs) / 1000);
+          const fadeOutEnd = Math.max(0, (clip.position_ms + clipDur - startMs) / 1000);
+          if (fadeOutStart > 0) {
+            gainNode.gain.setValueAtTime(Math.pow(10, (trackGainDb + clipGainDb) / 20), ctx.currentTime + fadeOutStart);
+            gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeOutEnd);
+          }
+        }
+
         source.connect(gainNode);
         gainNode.connect(ctx.destination);
 
-        const clipStartSec = (clip.position_ms - startMs) / 1000;
-        const offsetInClip = startMs > clip.position_ms ? (startMs - clip.position_ms) / 1000 : 0;
+        // Calculate the offset into the source audio buffer
+        // trim_start_ms = skip this much from the start of the audio file
+        const trimStartSec = (clip.trim_start_ms || 0) / 1000;
+        const clipStartRelative = clip.position_ms - startMs; // ms relative to playback start
 
-        if (clipStartSec >= 0) {
-          source.start(ctx.currentTime + clipStartSec, offsetInClip + (clip.trim_start_ms || 0) / 1000);
+        if (clipStartRelative >= 0) {
+          // Clip starts in the future — schedule it
+          source.start(ctx.currentTime + clipStartRelative / 1000, trimStartSec);
         } else {
-          source.start(0, offsetInClip + (clip.trim_start_ms || 0) / 1000);
+          // Clip already started — jump into it
+          const skipSec = Math.abs(clipStartRelative) / 1000;
+          source.start(0, trimStartSec + skipSec);
+        }
+
+        // Auto-stop at the clip's end (accounting for trim)
+        const assetDur = (clip as any).asset_duration_ms;
+        if (assetDur && assetDur > 0) {
+          const playDuration = (assetDur - (clip.trim_start_ms || 0) - (clip.trim_end_ms || 0)) / 1000;
+          if (playDuration > 0) {
+            const stopDelay = clipStartRelative >= 0
+              ? clipStartRelative / 1000 + playDuration
+              : playDuration - Math.abs(clipStartRelative) / 1000;
+            if (stopDelay > 0) {
+              source.stop(ctx.currentTime + stopDelay);
+            }
+          }
         }
 
         activeSourcesRef.current.push(source);
@@ -255,18 +292,23 @@ export function TimelinePage() {
     if (!bookId) return;
     const clip = findClip(clipId);
     if (!clip) return;
+    const clipDur = getClipDuration(clip);
     const splitMs = playheadMs - clip.position_ms;
-    if (splitMs <= 0) return;
+    if (splitMs <= 0 || splitMs >= clipDur) return;
     pushSnapshot(tracks);
     const track = tracks.find((t) => t.clips.some((c) => c.id === clipId));
     if (!track) return;
-    await timelineApi.updateClip(bookId, clipId, { trim_end_ms: clip.trim_end_ms + splitMs });
+    // First half: increase trim_end to cut off the second part
+    const remainingAfterSplit = clipDur - splitMs;
+    await timelineApi.updateClip(bookId, clipId, { trim_end_ms: (clip.trim_end_ms || 0) + remainingAfterSplit });
+    // Second half: increase trim_start to skip the first part
     await timelineApi.createClip(bookId, track.id, {
       audio_asset_id: clip.audio_asset_id,
       position_ms: clip.position_ms + splitMs,
-      trim_start_ms: clip.trim_start_ms + splitMs,
-      trim_end_ms: clip.trim_end_ms,
+      trim_start_ms: (clip.trim_start_ms || 0) + splitMs,
+      trim_end_ms: clip.trim_end_ms || 0,
       gain: clip.gain, speed: clip.speed,
+      fade_in_ms: clip.fade_in_ms, fade_out_ms: clip.fade_out_ms,
     });
     skipSnap.current = true;
     loadTracks();
@@ -324,12 +366,20 @@ export function TimelinePage() {
     return null;
   };
   const getClipDuration = (clip: Clip) => {
-    // Use asset_duration_ms from the joined audio_assets table if available
+    // asset_duration_ms = full duration of the source audio file (from JOIN)
     const assetDur = (clip as any).asset_duration_ms;
-    if (assetDur && assetDur > 0) return assetDur;
-    // Fallback: if trim_end_ms is set, use it as the duration indicator
-    const base = clip.trim_end_ms || 3000;
-    return Math.max(base - clip.trim_start_ms, 200);
+    // trim_start_ms = how much to skip from the beginning
+    // trim_end_ms = how much to cut from the end
+    // If asset duration is known, use it properly
+    if (assetDur && assetDur > 0) {
+      return Math.max(assetDur - (clip.trim_start_ms || 0) - (clip.trim_end_ms || 0), 100);
+    }
+    // Fallback: estimate from trim_end_ms (legacy clips stored duration in trim_end_ms)
+    // If trim_end_ms is large (>500), it was likely used as "total duration" in old populate code
+    if (clip.trim_end_ms > 500) {
+      return Math.max(clip.trim_end_ms - (clip.trim_start_ms || 0), 200);
+    }
+    return 3000; // absolute fallback
   };
   const totalDuration = () => {
     let max = 10000;
@@ -352,6 +402,20 @@ export function TimelinePage() {
     // Ruler
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, W, RULER_H);
+
+    // roundRect polyfill for older browsers
+    if (!ctx.roundRect) {
+      (ctx as any).roundRect = function(x: number, y: number, w: number, h: number, radii: number | number[]) {
+        const r = typeof radii === 'number' ? [radii, radii, radii, radii] : [...radii, 0, 0, 0, 0].slice(0, 4);
+        this.moveTo(x + r[0], y);
+        this.lineTo(x + w - r[1], y); this.quadraticCurveTo(x + w, y, x + w, y + r[1]);
+        this.lineTo(x + w, y + h - r[2]); this.quadraticCurveTo(x + w, y + h, x + w - r[2], y + h);
+        this.lineTo(x + r[3], y + h); this.quadraticCurveTo(x, y + h, x, y + h - r[3]);
+        this.lineTo(x, y + r[0]); this.quadraticCurveTo(x, y, x + r[0], y);
+        this.closePath();
+      };
+    }
+
     ctx.strokeStyle = '#222';
     ctx.lineWidth = 1;
     const stepMs = pxPerMs > 0.1 ? 1000 : pxPerMs > 0.02 ? 5000 : 10000;
@@ -390,18 +454,27 @@ export function TimelinePage() {
         const cw = getClipDuration(clip) * pxPerMs;
         if (cx + cw < 0 || cx > W) continue;
         const isSelected = clip.id === selectedClipId;
+        const isDragging = dragRef.current?.clipId === clip.id;
         const baseColor = track.type === 'narration' ? '#2a4a6a' : track.type === 'sfx' ? '#2a4a2a' : track.type === 'music' ? '#4a2a6a' : '#4a4a2a';
-        ctx.fillStyle = isSelected ? '#4A90D9' : baseColor;
-        ctx.fillRect(cx, y + 4, cw, TRACK_H - 8);
-        ctx.strokeStyle = isSelected ? '#fff' : '#333';
+        const activeColor = isSelected ? '#4A90D9' : baseColor;
+
+        // Clip body with rounded corners
+        const clipY = y + 4;
+        const clipH = TRACK_H - 8;
+        const r = 4;
+        ctx.beginPath();
+        ctx.roundRect(cx, clipY, cw, clipH, r);
+        ctx.fillStyle = isDragging ? '#5A9AE9' : activeColor;
+        ctx.fill();
+        ctx.strokeStyle = isSelected ? '#fff' : '#444';
         ctx.lineWidth = isSelected ? 2 : 1;
-        ctx.strokeRect(cx, y + 4, cw, TRACK_H - 8);
+        ctx.stroke();
 
         // Volume indicator bar at bottom of clip
         const gainDb = clip.gain || 0;
-        const volFrac = Math.min(1, Math.max(0, (gainDb + 20) / 26)); // -20dB to +6dB mapped to 0-1
+        const volFrac = Math.min(1, Math.max(0, (gainDb + 20) / 26));
         ctx.fillStyle = gainDb > 0 ? '#e55' : '#4A90D9';
-        ctx.fillRect(cx + 1, y + TRACK_H - 10, (cw - 2) * volFrac, 3);
+        ctx.fillRect(cx + 2, y + TRACK_H - 10, (cw - 4) * volFrac, 3);
 
         // Speed indicator if not 1.0
         const spd = clip.speed ?? 1.0;
@@ -411,16 +484,38 @@ export function TimelinePage() {
           ctx.fillText(`${spd.toFixed(1)}x`, cx + cw - 28, y + 14);
         }
 
+        // Clip label
         if (cw > 30) {
           ctx.fillStyle = '#ddd';
           ctx.font = '10px sans-serif';
           const label = clip.notes || (clip as any).character_name || (clip as any).segment_text?.slice(0, 40) || clip.audio_asset_id.slice(0, 8);
-          ctx.fillText(label, cx + 4, y + TRACK_H / 2 + 1, cw - 8);
+          ctx.fillText(label, cx + 8, y + TRACK_H / 2 + 1, cw - 16);
         }
-        if (isSelected) {
-          ctx.fillStyle = '#fff';
-          ctx.fillRect(cx, y + 4, 4, TRACK_H - 8);
-          ctx.fillRect(cx + cw - 4, y + 4, 4, TRACK_H - 8);
+
+        // Trim handles — always visible on selected, subtle on hover
+        if (isSelected || isDragging) {
+          // Left handle
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.beginPath();
+          ctx.roundRect(cx, clipY, 6, clipH, [r, 0, 0, r]);
+          ctx.fill();
+          // Handle grip lines
+          ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+          ctx.lineWidth = 1;
+          for (let gy = clipY + clipH * 0.3; gy < clipY + clipH * 0.7; gy += 4) {
+            ctx.beginPath(); ctx.moveTo(cx + 1.5, gy); ctx.lineTo(cx + 4.5, gy); ctx.stroke();
+          }
+
+          // Right handle
+          ctx.fillStyle = 'rgba(255,255,255,0.7)';
+          ctx.beginPath();
+          ctx.roundRect(cx + cw - 6, clipY, 6, clipH, [0, r, r, 0]);
+          ctx.fill();
+          ctx.strokeStyle = 'rgba(0,0,0,0.4)';
+          ctx.lineWidth = 1;
+          for (let gy = clipY + clipH * 0.3; gy < clipY + clipH * 0.7; gy += 4) {
+            ctx.beginPath(); ctx.moveTo(cx + cw - 4.5, gy); ctx.lineTo(cx + cw - 1.5, gy); ctx.stroke();
+          }
         }
       }
     });
@@ -451,6 +546,27 @@ export function TimelinePage() {
   }, [tracks.length, draw]);
 
   // ── Mouse Interaction ──
+  const HANDLE_W = 10; // wider grab zone for trim handles
+  const getHitInfo = (mx: number, my: number): { clip: Clip; track: Track; mode: DragMode } | null => {
+    if (my < RULER_H) return null;
+    const trackIdx = Math.floor((my - RULER_H) / TRACK_H);
+    if (trackIdx < 0 || trackIdx >= tracks.length) return null;
+    const track = tracks[trackIdx];
+    // Iterate in reverse so topmost (last drawn) clip is hit first
+    for (let i = track.clips.length - 1; i >= 0; i--) {
+      const clip = track.clips[i];
+      const cx = (clip.position_ms - scrollX) * pxPerMs;
+      const cw = getClipDuration(clip) * pxPerMs;
+      if (mx >= cx && mx <= cx + cw) {
+        let mode: DragMode = 'move';
+        if (mx - cx < HANDLE_W) mode = 'trimStart';
+        else if (cx + cw - mx < HANDLE_W) mode = 'trimEnd';
+        return { clip, track, mode };
+      }
+    }
+    return null;
+  };
+
   const handleCanvasMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -458,41 +574,59 @@ export function TimelinePage() {
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
     if (my < RULER_H) { seekTo(mx / pxPerMs + scrollX); return; }
-    const trackIdx = Math.floor((my - RULER_H) / TRACK_H);
-    if (trackIdx < 0 || trackIdx >= tracks.length) { setSelectedClipId(null); return; }
-    const track = tracks[trackIdx];
-    const clickMs = mx / pxPerMs + scrollX;
-    for (const clip of track.clips) {
-      const cx = (clip.position_ms - scrollX) * pxPerMs;
-      const cw = getClipDuration(clip) * pxPerMs;
-      if (mx >= cx && mx <= cx + cw) {
-        setSelectedClipId(clip.id);
-        setContextMenu(null);
-        let mode: DragMode = 'move';
-        if (mx - cx < 6) mode = 'trimStart';
-        else if (cx + cw - mx < 6) mode = 'trimEnd';
-        dragRef.current = { mode, clipId: clip.id, trackId: track.id, startMouseX: mx, origPos: clip.position_ms, origTS: clip.trim_start_ms, origTE: clip.trim_end_ms };
-        return;
-      }
+    const hit = getHitInfo(mx, my);
+    if (hit) {
+      setSelectedClipId(hit.clip.id);
+      setContextMenu(null);
+      dragRef.current = {
+        mode: hit.mode, clipId: hit.clip.id, trackId: hit.track.id,
+        startMouseX: mx, origPos: hit.clip.position_ms,
+        origTS: hit.clip.trim_start_ms, origTE: hit.clip.trim_end_ms,
+      };
+      return;
     }
     setSelectedClipId(null);
+    const clickMs = mx / pxPerMs + scrollX;
     seekTo(clickMs);
   };
+
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!dragRef.current || !bookId) return;
     const canvas = canvasRef.current;
     if (!canvas) return;
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    // Update cursor based on hover position
+    if (!dragRef.current) {
+      const hit = getHitInfo(mx, my);
+      if (hit) {
+        if (hit.mode === 'trimStart' || hit.mode === 'trimEnd') {
+          canvas.style.cursor = 'col-resize';
+        } else {
+          canvas.style.cursor = 'grab';
+        }
+      } else if (my < RULER_H) {
+        canvas.style.cursor = 'pointer';
+      } else {
+        canvas.style.cursor = 'crosshair';
+      }
+    } else {
+      // Dragging — set appropriate cursor
+      if (dragRef.current.mode === 'move') canvas.style.cursor = 'grabbing';
+      else canvas.style.cursor = 'col-resize';
+    }
+
+    if (!dragRef.current || !bookId) return;
     const dx = mx - dragRef.current.startMouseX;
     const dMs = dx / pxPerMs;
     setTracks((prev) => prev.map((t) => ({
       ...t,
       clips: t.clips.map((c) => {
         if (c.id !== dragRef.current!.clipId) return c;
-        if (dragRef.current!.mode === 'move') return { ...c, position_ms: Math.max(0, dragRef.current!.origPos + dMs) };
-        if (dragRef.current!.mode === 'trimStart') return { ...c, trim_start_ms: Math.max(0, dragRef.current!.origTS + dMs) };
-        if (dragRef.current!.mode === 'trimEnd') return { ...c, trim_end_ms: Math.max(0, dragRef.current!.origTE - dMs) };
+        if (dragRef.current!.mode === 'move') return { ...c, position_ms: Math.max(0, Math.round(dragRef.current!.origPos + dMs)) };
+        if (dragRef.current!.mode === 'trimStart') return { ...c, trim_start_ms: Math.max(0, Math.round(dragRef.current!.origTS + dMs)) };
+        if (dragRef.current!.mode === 'trimEnd') return { ...c, trim_end_ms: Math.max(0, Math.round(dragRef.current!.origTE - dMs)) };
         return c;
       }),
     })));
@@ -517,17 +651,10 @@ export function TimelinePage() {
     const rect = canvas.getBoundingClientRect();
     const mx = e.clientX - rect.left;
     const my = e.clientY - rect.top;
-    const trackIdx = Math.floor((my - RULER_H) / TRACK_H);
-    if (trackIdx < 0 || trackIdx >= tracks.length) return;
-    const track = tracks[trackIdx];
-    for (const clip of track.clips) {
-      const cx = (clip.position_ms - scrollX) * pxPerMs;
-      const cw = getClipDuration(clip) * pxPerMs;
-      if (mx >= cx && mx <= cx + cw) {
-        setSelectedClipId(clip.id);
-        setContextMenu({ x: e.clientX, y: e.clientY, clipId: clip.id, trackId: track.id });
-        return;
-      }
+    const hit = getHitInfo(mx, my);
+    if (hit) {
+      setSelectedClipId(hit.clip.id);
+      setContextMenu({ x: e.clientX, y: e.clientY, clipId: hit.clip.id, trackId: hit.track.id });
     }
   };
 
@@ -914,7 +1041,7 @@ const S: Record<string, React.CSSProperties> = {
   trackSlider: { flex: 1, height: 3, cursor: 'pointer', accentColor: 'var(--accent)' },
   tinyBtn: { background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 3 },
   canvasContainer: { flex: 1, overflow: 'hidden', position: 'relative' as const },
-  canvas: { display: 'block', cursor: 'crosshair' },
+  canvas: { display: 'block', cursor: 'default' },
   inspector: {
     position: 'absolute' as const, right: 12, top: 60, width: 230,
     background: 'var(--bg-surface)', border: '1px solid var(--border-strong)', borderRadius: 12, padding: 14, zIndex: 10,
