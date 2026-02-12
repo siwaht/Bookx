@@ -1,4 +1,4 @@
-import { Router, Request, Response } from 'express';
+import { Router } from 'express';
 import { v4 as uuid } from 'uuid';
 import fs from 'fs';
 import path from 'path';
@@ -25,6 +25,30 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
 
   router.get('/voices/search', async (req, res) => {
     try { res.json(await searchVoices((req.query.q as string) || '')); } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Look up a specific voice by ID from ElevenLabs API
+  router.get('/voices/:voiceId', async (req, res) => {
+    try {
+      const voiceId = req.params.voiceId;
+      // First check local cache
+      const voices = await getVoices();
+      const local = voices.find((v: any) => v.voice_id === voiceId);
+      if (local) { res.json(local); return; }
+      // Fetch directly from ElevenLabs
+      const apiKey = process.env.ELEVENLABS_API_KEY;
+      if (!apiKey) { res.status(400).json({ error: 'ELEVENLABS_API_KEY not set' }); return; }
+      const apiRes = await fetch(`https://api.elevenlabs.io/v1/voices/${voiceId}`, {
+        headers: { 'xi-api-key': apiKey },
+      });
+      if (!apiRes.ok) {
+        const errText = await apiRes.text().catch(() => 'Unknown error');
+        res.status(apiRes.status).json({ error: `Voice not found: ${errText}` });
+        return;
+      }
+      const voice = await apiRes.json();
+      res.json(voice);
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   router.post('/tts', async (req, res) => {

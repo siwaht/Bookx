@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { characters as charsApi, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Character, ElevenLabsVoice } from '../types';
-import { Plus, Search, Play, Trash2, Mic, CheckCircle } from 'lucide-react';
+import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader } from 'lucide-react';
 
 export function VoicesPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -15,6 +15,12 @@ export function VoicesPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
   const [newRole, setNewRole] = useState<'narrator' | 'character'>('character');
+
+  // Voice ID lookup
+  const [voiceIdInput, setVoiceIdInput] = useState('');
+  const [voiceIdLooking, setVoiceIdLooking] = useState(false);
+  const [voiceIdResult, setVoiceIdResult] = useState<any | null>(null);
+  const [voiceIdError, setVoiceIdError] = useState('');
 
   const loadCharacters = async () => {
     if (!bookId) return;
@@ -56,8 +62,34 @@ export function VoicesPage() {
     if (selectedChar?.id === id) setSelectedChar(null);
   };
 
+  // Assign voice by object (from search or ID lookup)
+  const assignVoice = (voiceId: string, voiceName: string) => {
+    handleUpdate('voice_id', voiceId);
+    handleUpdate('voice_name', voiceName);
+  };
+
+  // Look up voice by ID
+  const handleVoiceIdLookup = async () => {
+    const id = voiceIdInput.trim();
+    if (!id) return;
+    setVoiceIdLooking(true);
+    setVoiceIdError('');
+    setVoiceIdResult(null);
+    try {
+      const voice = await elevenlabs.getVoice(id);
+      setVoiceIdResult(voice);
+    } catch (err: any) {
+      setVoiceIdError(err.message || 'Voice not found');
+    } finally {
+      setVoiceIdLooking(false);
+    }
+  };
+
   const filteredVoices = voiceSearch
-    ? voices.filter((v) => v.name.toLowerCase().includes(voiceSearch.toLowerCase()))
+    ? voices.filter((v) =>
+        v.name.toLowerCase().includes(voiceSearch.toLowerCase()) ||
+        v.voice_id.toLowerCase().includes(voiceSearch.toLowerCase())
+      )
     : voices.slice(0, 20);
 
   const models = capabilities?.models || [];
@@ -140,18 +172,67 @@ export function VoicesPage() {
 
             <div style={styles.section}>
               <label style={styles.sectionLabel}>1. Choose a Voice</label>
-              <p style={styles.sectionHint}>Search ElevenLabs voices and click to assign. Use the play button to preview.</p>
+              <p style={styles.sectionHint}>Search by name or paste a voice ID directly from ElevenLabs.</p>
+
+              {/* Voice ID lookup */}
+              <div style={styles.voiceIdRow}>
+                <Hash size={14} color="#9B59B6" />
+                <input value={voiceIdInput} onChange={(e) => setVoiceIdInput(e.target.value)}
+                  placeholder="Paste voice ID (e.g. 21m00Tcm4TlvDq8ikWAM)"
+                  style={styles.searchInput}
+                  onKeyDown={(e) => e.key === 'Enter' && handleVoiceIdLookup()}
+                  aria-label="Voice ID" />
+                <button onClick={handleVoiceIdLookup} disabled={voiceIdLooking || !voiceIdInput.trim()}
+                  style={styles.lookupBtn}>
+                  {voiceIdLooking ? <Loader size={12} /> : 'Lookup'}
+                </button>
+              </div>
+              {voiceIdResult && (
+                <div style={styles.voiceIdResult}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                    <div>
+                      <span style={{ color: '#ddd', fontSize: 13 }}>{voiceIdResult.name}</span>
+                      <span style={{ color: '#666', fontSize: 11, marginLeft: 8 }}>{voiceIdResult.category || ''}</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {voiceIdResult.preview_url && (
+                        <button onClick={() => new Audio(voiceIdResult.preview_url).play()}
+                          style={styles.previewBtn} title="Preview"><Play size={12} /></button>
+                      )}
+                      <button onClick={() => {
+                        assignVoice(voiceIdResult.voice_id, voiceIdResult.name);
+                        setVoiceIdResult(null); setVoiceIdInput('');
+                      }} style={styles.assignIdBtn}>
+                        <CheckCircle size={12} /> Assign
+                      </button>
+                    </div>
+                  </div>
+                  {voiceIdResult.labels && Object.keys(voiceIdResult.labels).length > 0 && (
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+                      {Object.entries(voiceIdResult.labels).map(([k, v]) => (
+                        <span key={k} style={styles.voiceTag}>{k}: {v as string}</span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {voiceIdError && <p style={{ color: '#e55', fontSize: 11 }}>{voiceIdError}</p>}
+
+              {/* Name search */}
               <div style={styles.voiceSearch}>
                 <Search size={14} color="#666" />
                 <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
-                  placeholder="Search voices by name..." style={styles.searchInput} aria-label="Search voices" />
+                  placeholder="Search voices by name or ID..." style={styles.searchInput} aria-label="Search voices" />
               </div>
               <div style={styles.voiceList}>
                 {filteredVoices.map((v) => (
                   <div key={v.voice_id}
-                    onClick={() => { handleUpdate('voice_id', v.voice_id); handleUpdate('voice_name', v.name); }}
+                    onClick={() => assignVoice(v.voice_id, v.name)}
                     style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a', borderLeft: selectedChar.voice_id === v.voice_id ? '3px solid #4A90D9' : '3px solid transparent' }}>
-                    <span>{v.name}</span>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
+                      <span style={{ color: '#555', fontSize: 10, marginLeft: 6, fontFamily: 'monospace' }}>{v.voice_id.slice(0, 8)}...</span>
+                    </div>
                     <span style={{ color: '#666', fontSize: 11 }}>{v.category}</span>
                     {v.preview_url && (
                       <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url!).play(); }}
@@ -163,7 +244,7 @@ export function VoicesPage() {
                 ))}
                 {filteredVoices.length === 0 && (
                   <p style={{ color: '#555', fontSize: 12, padding: 12 }}>
-                    {voiceSearch ? 'No voices match your search' : 'No voices loaded. Check your ElevenLabs API key.'}
+                    {voiceSearch ? 'No voices match. Try pasting a voice ID above.' : 'No voices loaded. Check your ElevenLabs API key.'}
                   </p>
                 )}
               </div>
@@ -270,6 +351,20 @@ const styles: Record<string, React.CSSProperties> = {
   slider: { width: '100%', accentColor: '#4A90D9' },
   voiceSearch: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#0f0f0f', borderRadius: 6, border: '1px solid #333' },
   searchInput: { flex: 1, background: 'transparent', border: 'none', color: '#fff', outline: 'none', fontSize: 13 },
+  voiceIdRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#0f0f0f', borderRadius: 6, border: '1px solid #3a2a5a' },
+  lookupBtn: {
+    padding: '4px 12px', background: '#9B59B6', color: '#fff', border: 'none',
+    borderRadius: 5, cursor: 'pointer', fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' as const,
+    display: 'flex', alignItems: 'center', gap: 4,
+  },
+  voiceIdResult: {
+    padding: 10, background: '#1a1a2a', borderRadius: 6, border: '1px solid #3a2a5a',
+  },
+  assignIdBtn: {
+    display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px',
+    background: '#2d5a27', color: '#8f8', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 11,
+  },
+  voiceTag: { fontSize: 9, color: '#888', background: '#222', padding: '1px 6px', borderRadius: 3 },
   voiceList: { maxHeight: 200, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2 },
   voiceItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: '#ddd' },
   previewBtn: { background: 'none', border: 'none', color: '#4A90D9', cursor: 'pointer', padding: 4 },
