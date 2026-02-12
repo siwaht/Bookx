@@ -29,15 +29,20 @@ async function main() {
   initializeSchema(db);
   console.log('[DB] SQLite initialized');
 
-  // Load API keys from settings into env if not already set
+  // Load API keys from settings into env — DB values always take priority
   const storedElKey = getSetting(db, 'elevenlabs_api_key');
-  if (storedElKey && !process.env.ELEVENLABS_API_KEY) {
+  if (storedElKey) {
     process.env.ELEVENLABS_API_KEY = storedElKey;
+    console.log('[Config] ElevenLabs API key loaded from DB settings');
+  } else if (process.env.ELEVENLABS_API_KEY) {
+    console.log('[Config] ElevenLabs API key loaded from .env');
+  } else {
+    console.log('[Config] WARNING: No ElevenLabs API key found. Set it in Settings page.');
   }
   for (const provider of ['openai', 'mistral', 'gemini']) {
     const envKey = `${provider.toUpperCase()}_API_KEY`;
     const storedKey = getSetting(db, `${provider}_api_key`);
-    if (storedKey && !process.env[envKey]) {
+    if (storedKey) {
       process.env[envKey] = storedKey;
     }
   }

@@ -1,21 +1,17 @@
 import crypto from 'crypto';
-import fs from 'fs';
-import path from 'path';
 import type {
   ElevenLabsCapabilities,
   ElevenLabsModel,
   ElevenLabsVoice,
   TTSRequest,
   SFXRequest,
-  VoiceSettings,
 } from '../types/index.js';
 
 const API_BASE = 'https://api.elevenlabs.io/v1';
-const DATA_DIR = process.env.DATA_DIR || './data';
 
 function getApiKey(): string {
   const key = process.env.ELEVENLABS_API_KEY;
-  if (!key) throw new Error('ELEVENLABS_API_KEY not set');
+  if (!key) throw new Error('ELEVENLABS_API_KEY not set. Go to Settings and add your ElevenLabs API key.');
   return key;
 }
 
@@ -237,7 +233,7 @@ export async function generateMusic(
   if (musicLengthMs) body.music_length_ms = musicLengthMs;
   if (forceInstrumental !== undefined) body.force_instrumental = forceInstrumental;
 
-  const res = await fetchWithRetry(`${API_BASE}/music/compose`, {
+  const res = await fetchWithRetry(`${API_BASE}/music`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
