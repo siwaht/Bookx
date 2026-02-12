@@ -25,6 +25,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3001', 10);
 
 async function main() {
+  const DATA_DIR = process.env.DATA_DIR || './data';
+  for (const sub of ['audio', 'renders', 'exports']) {
+    fs.mkdirSync(path.join(DATA_DIR, sub), { recursive: true });
+  }
+
   // Initialize database
   const db = await getDb();
   initializeSchema(db);
