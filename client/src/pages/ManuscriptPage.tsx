@@ -163,7 +163,7 @@ export function ManuscriptPage() {
           <button onClick={() => fileRef.current?.click()} style={styles.importBtn} disabled={importing}>
             <Upload size={14} /> {importing ? 'Importing...' : 'Import'}
           </button>
-          <input ref={fileRef} type="file" accept=".txt,.md,.docx" onChange={handleImport} hidden aria-label="Import manuscript file" />
+          <input ref={fileRef} type="file" accept=".txt,.md,.docx,.epub,.html,.htm" onChange={handleImport} hidden aria-label="Import manuscript file" />
         </div>
         <div style={styles.chapterList}>
           {chapterList.map((ch) => (
@@ -180,7 +180,10 @@ export function ManuscriptPage() {
             </button>
           ))}
           {chapterList.length === 0 && (
-            <p style={{ color: '#555', padding: 16, fontSize: 13 }}>Import a manuscript to get started</p>
+            <div style={{ padding: 16, fontSize: 12 }}>
+              <p style={{ color: '#555', marginBottom: 8 }}>Import a manuscript to get started</p>
+              <p style={{ color: '#444' }}>Supported: EPUB, DOCX, TXT, Markdown, HTML</p>
+            </div>
           )}
         </div>
 
