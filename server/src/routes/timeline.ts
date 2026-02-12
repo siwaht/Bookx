@@ -52,17 +52,17 @@ export function timelineRouter(db: SqlJsDatabase): Router {
 
   router.post('/tracks/:trackId/clips', (req: Request, res: Response) => {
     const id = uuid();
-    const { audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, fade_in_ms, fade_out_ms, notes } = req.body;
+    const { audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, speed, fade_in_ms, fade_out_ms, notes } = req.body;
     run(db,
-      `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, fade_in_ms, fade_out_ms, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.params.trackId, audio_asset_id, segment_id || null, position_ms ?? 0, trim_start_ms ?? 0, trim_end_ms ?? 0, gain ?? 0.0, fade_in_ms ?? 0, fade_out_ms ?? 0, notes || null]);
+      `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, speed, fade_in_ms, fade_out_ms, notes)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, req.params.trackId, audio_asset_id, segment_id || null, position_ms ?? 0, trim_start_ms ?? 0, trim_end_ms ?? 0, gain ?? 0.0, speed ?? 1.0, fade_in_ms ?? 0, fade_out_ms ?? 0, notes || null]);
     const clip = queryOne(db, 'SELECT * FROM clips WHERE id = ?', [id]);
     res.status(201).json(clip);
   });
 
   router.put('/clips/:clipId', (req: Request, res: Response) => {
-    const fields = ['position_ms', 'trim_start_ms', 'trim_end_ms', 'gain', 'fade_in_ms', 'fade_out_ms', 'notes', 'audio_asset_id'];
+    const fields = ['position_ms', 'trim_start_ms', 'trim_end_ms', 'gain', 'speed', 'fade_in_ms', 'fade_out_ms', 'notes', 'audio_asset_id'];
     const updates: string[] = [];
     const values: any[] = [];
     for (const field of fields) {

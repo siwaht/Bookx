@@ -89,6 +89,7 @@ export interface Clip {
   trim_start_ms: number;
   trim_end_ms: number;
   gain: number;
+  speed: number;
   fade_in_ms: number;
   fade_out_ms: number;
   notes: string | null;

@@ -146,6 +146,7 @@ export function initializeSchema(database: SqlJsDatabase): void {
       trim_start_ms INTEGER DEFAULT 0,
       trim_end_ms INTEGER DEFAULT 0,
       gain REAL DEFAULT 0.0,
+      speed REAL DEFAULT 1.0,
       fade_in_ms INTEGER DEFAULT 0,
       fade_out_ms INTEGER DEFAULT 0,
       notes TEXT,
@@ -238,6 +239,12 @@ export function initializeSchema(database: SqlJsDatabase): void {
       updated_at TEXT DEFAULT (datetime('now'))
     )
   `);
+
+  // Migrations: add speed column to clips if missing
+  const clipCols = queryAll(database, "PRAGMA table_info(clips)").map((c: any) => c.name);
+  if (!clipCols.includes('speed')) {
+    database.run("ALTER TABLE clips ADD COLUMN speed REAL DEFAULT 1.0");
+  }
 
   // Indexes
   const indexes = [
