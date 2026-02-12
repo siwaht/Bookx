@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { settings as settingsApi } from '../services/api';
-import { Key, Eye, EyeOff, Save, Trash2, Check, ArrowLeft } from 'lucide-react';
+import { settings as settingsApi, elevenlabs } from '../services/api';
+import { Key, Eye, EyeOff, Save, Trash2, Check, ArrowLeft, Wifi, WifiOff, Loader } from 'lucide-react';
 
 interface ApiKeyConfig {
   key: string;
@@ -33,6 +33,20 @@ export function SettingsPage() {
   const [saving, setSaving] = useState<string | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [defaultProvider, setDefaultProvider] = useState('');
+  const [connTest, setConnTest] = useState<{
+    testing: boolean;
+    result: null | { connected: boolean; error?: string; tier?: string; character_count?: number; character_limit?: number; key_last4?: string };
+  }>({ testing: false, result: null });
+
+  const testElevenLabsConnection = async () => {
+    setConnTest({ testing: true, result: null });
+    try {
+      const result = await elevenlabs.testConnection();
+      setConnTest({ testing: false, result });
+    } catch (err: any) {
+      setConnTest({ testing: false, result: { connected: false, error: err.message } });
+    }
+  };
 
   const load = async () => {
     try {
@@ -93,6 +107,7 @@ export function SettingsPage() {
 
           {API_KEYS.map((cfg) => {
             const isStored = !!stored[cfg.key]?.masked;
+            const isElevenLabs = cfg.key === 'elevenlabs_api_key';
             return (
               <div key={cfg.key} style={S.keyRow}>
                 <div style={S.keyHeader}>
@@ -131,6 +146,54 @@ export function SettingsPage() {
                     </button>
                   )}
                 </div>
+
+                {/* ElevenLabs Connection Test */}
+                {isElevenLabs && isStored && (
+                  <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <button onClick={testElevenLabsConnection} disabled={connTest.testing}
+                      style={{
+                        display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+                        background: '#1a2a3a', color: '#4A90D9', border: '1px solid #2a3a5a',
+                        borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500, alignSelf: 'flex-start',
+                      }}>
+                      {connTest.testing ? <Loader size={13} /> : <Wifi size={13} />}
+                      {connTest.testing ? 'Testing...' : 'Test Connection'}
+                    </button>
+                    {connTest.result && (
+                      <div style={{
+                        padding: 12, borderRadius: 8,
+                        background: connTest.result.connected ? '#0a1a0a' : '#1a0a0a',
+                        border: `1px solid ${connTest.result.connected ? '#1a3a1a' : '#3a1a1a'}`,
+                      }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          {connTest.result.connected ? (
+                            <>
+                              <Wifi size={16} color="#4a4" />
+                              <span style={{ color: '#8f8', fontSize: 13, fontWeight: 600 }}>Connected</span>
+                            </>
+                          ) : (
+                            <>
+                              <WifiOff size={16} color="#a44" />
+                              <span style={{ color: '#f88', fontSize: 13, fontWeight: 600 }}>Connection Failed</span>
+                            </>
+                          )}
+                        </div>
+                        {connTest.result.connected ? (
+                          <div style={{ fontSize: 11, color: '#888', lineHeight: 1.6 }}>
+                            <div>Tier: <span style={{ color: '#aaa' }}>{connTest.result.tier}</span></div>
+                            <div>Characters: <span style={{ color: '#aaa' }}>{connTest.result.character_count?.toLocaleString()} / {connTest.result.character_limit?.toLocaleString()}</span></div>
+                            <div>Key: <span style={{ color: '#aaa' }}>{connTest.result.key_last4}</span></div>
+                          </div>
+                        ) : (
+                          <div style={{ fontSize: 11, color: '#f88', lineHeight: 1.6 }}>
+                            {connTest.result.error}
+                            {connTest.result.key_last4 && <div style={{ color: '#888', marginTop: 4 }}>Key used: {connTest.result.key_last4}</div>}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             );
           })}

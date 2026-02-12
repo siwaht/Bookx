@@ -13,7 +13,7 @@ import type { Chapter, Segment, Character } from '../types';
 import {
   Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen,
   Scissors, Users, Volume2, Wand2, Loader, Edit3, Copy, ChevronUp,
-  ChevronDown, Check, X, Tag, MoreVertical, Send, Pause, Square,
+  ChevronDown, Check, X, Tag, MoreVertical, Send,
 } from 'lucide-react';
 
 // V3 audio tags for quick insertion
@@ -786,31 +786,16 @@ export function ManuscriptPage() {
                   {/* ── BIG AUDIO PLAYER (only when audio exists) ── */}
                   {hasAudio && (
                     <div style={styles.audioPlayerBox}>
-                      <div style={styles.audioPlayerRow}>
-                        <button
-                          onClick={() => togglePlay(seg.id, seg.audio_asset_id!)}
-                          style={{
-                            ...styles.bigPlayBtn,
-                            background: isPlaying ? '#c0392b' : '#27ae60',
-                          }}
-                          title={isPlaying ? 'Stop' : 'Play preview'}
-                        >
-                          {isPlaying ? <Square size={18} /> : <Play size={18} />}
-                        </button>
-                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
-                          <audio
-                            ref={(el) => { audioRefs.current[seg.id] = el; }}
-                            src={audioUrl(seg.audio_asset_id!)}
-                            controls
-                            onEnded={() => setPlayingSegId(null)}
-                            onPause={() => { if (playingSegId === seg.id) setPlayingSegId(null); }}
-                            style={{ width: '100%', height: 36 }}
-                          />
-                          <span style={{ fontSize: 9, color: '#666' }}>
-                            🎙 {charName || 'Unknown voice'} · Edit text above → Regenerate → Listen again
-                          </span>
-                        </div>
-                      </div>
+                      <audio
+                        ref={(el) => { audioRefs.current[seg.id] = el; }}
+                        src={audioUrl(seg.audio_asset_id!)}
+                        controls
+                        onEnded={() => setPlayingSegId(null)}
+                        style={{ width: '100%', height: 40 }}
+                      />
+                      <span style={{ fontSize: 9, color: '#666', marginTop: 4, display: 'block' }}>
+                        🎙 {charName || 'Unknown voice'} · Edit text above → Regenerate → Listen again
+                      </span>
                     </div>
                   )}
 

@@ -15,6 +15,37 @@ const DATA_DIR = process.env.DATA_DIR || './data';
 export function elevenlabsRouter(db: SqlJsDatabase): Router {
   const router = Router();
 
+  // ── Connection Test ──
+  router.get('/test-connection', async (_req, res) => {
+    try {
+      const apiKey = process.env.ELEVENLABS_API_KEY;
+      if (!apiKey) {
+        res.json({ connected: false, error: 'No API key configured. Go to Settings and add your ElevenLabs API key.' });
+        return;
+      }
+      // Direct lightweight call to check the key works
+      const testRes = await fetch('https://api.elevenlabs.io/v1/user/subscription', {
+        headers: { 'xi-api-key': apiKey },
+      });
+      if (testRes.ok) {
+        const data = await testRes.json() as any;
+        res.json({
+          connected: true,
+          tier: data.tier || 'unknown',
+          character_count: data.character_count || 0,
+          character_limit: data.character_limit || 0,
+          can_use_instant_voice_cloning: data.can_use_instant_voice_cloning || false,
+          key_last4: '••••' + apiKey.slice(-4),
+        });
+      } else {
+        const errText = await testRes.text().catch(() => 'Unknown error');
+        res.json({ connected: false, error: `API returned ${testRes.status}: ${errText}`, key_last4: '••••' + apiKey.slice(-4) });
+      }
+    } catch (err: any) {
+      res.json({ connected: false, error: err.message });
+    }
+  });
+
   router.get('/capabilities', async (_req, res) => {
     try { res.json(await getCapabilities()); } catch (err: any) { res.status(500).json({ error: err.message }); }
   });

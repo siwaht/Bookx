@@ -113,6 +113,14 @@ export const segments = {
 
 // ── ElevenLabs ──
 export const elevenlabs = {
+  testConnection: () => request<{
+    connected: boolean;
+    error?: string;
+    tier?: string;
+    character_count?: number;
+    character_limit?: number;
+    key_last4?: string;
+  }>('/elevenlabs/test-connection'),
   capabilities: () => request<any>('/elevenlabs/capabilities'),
   voices: () => request<any[]>('/elevenlabs/voices'),
   searchVoices: (q: string) => request<any[]>(`/elevenlabs/voices/search?q=${encodeURIComponent(q)}`),
