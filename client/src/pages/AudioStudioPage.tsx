@@ -94,8 +94,8 @@ export function AudioStudioPage() {
   }, [bookId]);
 
   useEffect(() => {
-    if (activeTab === 'library') loadLibrary();
-  }, [activeTab, loadLibrary]);
+    loadLibrary();
+  }, [loadLibrary]);
 
   const handleRename = async (assetId: string) => {
     if (!renameValue.trim()) return;
@@ -154,7 +154,7 @@ export function AudioStudioPage() {
         cached: result.cached,
       }, ...prev]);
     } catch (err: any) { alert(`SFX generation failed: ${err.message}`); }
-    finally { setSfxGenerating(false); if (activeTab === 'library') loadLibrary(); }
+    finally { setSfxGenerating(false); loadLibrary(); }
   };
 
   const handleGenerateMusic = async () => {
@@ -175,7 +175,7 @@ export function AudioStudioPage() {
         cached: result.cached,
       }, ...prev]);
     } catch (err: any) { alert(`Music generation failed: ${err.message}`); }
-    finally { setMusicGenerating(false); if (activeTab === 'library') loadLibrary(); }
+    finally { setMusicGenerating(false); loadLibrary(); }
   };
 
   const handlePlaceOnTimeline = async (asset: GeneratedAsset) => {
@@ -443,44 +443,39 @@ export function AudioStudioPage() {
               </div>
             )}
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {libraryAssets.map((asset) => {
+            {!libraryLoading && libraryAssets.length > 0 && (() => {
+              const sfxAssets = libraryAssets.filter((a) => a.type === 'sfx');
+              const musicAssets = libraryAssets.filter((a) => a.type === 'music');
+              const importedAssets = libraryAssets.filter((a) => a.type === 'imported');
+
+              const renderAssetCard = (asset: any) => {
                 const isRenaming = renamingId === asset.id;
                 const isDeleting = deletingId === asset.id;
-                const displayName = asset.name || asset.generation_params ? (asset.name || JSON.parse(asset.generation_params || '{}').prompt || asset.id.slice(0, 8)) : asset.id.slice(0, 8);
+                const displayName = asset.name || (asset.generation_params ? (JSON.parse(asset.generation_params || '{}').prompt || asset.id.slice(0, 8)) : asset.id.slice(0, 8));
                 const durationSec = asset.duration_ms ? (asset.duration_ms / 1000).toFixed(1) : '?';
                 const sizeMb = asset.file_size_bytes ? (asset.file_size_bytes / (1024 * 1024)).toFixed(2) : '?';
 
                 return (
                   <div key={asset.id} style={{
-                    padding: 12, background: '#141414', borderRadius: 8, border: '1px solid #1e1e1e',
+                    padding: 12, background: 'var(--bg-deep)', borderRadius: 10, border: '1px solid var(--border-subtle)',
                     display: 'flex', flexDirection: 'column', gap: 8, opacity: isDeleting ? 0.4 : 1,
                   }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{
-                        fontSize: 9, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
-                        background: asset.type === 'sfx' ? '#2a3a1a' : asset.type === 'music' ? '#1a2a3a' : '#2a2a1a',
-                        color: asset.type === 'sfx' ? '#8f8' : asset.type === 'music' ? '#88f' : '#aa8',
-                      }}>
-                        {asset.type.toUpperCase()}
-                      </span>
-
                       {isRenaming ? (
                         <div style={{ flex: 1, display: 'flex', gap: 4, alignItems: 'center' }}>
                           <input value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
-                            style={{ flex: 1, padding: '4px 8px', background: '#0a0a0a', color: '#ddd', border: '1px solid #444', borderRadius: 4, fontSize: 12, outline: 'none' }}
+                            style={{ flex: 1, padding: '4px 8px', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-default)', borderRadius: 6, fontSize: 12, outline: 'none' }}
                             autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleRename(asset.id); if (e.key === 'Escape') setRenamingId(null); }}
                             aria-label="Rename asset" />
                           <button onClick={() => handleRename(asset.id)} style={styles.presetBtn}><Check size={11} /></button>
                           <button onClick={() => setRenamingId(null)} style={styles.presetBtn}><X size={11} /></button>
                         </div>
                       ) : (
-                        <span style={{ flex: 1, fontSize: 12, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           {displayName}
                         </span>
                       )}
-
-                      <span style={{ fontSize: 10, color: '#555' }}>{durationSec}s · {sizeMb}MB</span>
+                      <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{durationSec}s · {sizeMb}MB</span>
                     </div>
 
                     <audio src={audioUrl(asset.id)} controls style={{ width: '100%', height: 32 }} />
@@ -494,18 +489,64 @@ export function AudioStudioPage() {
                       </a>
                       <button onClick={() => handlePlaceOnTimeline({ id: asset.id, type: asset.type, prompt: displayName, audio_asset_id: asset.id, cached: false })}
                         disabled={placingId === asset.id}
-                        style={{ ...styles.presetBtn, background: '#1a2a1a', color: '#8f8', borderColor: '#2a3a2a' }}>
+                        style={{ ...styles.presetBtn, background: 'var(--success-subtle)', color: 'var(--success)', borderColor: 'rgba(74,222,128,0.12)' }}>
                         <Plus size={10} /> {placingId === asset.id ? '...' : 'Place on Timeline'}
                       </button>
                       <button onClick={() => handleDeleteAsset(asset.id)}
-                        style={{ ...styles.presetBtn, color: '#a66', borderColor: '#3a2222' }}>
+                        style={{ ...styles.presetBtn, color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.12)' }}>
                         <Trash2 size={10} /> Delete
                       </button>
                     </div>
                   </div>
                 );
-              })}
-            </div>
+              };
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+                  {/* Sound Effects */}
+                  {sfxAssets.length > 0 && (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <Wand2 size={14} color="var(--success)" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--success)' }}>Sound Effects</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({sfxAssets.length})</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {sfxAssets.map(renderAssetCard)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Music */}
+                  {musicAssets.length > 0 && (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <Music size={14} color="var(--accent)" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>Music</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({musicAssets.length})</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {musicAssets.map(renderAssetCard)}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Imported */}
+                  {importedAssets.length > 0 && (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <Upload size={14} color="var(--warning)" />
+                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>Imported</span>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({importedAssets.length})</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        {importedAssets.map(renderAssetCard)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
       </div>
