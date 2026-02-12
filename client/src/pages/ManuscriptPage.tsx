@@ -180,10 +180,11 @@ export function ManuscriptPage() {
 
   const handleChapterTextChange = (text: string) => {
     if (!selectedChapter || !bookId) return;
-    setChapterList((prev) => prev.map((c) => c.id === selectedChapter.id ? { ...c, raw_text: text } : c));
+    // Update both raw_text and clear cleaned_text so the textarea reflects edits
+    setChapterList((prev) => prev.map((c) => c.id === selectedChapter.id ? { ...c, raw_text: text, cleaned_text: null } : c));
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
     saveTimerRef.current = setTimeout(() => {
-      chaptersApi.update(bookId, selectedChapter.id, { raw_text: text });
+      chaptersApi.update(bookId, selectedChapter.id, { raw_text: text, cleaned_text: null });
     }, 800);
   };
 

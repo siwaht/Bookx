@@ -36,12 +36,19 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
 
   router.put('/:id', (req: Request, res: Response) => {
     const { title, raw_text, cleaned_text, sort_order } = req.body;
-    run(db,
-      `UPDATE chapters SET title = COALESCE(?, title), raw_text = COALESCE(?, raw_text),
-       cleaned_text = COALESCE(?, cleaned_text), sort_order = COALESCE(?, sort_order),
-       updated_at = datetime('now') WHERE id = ? AND book_id = ?`,
-      [title, raw_text, cleaned_text, sort_order, req.params.id, req.params.bookId]
-    );
+    // Handle cleaned_text specially: allow explicit null to clear it
+    const cleanedTextVal = req.body.hasOwnProperty('cleaned_text') ? cleaned_text : undefined;
+    const updates: string[] = [];
+    const values: any[] = [];
+    if (title !== undefined) { updates.push('title = ?'); values.push(title); }
+    if (raw_text !== undefined) { updates.push('raw_text = ?'); values.push(raw_text); }
+    if (req.body.hasOwnProperty('cleaned_text')) { updates.push('cleaned_text = ?'); values.push(cleanedTextVal); }
+    if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+    if (updates.length > 0) {
+      updates.push("updated_at = datetime('now')");
+      values.push(req.params.id, req.params.bookId);
+      run(db, `UPDATE chapters SET ${updates.join(', ')} WHERE id = ? AND book_id = ?`, values);
+    }
     const chapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [req.params.id]);
     res.json(chapter);
   });
