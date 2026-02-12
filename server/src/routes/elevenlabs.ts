@@ -69,16 +69,16 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
 
   router.post('/sfx', async (req, res) => {
     try {
-      const { prompt, duration_seconds, prompt_influence, book_id } = req.body;
+      const { prompt, duration_seconds, prompt_influence, loop, model_id, book_id } = req.body;
       if (!prompt) { res.status(400).json({ error: 'prompt required' }); return; }
 
-      const promptHash = computePromptHash({ prompt, duration_seconds, prompt_influence, type: 'sfx' });
+      const promptHash = computePromptHash({ prompt, duration_seconds, prompt_influence, loop, model_id, type: 'sfx' });
       if (book_id) {
         const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'sfx']);
         if (cached) { res.json({ audio_asset_id: cached.id, cached: true }); return; }
       }
 
-      const { buffer } = await generateSFX({ text: prompt, duration_seconds, prompt_influence });
+      const { buffer } = await generateSFX({ text: prompt, duration_seconds, prompt_influence, loop, model_id });
       const assetId = uuid();
       const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
       fs.writeFileSync(filePath, buffer);
@@ -86,7 +86,7 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       if (book_id) {
         run(db,
           `INSERT INTO audio_assets (id, book_id, type, file_path, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'sfx', ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, promptHash, JSON.stringify({ prompt, duration_seconds, prompt_influence }), buffer.length]);
+          [assetId, book_id, filePath, promptHash, JSON.stringify({ prompt, duration_seconds, prompt_influence, loop, model_id }), buffer.length]);
       }
 
       res.json({ audio_asset_id: assetId, file_path: filePath, cached: false });
@@ -95,16 +95,19 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
 
   router.post('/music', async (req, res) => {
     try {
-      const { prompt, duration_seconds, book_id } = req.body;
+      const { prompt, duration_seconds, music_length_ms, force_instrumental, model_id, book_id } = req.body;
       if (!prompt) { res.status(400).json({ error: 'prompt required' }); return; }
 
-      const promptHash = computePromptHash({ prompt, duration_seconds, type: 'music' });
+      // Support both duration_seconds (legacy) and music_length_ms (new API)
+      const lengthMs = music_length_ms || (duration_seconds ? duration_seconds * 1000 : undefined);
+
+      const promptHash = computePromptHash({ prompt, music_length_ms: lengthMs, force_instrumental, model_id, type: 'music' });
       if (book_id) {
         const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'music']);
         if (cached) { res.json({ audio_asset_id: cached.id, cached: true }); return; }
       }
 
-      const { buffer } = await generateMusic(prompt, duration_seconds);
+      const { buffer } = await generateMusic(prompt, lengthMs, force_instrumental);
       const assetId = uuid();
       const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
       fs.writeFileSync(filePath, buffer);
@@ -112,7 +115,7 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       if (book_id) {
         run(db,
           `INSERT INTO audio_assets (id, book_id, type, file_path, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'music', ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, promptHash, JSON.stringify({ prompt, duration_seconds }), buffer.length]);
+          [assetId, book_id, filePath, promptHash, JSON.stringify({ prompt, music_length_ms: lengthMs, force_instrumental, model_id }), buffer.length]);
       }
 
       res.json({ audio_asset_id: assetId, file_path: filePath, cached: false });

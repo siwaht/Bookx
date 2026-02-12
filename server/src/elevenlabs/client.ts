@@ -213,6 +213,8 @@ export async function generateSFX(
 
   if (request.duration_seconds) body.duration_seconds = request.duration_seconds;
   if (request.prompt_influence !== undefined) body.prompt_influence = request.prompt_influence;
+  if (request.loop !== undefined) body.loop = request.loop;
+  if (request.model_id) body.model_id = request.model_id;
 
   const res = await fetchWithRetry(`${API_BASE}/sound-generation`, {
     method: 'POST',
@@ -228,12 +230,14 @@ export async function generateSFX(
 
 export async function generateMusic(
   prompt: string,
-  durationSeconds?: number
+  musicLengthMs?: number,
+  forceInstrumental?: boolean
 ): Promise<{ buffer: Buffer }> {
   const body: Record<string, unknown> = { prompt };
-  if (durationSeconds) body.duration_seconds = durationSeconds;
+  if (musicLengthMs) body.music_length_ms = musicLengthMs;
+  if (forceInstrumental !== undefined) body.force_instrumental = forceInstrumental;
 
-  const res = await fetchWithRetry(`${API_BASE}/music/generate`, {
+  const res = await fetchWithRetry(`${API_BASE}/music/compose`, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),

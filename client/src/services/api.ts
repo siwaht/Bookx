@@ -106,8 +106,10 @@ export const elevenlabs = {
   voices: () => request<any[]>('/elevenlabs/voices'),
   searchVoices: (q: string) => request<any[]>(`/elevenlabs/voices/search?q=${encodeURIComponent(q)}`),
   tts: (data: any) => request<any>('/elevenlabs/tts', { method: 'POST', body: JSON.stringify(data) }),
-  sfx: (data: any) => request<any>('/elevenlabs/sfx', { method: 'POST', body: JSON.stringify(data) }),
-  music: (data: any) => request<any>('/elevenlabs/music', { method: 'POST', body: JSON.stringify(data) }),
+  sfx: (data: { prompt: string; duration_seconds?: number; prompt_influence?: number; loop?: boolean; model_id?: string; book_id?: string }) =>
+    request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/sfx', { method: 'POST', body: JSON.stringify(data) }),
+  music: (data: { prompt: string; duration_seconds?: number; music_length_ms?: number; force_instrumental?: boolean; model_id?: string; book_id?: string }) =>
+    request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/music', { method: 'POST', body: JSON.stringify(data) }),
   usage: () => request<any>('/elevenlabs/usage'),
 };
 

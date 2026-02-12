@@ -3,14 +3,15 @@ import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { books, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download } from 'lucide-react';
+import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music } from 'lucide-react';
 
 const STEPS = [
   { to: '', icon: FileText, label: 'Manuscript', step: 1, hint: 'Import & split text', end: true },
   { to: 'voices', icon: Users, label: 'Voices', step: 2, hint: 'Assign character voices' },
-  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', step: 3, hint: 'Arrange & preview audio' },
-  { to: 'qc', icon: CheckCircle, label: 'QC & Render', step: 4, hint: 'Render & check quality' },
-  { to: 'export', icon: Download, label: 'Export', step: 5, hint: 'Download ACX package' },
+  { to: 'studio', icon: Music, label: 'Audio Studio', step: 3, hint: 'SFX, music & v3 tags' },
+  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', step: 4, hint: 'Arrange & preview audio' },
+  { to: 'qc', icon: CheckCircle, label: 'QC & Render', step: 5, hint: 'Render & check quality' },
+  { to: 'export', icon: Download, label: 'Export', step: 6, hint: 'Download ACX package' },
 ];
 
 export function BookEditor() {
@@ -67,7 +68,7 @@ export function BookEditor() {
         <div style={styles.sidebarFooter}>
           <div style={styles.tipBox}>
             <span style={styles.tipIcon}>💡</span>
-            <span style={styles.tipText}>Follow steps 1→5 to produce your audiobook</span>
+            <span style={styles.tipText}>Follow steps 1→6 to produce your audiobook</span>
           </div>
         </div>
       </nav>

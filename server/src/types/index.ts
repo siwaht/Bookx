@@ -209,11 +209,15 @@ export interface SFXRequest {
   text: string;
   duration_seconds?: number;
   prompt_influence?: number;
+  loop?: boolean;
+  model_id?: string;
 }
 
 export interface MusicRequest {
   prompt: string;
-  duration_seconds?: number;
+  music_length_ms?: number;
+  force_instrumental?: boolean;
+  model_id?: string;
 }
 
 // ── QC Types ──
