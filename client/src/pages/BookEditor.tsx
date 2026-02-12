@@ -3,7 +3,7 @@ import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { books, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3 } from 'lucide-react';
+import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones } from 'lucide-react';
 
 const STEPS = [
   { to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', step: 1, hint: 'Import & split text', podcastHint: 'Import script / text', end: true },
@@ -28,7 +28,11 @@ export function BookEditor() {
     return () => setCurrentBook(null);
   }, [bookId]);
 
-  if (!book) return <div style={styles.loading}>Loading project...</div>;
+  if (!book) return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-deep)', color: 'var(--text-tertiary)' }}>
+      Loading project...
+    </div>
+  );
 
   const isPodcast = book.project_type === 'podcast';
 
@@ -36,21 +40,23 @@ export function BookEditor() {
     <div style={styles.layout}>
       <nav style={styles.sidebar} aria-label="Project editor navigation">
         <button onClick={() => navigate('/')} style={styles.backBtn}>
-          <ArrowLeft size={16} /> All Projects
+          <ArrowLeft size={14} /> All Projects
         </button>
 
         <div style={styles.bookInfo}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: isPodcast ? '#2a1a3a' : '#1a2a3a', color: isPodcast ? '#b88ad9' : '#6a9ad0' }}>
-              {isPodcast ? '🎙️ Podcast' : '📖 Audiobook'}
-            </span>
-          </div>
+          <span style={{
+            ...styles.typeBadge,
+            background: isPodcast ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
+            color: isPodcast ? 'var(--purple)' : 'var(--accent)',
+          }}>
+            {isPodcast ? '🎙️ Podcast' : '📖 Audiobook'}
+          </span>
           <h2 style={styles.bookTitle}>{book.title}</h2>
-          {book.author && <p style={styles.bookAuthor}>by {book.author}</p>}
+          {book.author && <p style={styles.bookAuthor}>{book.author}</p>}
         </div>
 
         <div style={styles.stepsLabel}>WORKFLOW</div>
-        <div style={styles.navList}>
+        <div style={styles.navList} className="stagger-children">
           {STEPS.map((item) => (
             <NavLink
               key={item.to}
@@ -58,14 +64,14 @@ export function BookEditor() {
               end={item.end}
               style={({ isActive }) => ({
                 ...styles.navItem,
-                background: isActive ? '#1e2a3a' : 'transparent',
-                borderLeft: isActive ? '3px solid #4A90D9' : '3px solid transparent',
+                ...(isActive ? styles.navItemActive : {}),
               })}
             >
               <div style={styles.stepNumber}>{item.step}</div>
               <div style={styles.navContent}>
                 <div style={styles.navLabel}>
-                  <item.icon size={15} style={{ opacity: 0.7 }} /> {isPodcast ? item.podcastLabel : item.label}
+                  <item.icon size={14} style={{ opacity: 0.6 }} />
+                  {isPodcast ? item.podcastLabel : item.label}
                 </div>
                 <div style={styles.navHint}>{isPodcast ? item.podcastHint : item.hint}</div>
               </div>
@@ -74,18 +80,18 @@ export function BookEditor() {
         </div>
 
         <div style={styles.sidebarFooter}>
-          <button onClick={() => navigate(`/book/${bookId}/usage`)} style={styles.settingsLink}>
-            <BarChart3 size={14} /> Usage & Costs
+          <button onClick={() => navigate(`/book/${bookId}/usage`)} style={styles.footerBtn}>
+            <BarChart3 size={13} /> Usage & Costs
           </button>
-          <button onClick={() => navigate('/settings')} style={styles.settingsLink}>
-            <Settings size={14} /> Settings & API Keys
+          <button onClick={() => navigate('/settings')} style={styles.footerBtn}>
+            <Settings size={13} /> Settings
           </button>
           <div style={styles.tipBox}>
-            <span style={styles.tipIcon}>💡</span>
+            <span style={{ fontSize: 13, flexShrink: 0 }}>💡</span>
             <span style={styles.tipText}>
               {isPodcast
                 ? 'Import your script, AI assigns speakers, then generate audio'
-                : 'Follow steps 1→6 to produce your audiobook'}
+                : 'Follow steps 1→7 to produce your audiobook'}
             </span>
           </div>
         </div>
@@ -98,46 +104,65 @@ export function BookEditor() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  layout: { display: 'flex', minHeight: '100vh' },
-  loading: { padding: 32, color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' },
+  layout: { display: 'flex', minHeight: '100vh', background: 'var(--bg-deep)' },
   sidebar: {
-    width: 240, background: '#111', padding: '16px 0',
-    display: 'flex', flexDirection: 'column', borderRight: '1px solid #1e1e1e',
-    flexShrink: 0,
+    width: 232, background: 'var(--bg-base)', padding: '14px 0',
+    display: 'flex', flexDirection: 'column',
+    borderRight: '1px solid var(--border-subtle)', flexShrink: 0,
   },
   backBtn: {
     display: 'flex', alignItems: 'center', gap: 6, background: 'none',
-    border: 'none', color: '#666', cursor: 'pointer', padding: '8px 16px', fontSize: 13,
-    transition: 'color 0.2s',
+    border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+    padding: '8px 16px', fontSize: 12, fontWeight: 500,
   },
-  bookInfo: { padding: '12px 16px', borderBottom: '1px solid #1e1e1e', marginBottom: 8 },
-  bookTitle: { fontSize: 15, color: '#e0e0e0', lineHeight: 1.3 },
-  bookAuthor: { fontSize: 12, color: '#555', marginTop: 4 },
-  stepsLabel: { fontSize: 10, color: '#444', letterSpacing: 1.5, padding: '12px 16px 6px', fontWeight: 600 },
-  navList: { display: 'flex', flexDirection: 'column', gap: 2, flex: 1 },
+  bookInfo: {
+    padding: '12px 16px 14px', borderBottom: '1px solid var(--border-subtle)',
+    marginBottom: 4, display: 'flex', flexDirection: 'column', gap: 6,
+  },
+  typeBadge: {
+    fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 500,
+    alignSelf: 'flex-start',
+  },
+  bookTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 },
+  bookAuthor: { fontSize: 11, color: 'var(--text-muted)' },
+  stepsLabel: {
+    fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, fontWeight: 600,
+    padding: '12px 16px 6px',
+  },
+  navList: { display: 'flex', flexDirection: 'column', gap: 1, flex: 1, padding: '0 6px' },
   navItem: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
-    textDecoration: 'none', transition: 'background 0.2s', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '9px 10px',
+    textDecoration: 'none', cursor: 'pointer', borderRadius: 'var(--radius-md)',
+    borderLeft: '2px solid transparent',
+    transition: 'all 150ms ease',
+  },
+  navItemActive: {
+    background: 'var(--accent-subtle)',
+    borderLeftColor: 'var(--accent)',
   },
   stepNumber: {
-    width: 22, height: 22, borderRadius: '50%', background: '#1e1e1e',
-    color: '#666', fontSize: 11, fontWeight: 600,
+    width: 20, height: 20, borderRadius: '50%', background: 'var(--bg-elevated)',
+    color: 'var(--text-muted)', fontSize: 10, fontWeight: 600,
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
   },
   navContent: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
-  navLabel: { display: 'flex', alignItems: 'center', gap: 6, color: '#bbb', fontSize: 13 },
-  navHint: { fontSize: 10, color: '#555' },
-  sidebarFooter: { padding: '12px 16px', borderTop: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column' as const, gap: 8 },
-  settingsLink: {
+  navLabel: { display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500 },
+  navHint: { fontSize: 10, color: 'var(--text-muted)' },
+  sidebarFooter: {
+    padding: '10px 12px', borderTop: '1px solid var(--border-subtle)',
+    display: 'flex', flexDirection: 'column' as const, gap: 6,
+  },
+  footerBtn: {
     display: 'flex', alignItems: 'center', gap: 6, background: 'none',
-    border: '1px solid #1e1e1e', color: '#666', cursor: 'pointer', padding: '8px 12px',
-    borderRadius: 6, fontSize: 12, width: '100%',
+    border: '1px solid var(--border-subtle)', color: 'var(--text-muted)',
+    cursor: 'pointer', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
+    fontSize: 11, width: '100%', fontWeight: 500,
   },
   tipBox: {
-    display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px',
-    background: '#0d1520', borderRadius: 8, border: '1px solid #1a2a3a',
+    display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 10px',
+    background: 'var(--accent-subtle)', borderRadius: 'var(--radius-md)',
+    border: '1px solid rgba(91,141,239,0.1)',
   },
-  tipIcon: { fontSize: 14, flexShrink: 0 },
-  tipText: { fontSize: 11, color: '#6a8ab0', lineHeight: 1.4 },
-  main: { flex: 1, overflow: 'auto', background: '#0a0a0a' },
+  tipText: { fontSize: 10, color: 'var(--accent)', lineHeight: 1.4 },
+  main: { flex: 1, overflow: 'auto', background: 'var(--bg-deep)' },
 };

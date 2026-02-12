@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { books } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { Plus, BookOpen, Trash2, LogOut, Settings, Mic } from 'lucide-react';
+import { Plus, BookOpen, Trash2, LogOut, Settings, Mic, Headphones, ArrowRight } from 'lucide-react';
 import { clearToken } from '../services/api';
 
 export function Dashboard() {
@@ -20,9 +20,7 @@ export function Dashboard() {
     try {
       const data = await books.list();
       setBookList(Array.isArray(data) ? data : []);
-    } catch (err: any) {
-      console.error('Failed to load books:', err);
-    }
+    } catch (err: any) { console.error('Failed to load books:', err); }
   };
 
   useEffect(() => { loadBooks(); }, []);
@@ -34,9 +32,7 @@ export function Dashboard() {
       const book = await books.create({ title, author, project_type: projectType, format } as any);
       setTitle(''); setAuthor(''); setShowCreate(false);
       navigate(`/book/${book.id}`);
-    } catch (err: any) {
-      alert(`Failed to create project: ${err.message}`);
-    }
+    } catch (err: any) { alert(`Failed to create project: ${err.message}`); }
   };
 
   const handleDelete = async (id: string, bookTitle: string, e: React.MouseEvent) => {
@@ -47,59 +43,53 @@ export function Dashboard() {
     }
   };
 
-  const handleLogout = () => {
-    clearToken();
-    setAuthenticated(false);
-  };
+  const handleLogout = () => { clearToken(); setAuthenticated(false); };
 
   return (
     <div style={styles.page}>
-      <header style={styles.header}>
-        <div>
-          <h1 style={styles.h1}>🎧 Audio Producer</h1>
+      <header style={styles.header} className="animate-in">
+        <div style={styles.headerLeft}>
+          <div style={styles.logoRow}>
+            <div style={styles.logoCircle}><Headphones size={20} color="#5b8def" /></div>
+            <h1 style={styles.h1}>Audio Producer</h1>
+          </div>
           <p style={styles.subtitle}>Create audiobooks and podcasts with AI voices, sound effects, and music</p>
         </div>
         <div style={styles.headerActions}>
-          <button onClick={() => navigate('/settings')} style={styles.settingsBtn} title="Settings & API Keys">
+          <button onClick={() => navigate('/settings')} style={styles.iconBtn} title="Settings">
             <Settings size={16} />
           </button>
           <button onClick={() => setShowCreate(true)} style={styles.createBtn}>
-            <Plus size={18} /> New Project
+            <Plus size={16} /> New Project
           </button>
-          <button onClick={handleLogout} style={styles.logoutBtn} title="Log out">
+          <button onClick={handleLogout} style={styles.iconBtn} title="Log out">
             <LogOut size={16} />
           </button>
         </div>
       </header>
 
       {showCreate && (
-        <form onSubmit={handleCreate} style={styles.createForm}>
-          <h3 style={styles.formTitle}>Create a new project</h3>
-
-          {/* Project type toggle */}
+        <form onSubmit={handleCreate} style={styles.createForm} className="animate-in-scale">
+          <h3 style={styles.formTitle}>New project</h3>
           <div style={styles.typeToggle}>
             <button type="button" onClick={() => { setProjectType('audiobook'); setFormat('single_narrator'); }}
               style={{ ...styles.typeBtn, ...(projectType === 'audiobook' ? styles.typeBtnActive : {}) }}>
-              <BookOpen size={16} /> Audiobook
+              <BookOpen size={15} /> Audiobook
             </button>
             <button type="button" onClick={() => { setProjectType('podcast'); setFormat('two_person_conversation'); }}
               style={{ ...styles.typeBtn, ...(projectType === 'podcast' ? styles.typeBtnActive : {}) }}>
-              <Mic size={16} /> Podcast
+              <Mic size={15} /> Podcast
             </button>
           </div>
-
           <input value={title} onChange={(e) => setTitle(e.target.value)}
-            placeholder={projectType === 'podcast' ? 'Episode title (e.g. Tech Talk #42)' : 'Book title (e.g. The Great Adventure)'}
+            placeholder={projectType === 'podcast' ? 'Episode title' : 'Book title'}
             style={styles.input} autoFocus aria-label="Project title" />
           <input value={author} onChange={(e) => setAuthor(e.target.value)}
-            placeholder={projectType === 'podcast' ? 'Host name (optional)' : 'Author name (optional)'}
+            placeholder={projectType === 'podcast' ? 'Host name (optional)' : 'Author (optional)'}
             style={styles.input} aria-label="Author or host" />
-
-          {/* Format selection */}
           <div style={styles.formatSection}>
             <label style={styles.formatLabel}>Format</label>
-            <select value={format} onChange={(e) => setFormat(e.target.value)} style={styles.formatSelect}
-              aria-label="Project format">
+            <select value={format} onChange={(e) => setFormat(e.target.value)} style={styles.select} aria-label="Project format">
               {projectType === 'audiobook' ? (
                 <>
                   <option value="single_narrator">Single narrator</option>
@@ -118,62 +108,78 @@ export function Dashboard() {
               )}
             </select>
           </div>
-
-          <p style={styles.formHint}>
-            {projectType === 'podcast'
-              ? 'Upload your script and AI will auto-assign speakers, suggest SFX & music.'
-              : 'Import your manuscript and AI will detect characters and assign voices.'}
-          </p>
-
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button type="submit" style={styles.submitBtn}>Create Project</button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button type="submit" style={styles.submitBtn}>Create</button>
             <button type="button" onClick={() => setShowCreate(false)} style={styles.cancelBtn}>Cancel</button>
           </div>
         </form>
       )}
 
-      {bookList.length > 0 && <h2 style={styles.sectionTitle}>Your Projects</h2>}
+      {bookList.length > 0 && <div style={styles.sectionLabel}>YOUR PROJECTS</div>}
 
-      <div style={styles.grid}>
+      <div style={styles.grid} className="stagger-children">
         {bookList.map((book) => (
           <div key={book.id} onClick={() => navigate(`/book/${book.id}`)} style={styles.card}
-            role="button" tabIndex={0} onKeyDown={(e) => e.key === 'Enter' && navigate(`/book/${book.id}`)}>
-            <div style={styles.cardIcon}>
-              {book.project_type === 'podcast' ? <Mic size={28} color="#9B59B6" /> : <BookOpen size={28} color="#4A90D9" />}
+            className="card-hover" role="button" tabIndex={0}
+            onKeyDown={(e) => e.key === 'Enter' && navigate(`/book/${book.id}`)}>
+            <div style={{
+              ...styles.cardIconWrap,
+              background: book.project_type === 'podcast' ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
+            }}>
+              {book.project_type === 'podcast'
+                ? <Mic size={20} color="var(--purple)" />
+                : <BookOpen size={20} color="var(--accent)" />}
             </div>
             <div style={styles.cardContent}>
               <h3 style={styles.cardTitle}>{book.title}</h3>
               {book.author && <p style={styles.cardAuthor}>{book.author}</p>}
-              <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center' }}>
-                <span style={{ ...styles.typeBadge, background: book.project_type === 'podcast' ? '#2a1a3a' : '#1a2a3a', color: book.project_type === 'podcast' ? '#b88ad9' : '#6a9ad0' }}>
-                  {book.project_type === 'podcast' ? '🎙️ Podcast' : '📖 Audiobook'}
+              <div style={styles.cardMeta}>
+                <span style={{
+                  ...styles.badge,
+                  background: book.project_type === 'podcast' ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
+                  color: book.project_type === 'podcast' ? 'var(--purple)' : 'var(--accent)',
+                }}>
+                  {book.project_type === 'podcast' ? 'Podcast' : 'Audiobook'}
                 </span>
                 <span style={styles.cardDate}>{new Date(book.created_at).toLocaleDateString()}</span>
               </div>
             </div>
-            <button onClick={(e) => handleDelete(book.id, book.title, e)} style={styles.deleteBtn}
-              aria-label={`Delete ${book.title}`}><Trash2 size={15} /></button>
+            <div style={styles.cardActions}>
+              <button onClick={(e) => handleDelete(book.id, book.title, e)} style={styles.deleteBtn}
+                aria-label={`Delete ${book.title}`}><Trash2 size={14} /></button>
+              <ArrowRight size={14} style={{ color: 'var(--text-muted)' }} />
+            </div>
           </div>
         ))}
       </div>
 
       {bookList.length === 0 && !showCreate && (
-        <div style={styles.emptyState}>
-          <div style={styles.emptyIcon}>🎧</div>
+        <div style={styles.emptyState} className="animate-in">
+          <div style={styles.emptyIconWrap}>
+            <Headphones size={36} color="var(--accent)" />
+          </div>
           <h3 style={styles.emptyTitle}>No projects yet</h3>
           <p style={styles.emptyText}>
-            Create an audiobook or podcast project. Import your text, and AI will assign characters,
-            suggest sound effects and music. Then generate audio with ElevenLabs voices.
+            Create a project, import your text, and AI will assign characters and generate audio with ElevenLabs voices.
           </p>
-          <div style={styles.emptySteps}>
-            <div style={styles.emptyStep}><span style={styles.stepDot}>1</span> Create a project (audiobook or podcast)</div>
-            <div style={styles.emptyStep}><span style={styles.stepDot}>2</span> Import text / script (EPUB, DOCX, TXT)</div>
-            <div style={styles.emptyStep}><span style={styles.stepDot}>3</span> AI auto-assigns characters, SFX & music</div>
-            <div style={styles.emptyStep}><span style={styles.stepDot}>4</span> Generate audio with ElevenLabs voices</div>
-            <div style={styles.emptyStep}><span style={styles.stepDot}>5</span> Arrange on timeline, render & export</div>
+          <div style={styles.emptySteps} className="stagger-children">
+            {[
+              'Create a project (audiobook or podcast)',
+              'Import text / script (EPUB, DOCX, TXT)',
+              'AI auto-assigns characters & voices',
+              'Generate audio, arrange on timeline',
+              'Render & export final audio',
+            ].map((step, i) => (
+              <div key={i} style={styles.emptyStep}>
+                <span style={styles.stepDot}>{i + 1}</span>
+                <span>{step}</span>
+              </div>
+            ))}
           </div>
-          <p style={{ fontSize: 12, color: '#555', marginTop: 16 }}>
-            First time? Go to <button onClick={() => navigate('/settings')} style={{ background: 'none', border: 'none', color: '#4A90D9', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' }}>Settings</button> to add your API keys.
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', marginTop: 20 }}>
+            First time? Go to{' '}
+            <button onClick={() => navigate('/settings')} style={styles.linkBtn}>Settings</button>
+            {' '}to add your API keys.
           </p>
         </div>
       )}
@@ -182,81 +188,108 @@ export function Dashboard() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { padding: '32px 40px', maxWidth: 1100, margin: '0 auto' },
+  page: { padding: '32px 40px', maxWidth: 960, margin: '0 auto', minHeight: '100vh', overflow: 'auto' },
   header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 },
-  h1: { fontSize: 26, color: '#e0e0e0', marginBottom: 4 },
-  subtitle: { fontSize: 14, color: '#555', lineHeight: 1.5 },
-  headerActions: { display: 'flex', gap: 8, alignItems: 'center' },
-  createBtn: {
-    display: 'flex', alignItems: 'center', gap: 8, padding: '10px 20px',
-    background: '#4A90D9', color: '#fff', border: 'none', borderRadius: 8,
-    cursor: 'pointer', fontSize: 14, fontWeight: 500, whiteSpace: 'nowrap',
+  headerLeft: {},
+  logoRow: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 },
+  logoCircle: {
+    width: 36, height: 36, borderRadius: '50%', background: 'var(--accent-subtle)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
   },
-  logoutBtn: {
-    background: 'none', border: '1px solid #2a2a2a', color: '#555', borderRadius: 8,
-    padding: '8px 10px', cursor: 'pointer',
+  h1: { fontSize: 22, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.3px' },
+  subtitle: { fontSize: 13, color: 'var(--text-tertiary)', marginLeft: 46 },
+  headerActions: { display: 'flex', gap: 8, alignItems: 'center' },
+  iconBtn: {
+    background: 'var(--bg-surface)', border: '1px solid var(--border-default)',
+    color: 'var(--text-tertiary)', borderRadius: 'var(--radius-md)',
+    padding: '8px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center',
+  },
+  createBtn: {
+    display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px',
+    background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)',
+    cursor: 'pointer', fontSize: 13, fontWeight: 500,
+    boxShadow: '0 2px 8px rgba(91,141,239,0.2)',
   },
   createForm: {
     display: 'flex', flexDirection: 'column', gap: 12, padding: 24,
-    background: '#141414', borderRadius: 12, marginBottom: 24, maxWidth: 440,
-    border: '1px solid #1e1e1e',
+    background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)',
+    marginBottom: 28, maxWidth: 420, border: '1px solid var(--border-subtle)',
+    boxShadow: 'var(--shadow-md)',
   },
-  formTitle: { fontSize: 16, color: '#e0e0e0' },
-  formHint: { fontSize: 12, color: '#555', marginTop: -4 },
-  input: {
-    padding: '10px 14px', borderRadius: 8, border: '1px solid #2a2a2a',
-    background: '#0a0a0a', color: '#e0e0e0', fontSize: 14, outline: 'none',
-  },
-  submitBtn: {
-    padding: '10px 20px', background: '#4A90D9', color: '#fff',
-    border: 'none', borderRadius: 8, cursor: 'pointer', fontWeight: 500,
-  },
-  cancelBtn: {
-    padding: '10px 20px', background: '#1e1e1e', color: '#888',
-    border: 'none', borderRadius: 8, cursor: 'pointer',
-  },
-  sectionTitle: { fontSize: 14, color: '#555', marginBottom: 12, textTransform: 'uppercase' as const, letterSpacing: 1 },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
-  card: {
-    position: 'relative', padding: '18px 20px', background: '#141414', borderRadius: 10,
-    cursor: 'pointer', transition: 'border-color 0.2s', border: '1px solid #1e1e1e',
-    display: 'flex', alignItems: 'center', gap: 14,
-  },
-  cardIcon: { flexShrink: 0 },
-  cardContent: { flex: 1, minWidth: 0 },
-  cardTitle: { fontSize: 15, color: '#e0e0e0', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  cardAuthor: { fontSize: 12, color: '#666', marginTop: 2 },
-  cardDate: { fontSize: 11, color: '#444', marginTop: 4 },
-  deleteBtn: {
-    background: 'none', border: 'none', color: '#333', cursor: 'pointer', padding: 6,
-    borderRadius: 6, transition: 'color 0.2s', flexShrink: 0,
-  },
-  settingsBtn: {
-    background: 'none', border: '1px solid #2a2a2a', color: '#666', borderRadius: 8,
-    padding: '8px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center',
-  },
+  formTitle: { fontSize: 15, color: 'var(--text-primary)', fontWeight: 600 },
   typeToggle: { display: 'flex', gap: 8 },
   typeBtn: {
-    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-    padding: '10px 16px', background: '#1a1a1a', color: '#888', border: '1px solid #222',
-    borderRadius: 8, cursor: 'pointer', fontSize: 14, transition: 'all 0.2s',
+    flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+    padding: '9px 14px', background: 'var(--bg-elevated)', color: 'var(--text-tertiary)',
+    border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)',
+    cursor: 'pointer', fontSize: 13,
   },
-  typeBtnActive: { background: '#1e2a3a', color: '#4A90D9', borderColor: '#4A90D9' },
+  typeBtnActive: {
+    background: 'var(--accent-subtle)', color: 'var(--accent)',
+    borderColor: 'rgba(91,141,239,0.3)',
+  },
+  input: {
+    padding: '10px 14px', borderRadius: 'var(--radius-md)',
+    border: '1px solid var(--border-default)', background: 'var(--bg-deep)',
+    color: 'var(--text-primary)', fontSize: 13, outline: 'none',
+  },
   formatSection: { display: 'flex', flexDirection: 'column' as const, gap: 4 },
-  formatLabel: { fontSize: 12, color: '#888' },
-  formatSelect: {
-    padding: '8px 12px', borderRadius: 8, border: '1px solid #2a2a2a',
-    background: '#0a0a0a', color: '#ddd', fontSize: 13, outline: 'none',
+  formatLabel: { fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500 },
+  select: {
+    padding: '8px 12px', borderRadius: 'var(--radius-md)',
+    border: '1px solid var(--border-default)', background: 'var(--bg-deep)',
+    color: 'var(--text-secondary)', fontSize: 12, outline: 'none',
   },
-  typeBadge: { fontSize: 10, padding: '2px 8px', borderRadius: 4, fontWeight: 500 },
+  submitBtn: {
+    padding: '10px 24px', background: 'var(--accent)', color: '#fff',
+    border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 500, fontSize: 13,
+  },
+  cancelBtn: {
+    padding: '10px 20px', background: 'var(--bg-elevated)', color: 'var(--text-tertiary)',
+    border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13,
+  },
+  sectionLabel: {
+    fontSize: 10, color: 'var(--text-muted)', letterSpacing: 1.5, fontWeight: 600,
+    marginBottom: 12,
+  },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 },
+  card: {
+    position: 'relative', padding: '16px 18px', background: 'var(--bg-surface)',
+    borderRadius: 'var(--radius-lg)', cursor: 'pointer',
+    border: '1px solid var(--border-subtle)',
+    display: 'flex', alignItems: 'center', gap: 14,
+  },
+  cardIconWrap: {
+    width: 44, height: 44, borderRadius: 'var(--radius-md)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  cardContent: { flex: 1, minWidth: 0 },
+  cardTitle: { fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  cardAuthor: { fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 },
+  cardMeta: { display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' },
+  badge: { fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 500 },
+  cardDate: { fontSize: 10, color: 'var(--text-muted)' },
+  cardActions: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0 },
+  deleteBtn: {
+    background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
+    padding: 4, borderRadius: 'var(--radius-sm)',
+  },
   emptyState: { textAlign: 'center', padding: '60px 20px' },
-  emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, color: '#ccc', marginBottom: 8 },
-  emptyText: { fontSize: 14, color: '#666', maxWidth: 500, margin: '0 auto 24px', lineHeight: 1.6 },
-  emptySteps: { display: 'inline-flex', flexDirection: 'column', gap: 8, textAlign: 'left' },
-  emptyStep: { display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, color: '#888' },
+  emptyIconWrap: {
+    width: 72, height: 72, borderRadius: '50%', background: 'var(--accent-subtle)',
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    margin: '0 auto 20px', boxShadow: '0 0 30px rgba(91,141,239,0.1)',
+  },
+  emptyTitle: { fontSize: 18, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 8 },
+  emptyText: { fontSize: 13, color: 'var(--text-tertiary)', maxWidth: 440, margin: '0 auto 28px', lineHeight: 1.6 },
+  emptySteps: { display: 'inline-flex', flexDirection: 'column', gap: 10, textAlign: 'left' },
+  emptyStep: { display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, color: 'var(--text-secondary)' },
   stepDot: {
-    width: 22, height: 22, borderRadius: '50%', background: '#1a2a3a', color: '#4A90D9',
-    fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    width: 22, height: 22, borderRadius: '50%', background: 'var(--accent-subtle)', color: 'var(--accent)',
+    fontSize: 10, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  linkBtn: {
+    background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer',
+    fontSize: 12, textDecoration: 'underline', padding: 0,
   },
 };

@@ -1,0 +1,424 @@
+/* ── Global Design System ── */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  /* Color palette */
+  --bg-deep: #08090a;
+  --bg-base: #0c0d0f;
+  --bg-surface: #131416;
+  --bg-elevated: #1a1b1f;
+  --bg-hover: #1f2024;
+  --bg-active: #252630;
+  
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  
+  --text-primary: #e8e9ed;
+  --text-secondary: #9a9ba3;
+  --text-tertiary: #5c5d66;
+  --text-muted: #3d3e45;
+  
+  --accent: #5b8def;
+  --accent-hover: #6d9af5;
+  --accent-subtle: rgba(91, 141, 239, 0.12);
+  --accent-glow: rgba(91, 141, 239, 0.25);
+  
+  --success: #4ade80;
+  --success-subtle: rgba(74, 222, 128, 0.1);
+  --warning: #fbbf24;
+  --warning-subtle: rgba(251, 191, 36, 0.1);
+  --danger: #f87171;
+  --danger-subtle: rgba(248, 113, 113, 0.1);
+  --purple: #a78bfa;
+  --purple-subtle: rgba(167, 139, 250, 0.1);
+  
+  /* Spacing */
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  
+  /* Shadows */
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.15);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.4), 0 2px 4px rgba(0,0,0,0.2);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.5), 0 4px 8px rgba(0,0,0,0.25);
+  --shadow-glow: 0 0 20px var(--accent-glow);
+  
+  /* Transitions */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 250ms;
+  --duration-slow: 400ms;
+}
+
+/* ── Base Reset ── */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg-deep);
+  color: var(--text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  line-height: 1.5;
+  overflow: hidden;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ── Focus styles ── */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--accent-subtle);
+  color: var(--text-primary);
+}
+
+/* ── Audio player styling ── */
+audio {
+  border-radius: var(--radius-sm);
+  height: 32px;
+  filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
+}
+audio::-webkit-media-controls-panel {
+  background: transparent;
+}
+
+/* ── Smooth transitions on interactive elements ── */
+button, a, input, select, textarea {
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+button:not(:disabled):active {
+  transform: translateY(0) scale(0.98);
+}
+
+/* ── Input focus glow ── */
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--accent-subtle);
+}
+
+/* ── Animations ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInScale {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes slideInLeft {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes gentleFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+/* ── Utility classes ── */
+.animate-in {
+  animation: fadeIn var(--duration-normal) var(--ease-out) both;
+}
+
+.animate-in-scale {
+  animation: fadeInScale var(--duration-normal) var(--ease-out) both;
+}
+
+/* Staggered children animation */
+.stagger-children > * {
+  animation: fadeIn var(--duration-normal) var(--ease-out) both;
+}
+.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
+.stagger-children > *:nth-child(2) { animation-delay: 40ms; }
+.stagger-children > *:nth-child(3) { animation-delay: 80ms; }
+.stagger-children > *:nth-child(4) { animation-delay: 120ms; }
+.stagger-children > *:nth-child(5) { animation-delay: 160ms; }
+.stagger-children > *:nth-child(6) { animation-delay: 200ms; }
+.stagger-children > *:nth-child(7) { animation-delay: 240ms; }
+.stagger-children > *:nth-child(8) { animation-delay: 280ms; }
+.stagger-children > *:nth-child(9) { animation-delay: 320ms; }
+.stagger-children > *:nth-child(10) { animation-delay: 360ms; }
+
+/* ── Card hover effect ── */
+.card-hover {
+  transition: all var(--duration-normal) var(--ease-out);
+}
+.card-hover:hover {
+  border-color: var(--border-strong);
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+/* ── Glass effect ── */
+.glass {
+  background: rgba(20, 21, 25, 0.8);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+/* ── Gradient text ── */
+.gradient-text {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--purple) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Loading skeleton ── */
+.skeleton {
+  background: linear-gradient(90deg, var(--bg-elevated) 25%, var(--bg-hover) 50%, var(--bg-elevated) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: var(--radius-sm);
+}
+
+/* ── Spinner ── */
+.spinner {
+  animation: spin 0.8s linear infinite;
+}
+
+/* ── Tooltip-like badges ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+}
+
+/* ── Page-level refinements ── */
+/* Smooth page transitions */
+main > div {
+  animation: fadeIn var(--duration-normal) var(--ease-out) both;
+}
+
+/* Better textarea styling */
+textarea {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+/* Nicer select dropdowns */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%235c5d66' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 30px !important;
+}
+
+/* Subtle hover on nav links */
+nav a:hover {
+  background: var(--bg-hover) !important;
+}
+
+/* Active nav link text color */
+nav a[aria-current="page"] .lucide,
+nav a[style*="4A90D9"] .lucide {
+  color: var(--accent);
+}
+
+/* Smooth border transitions on cards and panels */
+div[style*="border"] {
+  transition: border-color var(--duration-fast) var(--ease-out),
+              box-shadow var(--duration-fast) var(--ease-out);
+}
+
+/* Better disabled button state */
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed !important;
+  transform: none !important;
+}
+
+/* Subtle glow on primary buttons hover */
+button[style*="4A90D9"]:hover:not(:disabled),
+button[style*="5b8def"]:hover:not(:disabled) {
+  box-shadow: 0 4px 16px rgba(91, 141, 239, 0.3);
+}
+
+/* Smooth audio player */
+audio {
+  transition: opacity var(--duration-fast) var(--ease-out);
+}
+
+/* Tab-like buttons - smooth transitions */
+button[style*="tab"],
+div[style*="tabs"] button {
+  transition: all var(--duration-fast) var(--ease-out) !important;
+}
+
+/* Nicer alert/confirm dialogs can't be styled, but we can style the page overlay feel */
+/* Loading states */
+.loading-pulse {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+/* ══════════════════════════════════════════════════════
+   Global color overrides for inline-styled components
+   These target the common patterns used across all pages
+   ══════════════════════════════════════════════════════ */
+
+/* ── Sidebar & panel backgrounds ── */
+/* The app uses #1a1a1a, #111, #141414 for panels — we refine them */
+
+/* ── Smooth transitions everywhere ── */
+* {
+  transition-property: background-color, border-color, color, opacity, box-shadow;
+  transition-duration: 150ms;
+  transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Exclude elements where transition causes issues */
+audio, video, canvas, svg, img, input[type="range"] {
+  transition: none;
+}
+
+/* ── Better font rendering across all text ── */
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+p, span, label, div {
+  letter-spacing: -0.005em;
+}
+
+/* ── Refined input styling ── */
+input[type="text"],
+input[type="password"],
+input[type="number"],
+input[type="email"],
+textarea,
+select {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  letter-spacing: -0.01em;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+
+/* ── Range slider refinement ── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 4px;
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+  transition: transform 150ms ease;
+}
+input[type="range"]::-webkit-slider-thumb:hover {
+  transform: scale(1.2);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+}
+
+/* ── Checkbox refinement ── */
+input[type="checkbox"] {
+  accent-color: var(--accent);
+  width: 14px;
+  height: 14px;
+  cursor: pointer;
+}
+
+/* ── Better scrollbar for panels ── */
+div[style*="overflow: auto"],
+div[style*="overflow-y: auto"],
+div[style*="overflow: scroll"] {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.06) transparent;
+}
+
+/* ── Tooltip-style hover on small buttons ── */
+button[title]:hover::after {
+  opacity: 1;
+}
+
+/* ── Subtle border-radius on everything ── */
+/* Most elements already have border-radius, but ensure consistency */
+
+/* ── Progress bar animations ── */
+div[style*="transition: width"] {
+  transition: width 0.6s cubic-bezier(0.16, 1, 0.3, 1) !important;
+}
+
+/* ── Nicer code/monospace elements ── */
+code, .monospace, [style*="monospace"] {
+  font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'JetBrains Mono', monospace;
+  font-size: 0.9em;
+}
