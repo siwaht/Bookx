@@ -18,13 +18,21 @@ export function VoicesPage() {
 
   const loadCharacters = async () => {
     if (!bookId) return;
-    const data = await charsApi.list(bookId);
-    setCharacterList(data);
+    try {
+      const data = await charsApi.list(bookId);
+      setCharacterList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load characters:', err);
+    }
   };
 
   const loadVoices = async () => {
-    const data = await elevenlabs.voices();
-    setVoices(data);
+    try {
+      const data = await elevenlabs.voices();
+      setVoices(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load voices (check ElevenLabs API key):', err);
+    }
   };
 
   useEffect(() => { loadCharacters(); loadVoices(); }, [bookId]);

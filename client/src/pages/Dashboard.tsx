@@ -12,8 +12,12 @@ export function Dashboard() {
   const navigate = useNavigate();
 
   const loadBooks = async () => {
-    const data = await books.list();
-    setBookList(data);
+    try {
+      const data = await books.list();
+      setBookList(Array.isArray(data) ? data : []);
+    } catch (err: any) {
+      console.error('Failed to load books:', err);
+    }
   };
 
   useEffect(() => { loadBooks(); }, []);
@@ -21,11 +25,15 @@ export function Dashboard() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim()) return;
-    const book = await books.create({ title, author });
-    setTitle('');
-    setAuthor('');
-    setShowCreate(false);
-    navigate(`/book/${book.id}`);
+    try {
+      const book = await books.create({ title, author });
+      setTitle('');
+      setAuthor('');
+      setShowCreate(false);
+      navigate(`/book/${book.id}`);
+    } catch (err: any) {
+      alert(`Failed to create book: ${err.message}`);
+    }
   };
 
   const handleDelete = async (id: string, e: React.MouseEvent) => {

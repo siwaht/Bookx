@@ -17,9 +17,14 @@ export function BookEditor() {
     books.get(bookId).then((b) => {
       setBook(b);
       setCurrentBook(b);
+    }).catch((err) => {
+      console.error('Failed to load book:', err);
     });
 
-    elevenlabs.capabilities().then(setCapabilities).catch(console.error);
+    elevenlabs.capabilities().then(setCapabilities).catch(() => {
+      // ElevenLabs API key may not be set yet — that's OK
+      console.warn('Could not load ElevenLabs capabilities. Check your API key.');
+    });
 
     return () => setCurrentBook(null);
   }, [bookId]);

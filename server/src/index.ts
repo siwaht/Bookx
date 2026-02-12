@@ -18,7 +18,6 @@ import { audioRouter } from './routes/audio.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3001', 10);
-const HOST = process.env.NODE_ENV === 'production' ? '0.0.0.0' : 'localhost';
 
 async function main() {
   // Initialize database
@@ -56,7 +55,7 @@ async function main() {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 
-  app.listen(PORT, HOST, () => {
+  app.listen(PORT, () => {
     console.log(`[Server] Audiobook Maker running on http://localhost:${PORT}`);
   });
 }

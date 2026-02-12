@@ -30,12 +30,16 @@ export function TimelinePage() {
 
   const loadTracks = useCallback(async () => {
     if (!bookId) return;
-    const [trackData, markerData] = await Promise.all([
-      timelineApi.tracks(bookId),
-      timelineApi.chapterMarkers(bookId),
-    ]);
-    setTracks(trackData);
-    setMarkers(markerData);
+    try {
+      const [trackData, markerData] = await Promise.all([
+        timelineApi.tracks(bookId),
+        timelineApi.chapterMarkers(bookId),
+      ]);
+      setTracks(Array.isArray(trackData) ? trackData : []);
+      setMarkers(Array.isArray(markerData) ? markerData : []);
+    } catch (err) {
+      console.error('Failed to load timeline:', err);
+    }
   }, [bookId]);
 
   useEffect(() => { loadTracks(); }, [loadTracks]);

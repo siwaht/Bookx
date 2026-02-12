@@ -26,20 +26,32 @@ export function ManuscriptPage() {
 
   const loadChapters = useCallback(async () => {
     if (!bookId) return;
-    const data = await chaptersApi.list(bookId);
-    setChapterList(data);
-    if (data.length > 0 && !selectedChapter) setSelectedChapter(data[0]);
+    try {
+      const data = await chaptersApi.list(bookId);
+      setChapterList(Array.isArray(data) ? data : []);
+      if (Array.isArray(data) && data.length > 0 && !selectedChapter) setSelectedChapter(data[0]);
+    } catch (err) {
+      console.error('Failed to load chapters:', err);
+    }
   }, [bookId]);
 
   const loadSegments = useCallback(async (chapterId: string) => {
-    const data = await segmentsApi.list(chapterId);
-    setSegmentList(data);
+    try {
+      const data = await segmentsApi.list(chapterId);
+      setSegmentList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load segments:', err);
+    }
   }, []);
 
   const loadCharacters = useCallback(async () => {
     if (!bookId) return;
-    const data = await charsApi.list(bookId);
-    setCharacterList(data);
+    try {
+      const data = await charsApi.list(bookId);
+      setCharacterList(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Failed to load characters:', err);
+    }
   }, [bookId]);
 
   useEffect(() => { loadChapters(); loadCharacters(); }, [loadChapters, loadCharacters]);
