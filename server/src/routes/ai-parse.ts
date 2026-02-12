@@ -89,6 +89,61 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
     }
   });
 
+  // POST /api/books/:bookId/ai-parse/v3-tags
+  // Uses LLM to suggest V3 audio tags for a given text
+  router.post('/v3-tags', async (req: Request, res: Response) => {
+    try {
+      const { text, context } = req.body; // text = segment or chapter text, context = optional surrounding context
+      if (!text?.trim()) { res.status(400).json({ error: 'No text provided' }); return; }
+
+      const provider = getSetting(db, 'default_llm_provider') || detectAvailableProvider(db);
+      if (!provider) {
+        res.status(400).json({ error: 'No LLM API key configured. Go to Settings and add an API key.' });
+        return;
+      }
+      const apiKey = getSetting(db, `${provider}_api_key`);
+      if (!apiKey) {
+        res.status(400).json({ error: `No API key found for ${provider}.` });
+        return;
+      }
+
+      const systemPrompt = `You are an expert audio production assistant specializing in ElevenLabs v3 audio tags.
+
+Given text from an audiobook or podcast, insert appropriate v3 audio tags to make the narration more expressive and engaging.
+
+Available tags (wrap in square brackets):
+- Emotions: [happy], [sad], [angry], [fearful], [excited], [melancholic], [romantic], [mysterious], [anxious], [confident], [nostalgic], [playful], [serious], [tender], [dramatic]
+- Vocal Effects: [whisper], [shout], [gasp], [sigh], [laugh], [sob], [yawn], [cough], [chuckle], [giggle], [growl], [murmur], [panting], [clears throat]
+- Styles: [conversational], [formal], [theatrical], [monotone], [breathy], [crisp], [commanding], [gentle], [intimate], [distant], [warm], [cold]
+- Narrative: [storytelling tone], [voice-over style], [documentary style], [bedtime story], [dramatic pause], [suspense build-up], [inner monologue], [flashback tone]
+- Rhythm: [slow], [fast], [dramatic pause], [pauses for effect], [staccato], [measured], [rushed], [languid], [building tension]
+
+Rules:
+- Insert tags naturally before the text they should affect
+- Don't over-tag — use 2-5 tags per paragraph max
+- Place tags where they create the most impact
+- Keep the original text exactly as-is, only add tags
+- Return ONLY a JSON object with "tagged_text" (the text with tags inserted) and "tags_used" (array of tag names used)`;
+
+      const result = await callLLM(provider, apiKey, systemPrompt, text.slice(0, 4000));
+
+      let parsed;
+      try {
+        const jsonMatch = result.match(/```json\s*([\s\S]*?)```/) || result.match(/\{[\s\S]*\}/);
+        const jsonStr = jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : result;
+        parsed = JSON.parse(jsonStr);
+      } catch {
+        res.status(500).json({ error: 'LLM returned invalid response. Try again.', raw: result.slice(0, 1000) });
+        return;
+      }
+
+      res.json({ tagged_text: parsed.tagged_text || text, tags_used: parsed.tags_used || [], provider });
+    } catch (err: any) {
+      console.error('[AI V3 Tags Error]', err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
 

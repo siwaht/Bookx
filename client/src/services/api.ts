@@ -65,10 +65,18 @@ export const books = {
 // ── Chapters ──
 export const chapters = {
   list: (bookId: string) => request<any[]>(`/books/${bookId}/chapters`),
+  create: (bookId: string, data: { title?: string; raw_text?: string }) =>
+    request<any>(`/books/${bookId}/chapters`, { method: 'POST', body: JSON.stringify(data) }),
   update: (bookId: string, id: string, data: any) =>
     request<any>(`/books/${bookId}/chapters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   reorder: (bookId: string, ids: string[]) =>
     request<void>(`/books/${bookId}/chapters/reorder`, { method: 'POST', body: JSON.stringify({ ids }) }),
+  split: (bookId: string, id: string, splitAt: number, newTitle?: string) =>
+    request<{ original: any; new_chapter: any }>(`/books/${bookId}/chapters/${id}/split`, {
+      method: 'POST', body: JSON.stringify({ split_at: splitAt, new_title: newTitle }),
+    }),
+  duplicate: (bookId: string, id: string) =>
+    request<any>(`/books/${bookId}/chapters/${id}/duplicate`, { method: 'POST' }),
   delete: (bookId: string, id: string) =>
     request<void>(`/books/${bookId}/chapters/${id}`, { method: 'DELETE' }),
 };
@@ -200,4 +208,9 @@ export const aiParse = {
     }>(`/books/${bookId}/ai-parse`, {
       method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }),
     }),
+  suggestV3Tags: (bookId: string, text: string) =>
+    request<{ tagged_text: string; tags_used: string[]; provider: string }>(
+      `/books/${bookId}/ai-parse/v3-tags`, {
+        method: 'POST', body: JSON.stringify({ text }),
+      }),
 };

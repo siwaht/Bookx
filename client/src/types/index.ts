@@ -23,6 +23,12 @@ export interface Chapter {
   sort_order: number;
   raw_text: string;
   cleaned_text: string | null;
+  stats?: {
+    total_segments: number;
+    assigned: number;
+    with_audio: number;
+    on_timeline: number;
+  };
 }
 
 export interface Character {
