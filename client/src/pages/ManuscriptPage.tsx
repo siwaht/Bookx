@@ -7,12 +7,13 @@ import {
   characters as charsApi,
   timeline as timelineApi,
   aiParse,
+  audioUrl,
 } from '../services/api';
 import type { Chapter, Segment, Character } from '../types';
 import {
   Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen,
   Scissors, Users, Volume2, Wand2, Loader, Edit3, Copy, ChevronUp,
-  ChevronDown, Check, X, Tag, MoreVertical, Send,
+  ChevronDown, Check, X, Tag, MoreVertical, Send, Pause, Square,
 } from 'lucide-react';
 
 // V3 audio tags for quick insertion
@@ -65,6 +66,10 @@ export function ManuscriptPage() {
   const [editingSegId, setEditingSegId] = useState<string | null>(null);
   const [editingSegText, setEditingSegText] = useState('');
 
+  // Audio playback state per segment
+  const [playingSegId, setPlayingSegId] = useState<string | null>(null);
+  const audioRefs = useRef<Record<string, HTMLAudioElement | null>>({});
+
   // V3 tag panel
   const [showTagPanel, setShowTagPanel] = useState(false);
 
@@ -108,6 +113,24 @@ export function ManuscriptPage() {
 
   useEffect(() => { loadChapters(); loadCharacters(); }, [loadChapters, loadCharacters]);
   useEffect(() => { if (selectedChapterId) loadSegments(selectedChapterId); }, [selectedChapterId, loadSegments]);
+
+  // ── Audio Playback ──
+  const togglePlay = (segId: string, assetId: string) => {
+    const audio = audioRefs.current[segId];
+    if (!audio) return;
+    if (playingSegId === segId) {
+      audio.pause();
+      setPlayingSegId(null);
+    } else {
+      // Stop any other playing audio
+      Object.entries(audioRefs.current).forEach(([id, el]) => {
+        if (el && id !== segId) el.pause();
+      });
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+      setPlayingSegId(segId);
+    }
+  };
 
   // ── Chapter Actions ──
 
@@ -189,7 +212,6 @@ export function ManuscriptPage() {
 
   const handleChapterTextChange = (text: string) => {
     if (!selectedChapter || !bookId) return;
-    // Update both raw_text and clear cleaned_text so the textarea reflects edits
     setChapterList((prev) => prev.map((c) => c.id === selectedChapter.id ? { ...c, raw_text: text, cleaned_text: null } : c));
     setSaveStatus('saving');
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -239,20 +261,19 @@ export function ManuscriptPage() {
       await segmentsApi.create(selectedChapter.id, { text: paragraphs[i].trim(), sort_order: i });
     }
     loadSegments(selectedChapter.id);
-    loadChapters(); // refresh stats
+    loadChapters();
   };
 
   const handleGenerate = async (segmentId: string) => {
     if (!selectedChapter) return;
     setGeneratingId(segmentId);
     setGenElapsed(0);
-    // Start elapsed timer
     if (genTimerRef.current) clearInterval(genTimerRef.current);
     genTimerRef.current = setInterval(() => setGenElapsed((e) => e + 1), 1000);
     try {
       await segmentsApi.generate(selectedChapter.id, segmentId);
       setSentSegments((prev) => { const next = new Set(prev); next.delete(segmentId); return next; });
-      loadSegments(selectedChapter.id);
+      await loadSegments(selectedChapter.id);
       loadChapters();
     } catch (err: any) { alert(`Generation failed: ${err.message}`); }
     finally {
@@ -266,11 +287,8 @@ export function ManuscriptPage() {
     if (!bookId) return;
     setSendingId(segmentId);
     try {
-      const result = await timelineApi.sendSegment(bookId, segmentId);
+      await timelineApi.sendSegment(bookId, segmentId);
       setSentSegments((prev) => new Set(prev).add(segmentId));
-      if (result.updated) {
-        // Clip was updated with new audio
-      }
       loadChapters();
     } catch (err: any) { alert(`Send to timeline failed: ${err.message}`); }
     finally { setSendingId(null); }
@@ -326,7 +344,7 @@ export function ManuscriptPage() {
     loadChapters();
   };
 
-  // ── Timeline Actions (Two-step: Generate TTS → Populate Timeline) ──
+  // ── Timeline Actions ──
 
   const handlePopulateAll = async () => {
     if (!bookId) return;
@@ -337,12 +355,10 @@ export function ManuscriptPage() {
     try {
       const result = await timelineApi.generateAndPopulate(bookId);
       const { tts, timeline: tl } = result;
-      let msg = `Step 1 — TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} already had audio`;
+      let msg = `TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} already had audio`;
       if (tts.failed > 0) msg += `, ${tts.failed} failed`;
-      msg += `\nStep 2 — Timeline: ${tl.clips_created} clips placed, ${tl.markers_created} markers.`;
-      if (tts.failed > 0 && tts.errors.length > 0) {
-        msg += `\n\nErrors:\n${tts.errors.slice(0, 5).join('\n')}`;
-      }
+      msg += `\nTimeline: ${tl.clips_created} clips placed, ${tl.markers_created} markers.`;
+      if (tts.failed > 0 && tts.errors.length > 0) msg += `\n\nErrors:\n${tts.errors.slice(0, 5).join('\n')}`;
       alert(msg);
       loadChapters();
     } catch (err: any) { alert(`Generate & populate failed: ${err.message}`); }
@@ -379,7 +395,7 @@ export function ManuscriptPage() {
     } catch (err: any) {
       const msg = err.message || 'Unknown error';
       if (msg.includes('No LLM API key') || msg.includes('No API key')) {
-        alert(`AI Auto-Assign requires an LLM API key.\n\nGo to Settings (gear icon) and add an OpenAI, Mistral, or Gemini API key.\n\nError: ${msg}`);
+        alert(`AI Auto-Assign requires an LLM API key.\n\nGo to Settings and add an OpenAI, Mistral, or Gemini API key.\n\nError: ${msg}`);
       } else {
         alert(`AI parse failed: ${msg}`);
       }
@@ -395,7 +411,7 @@ export function ManuscriptPage() {
       if (result.assigned > 0) {
         alert(`Auto-assigned ${result.assigned} segments by speaker name.\n\nMatches: ${result.matches.map(m => m.character_name).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`);
       } else {
-        alert('No segments matched any character names.\n\nMake sure segment text starts with "NAME:" pattern (e.g. "KAI: Hello there").');
+        alert('No segments matched any character names.\n\nMake sure segment text starts with "NAME:" pattern.');
       }
       await loadChapters();
       await loadCharacters();
@@ -415,8 +431,6 @@ export function ManuscriptPage() {
 
   const chapterText = selectedChapter ? (selectedChapter.cleaned_text || selectedChapter.raw_text) : '';
 
-
-  // ── Progress helper ──
   const getChapterProgress = (ch: Chapter & { stats?: ChapterStats }) => {
     const s = ch.stats;
     if (!s || s.total_segments === 0) return { step: 0, label: 'No segments', color: '#555' };
@@ -446,7 +460,6 @@ export function ManuscriptPage() {
           <input ref={fileRef} type="file" accept=".txt,.md,.docx,.epub,.html,.htm" onChange={handleImport} hidden aria-label="Import manuscript file" />
         </div>
 
-        {/* Add chapter inline form */}
         {addingChapter && (
           <div style={styles.addChapterForm}>
             <input value={newChapterTitle} onChange={(e) => setNewChapterTitle(e.target.value)}
@@ -458,7 +471,6 @@ export function ManuscriptPage() {
           </div>
         )}
 
-        {/* AI Parse bar */}
         {hasChapters && (
           <div style={styles.aiBar}>
             <button onClick={handleAiParse} disabled={aiParsing} style={styles.aiParseBtn}>
@@ -473,7 +485,6 @@ export function ManuscriptPage() {
           </div>
         )}
 
-        {/* Chapter list */}
         <div style={styles.chapterList}>
           {chapterList.map((ch, idx) => {
             const prog = getChapterProgress(ch);
@@ -505,7 +516,6 @@ export function ManuscriptPage() {
                       <button onClick={(e) => { e.stopPropagation(); setChapterMenuId(showMenu ? null : ch.id); }}
                         style={styles.menuBtn}><MoreVertical size={12} /></button>
                     </div>
-                    {/* Context menu */}
                     {showMenu && (
                       <div style={styles.chapterMenu}>
                         <button onClick={() => { setEditingChapterId(ch.id); setEditingTitle(ch.title); setChapterMenuId(null); }}
@@ -540,7 +550,6 @@ export function ManuscriptPage() {
           )}
         </div>
 
-        {/* Footer: Send all to timeline */}
         {hasChapters && (
           <div style={styles.panelFooter}>
             <button onClick={handlePopulateAll} disabled={populating} style={styles.populateBtn}
@@ -590,7 +599,6 @@ export function ManuscriptPage() {
               </div>
             </div>
 
-            {/* V3 Tag insertion panel */}
             {showTagPanel && (
               <div style={styles.tagPanel}>
                 {V3_TAGS.map((cat) => (
@@ -606,7 +614,6 @@ export function ManuscriptPage() {
               </div>
             )}
 
-            {/* Split indicator */}
             {splitMode && splitPos !== null && (
               <div style={styles.splitIndicator}>
                 Split at position {splitPos} / {chapterText.length} — "{chapterText.slice(Math.max(0, splitPos - 20), splitPos)}|{chapterText.slice(splitPos, splitPos + 20)}"
@@ -617,15 +624,8 @@ export function ManuscriptPage() {
               ref={textareaRef}
               value={chapterText}
               onChange={(e) => handleChapterTextChange(e.target.value)}
-              onClick={(e) => {
-                if (splitMode) {
-                  setSplitPos((e.target as HTMLTextAreaElement).selectionStart);
-                }
-              }}
-              style={{
-                ...styles.textarea,
-                ...(splitMode ? { cursor: 'crosshair', borderColor: '#D97A4A' } : {}),
-              }}
+              onClick={(e) => { if (splitMode) setSplitPos((e.target as HTMLTextAreaElement).selectionStart); }}
+              style={{ ...styles.textarea, ...(splitMode ? { cursor: 'crosshair', borderColor: '#D97A4A' } : {}) }}
               aria-label="Chapter text editor"
             />
 
@@ -669,7 +669,6 @@ export function ManuscriptPage() {
           </div>
         </div>
 
-        {/* Workflow progress */}
         {hasSegments && (
           <div style={styles.workflowBar}>
             <div style={styles.workflowStep}>
@@ -704,7 +703,7 @@ export function ManuscriptPage() {
           <div style={{ ...styles.progressBar, background: batchGenerating ? '#0f1a0f' : '#111' }}>
             {batchGenerating && (
               <div style={{ height: 3, background: '#222', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
-                <div style={{ height: '100%', background: '#4A90D9', borderRadius: 2, width: '60%', animation: 'none', transition: 'width 0.5s' }} />
+                <div style={{ height: '100%', background: '#4A90D9', borderRadius: 2, width: '60%' }} />
               </div>
             )}
             <span style={{ fontSize: 11, color: batchGenerating ? '#8f8' : '#aaa' }}>
@@ -740,6 +739,7 @@ export function ManuscriptPage() {
             const hasAudio = !!seg.audio_asset_id;
             const hasChar = !!seg.character_id;
             const charName = characterList.find(c => c.id === seg.character_id)?.name;
+            const isPlaying = playingSegId === seg.id;
 
             return (
               <div key={seg.id} style={{
@@ -761,7 +761,7 @@ export function ManuscriptPage() {
                     <Trash2 size={11} /></button>
                 </div>
 
-                {/* Text: always visible, click to edit */}
+                {/* Text: click to edit */}
                 {isEditingSeg ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <textarea value={editingSegText} onChange={(e) => setEditingSegText(e.target.value)}
@@ -780,17 +780,41 @@ export function ManuscriptPage() {
                   </p>
                 )}
 
-                {/* Audio studio: generate, play, edit, send */}
+                {/* ══════ AUDIO STUDIO AREA ══════ */}
                 <div style={styles.segStudio}>
+
+                  {/* ── BIG AUDIO PLAYER (only when audio exists) ── */}
                   {hasAudio && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      <audio src={`/api/audio/${seg.audio_asset_id}`} controls style={{ height: 32, width: '100%' }} />
-                      <span style={{ fontSize: 9, color: '#555' }}>
-                        {charName ? `Voice: ${charName}` : ''} · Click text above to edit, then regenerate
-                      </span>
+                    <div style={styles.audioPlayerBox}>
+                      <div style={styles.audioPlayerRow}>
+                        <button
+                          onClick={() => togglePlay(seg.id, seg.audio_asset_id!)}
+                          style={{
+                            ...styles.bigPlayBtn,
+                            background: isPlaying ? '#c0392b' : '#27ae60',
+                          }}
+                          title={isPlaying ? 'Stop' : 'Play preview'}
+                        >
+                          {isPlaying ? <Square size={18} /> : <Play size={18} />}
+                        </button>
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2 }}>
+                          <audio
+                            ref={(el) => { audioRefs.current[seg.id] = el; }}
+                            src={audioUrl(seg.audio_asset_id!)}
+                            controls
+                            onEnded={() => setPlayingSegId(null)}
+                            onPause={() => { if (playingSegId === seg.id) setPlayingSegId(null); }}
+                            style={{ width: '100%', height: 36 }}
+                          />
+                          <span style={{ fontSize: 9, color: '#666' }}>
+                            🎙 {charName || 'Unknown voice'} · Edit text above → Regenerate → Listen again
+                          </span>
+                        </div>
+                      </div>
                     </div>
                   )}
 
+                  {/* ── Action buttons ── */}
                   <div style={styles.segBtnRow}>
                     {/* Generate / Regenerate */}
                     <button onClick={() => handleGenerate(seg.id)} style={{
@@ -813,7 +837,7 @@ export function ManuscriptPage() {
                           }} />
                         </div>
                         <span style={styles.genProgressText}>
-                          {genElapsed}s elapsed · ~{Math.max(1, Math.ceil(seg.text.length / 200) * 3 - genElapsed)}s left
+                          ⏳ {genElapsed}s elapsed · ~{Math.max(1, Math.ceil(seg.text.length / 200) * 3 - genElapsed)}s left
                           <span style={{ color: '#555' }}> ({seg.text.length} chars)</span>
                         </span>
                       </div>
@@ -840,7 +864,7 @@ export function ManuscriptPage() {
                   {!hasChar && !hasAudio && (
                     <span style={{ fontSize: 10, color: '#555', lineHeight: 1.4 }}>① Assign a character above → ② Generate → ③ Listen & tweak → ④ Send to timeline</span>
                   )}
-                  {hasChar && !hasAudio && (
+                  {hasChar && !hasAudio && !isGenerating && (
                     <span style={{ fontSize: 10, color: '#8f8' }}>Ready. Click "Generate" to create audio preview.</span>
                   )}
                   {hasAudio && !isSent && (
@@ -866,7 +890,6 @@ export function ManuscriptPage() {
         </div>
       </div>
 
-      {/* Close chapter menu on outside click */}
       {chapterMenuId && (
         <div style={styles.overlay} onClick={() => setChapterMenuId(null)} />
       )}
@@ -877,13 +900,10 @@ export function ManuscriptPage() {
 const styles: Record<string, React.CSSProperties> = {
   container: { display: 'flex', gap: 8, height: 'calc(100vh - 48px)', position: 'relative' },
   overlay: { position: 'fixed', inset: 0, zIndex: 5 },
-
-  // Chapter panel
   chapterPanel: { width: 240, background: '#1a1a1a', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 10 },
   panelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 10px', borderBottom: '1px solid #222', gap: 4 },
   panelTitle: { fontSize: 13, color: '#fff', whiteSpace: 'nowrap' },
   panelFooter: { padding: 8, borderTop: '1px solid #222' },
-
   smallBtn: {
     display: 'flex', alignItems: 'center', gap: 3, padding: '4px 8px',
     background: '#333', color: '#aaa', border: 'none', borderRadius: 5, cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap',
@@ -893,20 +913,17 @@ const styles: Record<string, React.CSSProperties> = {
     background: '#333', color: '#aaa', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 10,
   },
   iconBtn: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: 2 },
-
   addChapterForm: { display: 'flex', gap: 4, padding: '6px 10px', borderBottom: '1px solid #222', alignItems: 'center' },
   inlineInput: {
     flex: 1, padding: '4px 8px', background: '#0f0f0f', color: '#ddd', border: '1px solid #444',
     borderRadius: 4, fontSize: 12, outline: 'none',
   },
-
   aiBar: { padding: '6px 10px', borderBottom: '1px solid #222' },
   aiParseBtn: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, width: '100%',
     padding: '6px 10px', background: '#2a1a3a', color: '#b88ad9', border: '1px solid #3a2a4a',
     borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500,
   },
-
   chapterList: { flex: 1, overflow: 'auto' },
   chapterItem: { position: 'relative', display: 'flex', flexDirection: 'column', borderBottom: '1px solid #1a1a1a' },
   chapterBtn: {
@@ -919,7 +936,6 @@ const styles: Record<string, React.CSSProperties> = {
   progressDot: { width: 8, height: 8, borderRadius: '50%', flexShrink: 0 },
   progressLabel: { fontSize: 10, color: '#666', flex: 1 },
   menuBtn: { background: 'none', border: 'none', color: '#555', cursor: 'pointer', padding: 2 },
-
   chapterMenu: {
     position: 'absolute', top: '100%', right: 8, zIndex: 20,
     background: '#222', border: '1px solid #333', borderRadius: 8, padding: 4,
@@ -930,16 +946,12 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent', color: '#aaa', border: 'none', borderRadius: 4,
     cursor: 'pointer', fontSize: 11, textAlign: 'left', whiteSpace: 'nowrap',
   },
-
   populateBtn: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5, width: '100%',
     padding: '7px 10px', background: '#4A90D9', color: '#fff', border: 'none', borderRadius: 6,
     cursor: 'pointer', fontSize: 11,
   },
-
   emptyState: { padding: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, textAlign: 'center' },
-
-  // Editor panel
   editorPanel: { flex: 1, background: '#1a1a1a', borderRadius: 12, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 },
   editorHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderBottom: '1px solid #222', gap: 8, flexWrap: 'wrap' },
   editorFooter: { display: 'flex', justifyContent: 'space-between', padding: '4px 12px', borderTop: '1px solid #222' },
@@ -948,7 +960,6 @@ const styles: Record<string, React.CSSProperties> = {
     resize: 'none', fontSize: 14, lineHeight: 1.8, outline: 'none', fontFamily: 'Georgia, serif',
   },
   emptyEditor: { flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' },
-
   tagPanel: { padding: '6px 12px', borderBottom: '1px solid #222', background: '#111', display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 160, overflow: 'auto' },
   tagRow: { display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' },
   tagCatLabel: { fontSize: 10, color: '#666', minWidth: 60 },
@@ -956,12 +967,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '2px 6px', background: '#1e2a3a', color: '#6a9ad0', border: '1px solid #2a3a5a',
     borderRadius: 3, cursor: 'pointer', fontSize: 10, fontFamily: 'monospace',
   },
-
   splitIndicator: { padding: '4px 12px', background: '#2a1a0a', color: '#D97A4A', fontSize: 11, borderBottom: '1px solid #3a2a1a', fontFamily: 'monospace' },
-
-  // Segment panel
   segmentPanel: { width: 420, background: '#1a1a1a', borderRadius: 12, overflow: 'hidden', display: 'flex', flexDirection: 'column' },
-
   workflowBar: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
     padding: '6px 10px', background: '#111', borderBottom: '1px solid #222',
@@ -972,10 +979,8 @@ const styles: Record<string, React.CSSProperties> = {
     justifyContent: 'center', fontSize: 9, color: '#fff', fontWeight: 600,
   },
   wfArrow: { color: '#333', fontSize: 10 },
-
   progressBar: { padding: '4px 10px', background: '#111', borderBottom: '1px solid #222' },
   statsRow: { display: 'flex', justifyContent: 'space-between', padding: '4px 10px', borderBottom: '1px solid #222', alignItems: 'center', gap: 6 },
-
   segmentList: { flex: 1, overflow: 'auto', padding: 4 },
   segmentItem: { padding: 10, borderBottom: '1px solid #222', display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 2, borderRadius: 8, background: '#141414' },
   segmentHeader: { display: 'flex', alignItems: 'center', gap: 4 },
@@ -990,8 +995,16 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4, fontSize: 12, lineHeight: 1.5, outline: 'none', resize: 'vertical', fontFamily: 'inherit',
   },
   segStudio: { display: 'flex', flexDirection: 'column', gap: 6, padding: 8, background: '#0f0f0f', borderRadius: 6, border: '1px solid #1e1e1e' },
+  audioPlayerBox: {
+    background: '#0a1a0a', border: '1px solid #1a3a1a', borderRadius: 8, padding: 10,
+  },
+  audioPlayerRow: { display: 'flex', alignItems: 'center', gap: 10 },
+  bigPlayBtn: {
+    width: 44, height: 44, borderRadius: '50%', border: 'none', cursor: 'pointer',
+    display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#fff',
+    flexShrink: 0, fontSize: 18,
+  },
   segBtnRow: { display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' },
-  segActions: { display: 'flex', alignItems: 'center', gap: 4 },
   genBtn: {
     display: 'flex', alignItems: 'center', gap: 4, padding: '6px 14px',
     background: '#2d5a27', color: '#8f8', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 11, fontWeight: 500,
@@ -1004,8 +1017,4 @@ const styles: Record<string, React.CSSProperties> = {
   genProgressBar: { height: 4, background: '#222', borderRadius: 2, overflow: 'hidden', width: '100%' },
   genProgressFill: { height: '100%', background: '#4A90D9', borderRadius: 2, transition: 'width 1s linear' },
   genProgressText: { fontSize: 9, color: '#888', whiteSpace: 'nowrap' },
-  regenBtn: {
-    padding: '3px 5px', background: '#333', color: '#888',
-    border: 'none', borderRadius: 4, cursor: 'pointer',
-  },
 };

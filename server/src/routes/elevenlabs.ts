@@ -168,13 +168,16 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
       fs.writeFileSync(filePath, buffer);
 
+      // Estimate duration from MP3 file size (128kbps = 16000 bytes/sec for SFX)
+      const estimatedDurationMs = Math.round((buffer.length / 16000) * 1000);
+
       if (book_id) {
         run(db,
-          `INSERT INTO audio_assets (id, book_id, type, file_path, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'sfx', ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, promptHash, JSON.stringify({ prompt, duration_seconds, prompt_influence, loop, model_id }), buffer.length]);
+          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'sfx', ?, ?, ?, ?, ?)`,
+          [assetId, book_id, filePath, estimatedDurationMs, promptHash, JSON.stringify({ prompt, duration_seconds, prompt_influence, loop, model_id }), buffer.length]);
       }
 
-      res.json({ audio_asset_id: assetId, file_path: filePath, cached: false });
+      res.json({ audio_asset_id: assetId, file_path: filePath, cached: false, duration_ms: estimatedDurationMs });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -197,13 +200,16 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
       fs.writeFileSync(filePath, buffer);
 
+      // Estimate duration from MP3 file size (192kbps = 24000 bytes/sec)
+      const estimatedDurationMs = Math.round((buffer.length / 24000) * 1000);
+
       if (book_id) {
         run(db,
-          `INSERT INTO audio_assets (id, book_id, type, file_path, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'music', ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, promptHash, JSON.stringify({ prompt, music_length_ms: lengthMs, force_instrumental, model_id }), buffer.length]);
+          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'music', ?, ?, ?, ?, ?)`,
+          [assetId, book_id, filePath, estimatedDurationMs, promptHash, JSON.stringify({ prompt, music_length_ms: lengthMs, force_instrumental, model_id }), buffer.length]);
       }
 
-      res.json({ audio_asset_id: assetId, file_path: filePath, cached: false });
+      res.json({ audio_asset_id: assetId, file_path: filePath, cached: false, duration_ms: estimatedDurationMs });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

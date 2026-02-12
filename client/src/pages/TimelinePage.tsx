@@ -95,24 +95,121 @@ export function TimelinePage() {
     setCanRedo(redoStack.current.length > 0);
   };
 
-  // ── Playback ──
+  // ── Audio Playback with real audio ──
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioBuffersRef = useRef<Map<string, AudioBuffer>>(new Map());
+  const activeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+  const playStartTimeRef = useRef<number>(0);
+  const playStartMsRef = useRef<number>(0);
+
+  const getAudioCtx = () => {
+    if (!audioCtxRef.current) audioCtxRef.current = new AudioContext();
+    return audioCtxRef.current;
+  };
+
+  const loadAudioBuffer = async (assetId: string): Promise<AudioBuffer | null> => {
+    if (audioBuffersRef.current.has(assetId)) return audioBuffersRef.current.get(assetId)!;
+    try {
+      const ctx = getAudioCtx();
+      const res = await fetch(audioUrl(assetId));
+      const arrayBuf = await res.arrayBuffer();
+      const audioBuf = await ctx.decodeAudioData(arrayBuf);
+      audioBuffersRef.current.set(assetId, audioBuf);
+      return audioBuf;
+    } catch (err) {
+      console.error(`Failed to load audio ${assetId}:`, err);
+      return null;
+    }
+  };
+
+  const stopAllAudio = () => {
+    activeSourcesRef.current.forEach((s) => { try { s.stop(); } catch {} });
+    activeSourcesRef.current = [];
+  };
+
+  const playFromPosition = async (startMs: number) => {
+    const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') await ctx.resume();
+    stopAllAudio();
+
+    playStartTimeRef.current = ctx.currentTime;
+    playStartMsRef.current = startMs;
+
+    // Schedule all clips that overlap with or come after startMs
+    for (const track of tracks) {
+      if (track.muted) continue;
+      for (const clip of track.clips) {
+        const clipDur = getClipDuration(clip);
+        const clipEnd = clip.position_ms + clipDur;
+        if (clipEnd <= startMs) continue; // clip already passed
+
+        const buffer = await loadAudioBuffer(clip.audio_asset_id);
+        if (!buffer) continue;
+
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+
+        // Apply gain
+        const gainNode = ctx.createGain();
+        const trackGainDb = track.gain || 0;
+        const clipGainDb = clip.gain || 0;
+        gainNode.gain.value = Math.pow(10, (trackGainDb + clipGainDb) / 20);
+
+        // Apply speed
+        source.playbackRate.value = clip.speed || 1.0;
+
+        source.connect(gainNode);
+        gainNode.connect(ctx.destination);
+
+        const clipStartSec = (clip.position_ms - startMs) / 1000;
+        const offsetInClip = startMs > clip.position_ms ? (startMs - clip.position_ms) / 1000 : 0;
+
+        if (clipStartSec >= 0) {
+          source.start(ctx.currentTime + clipStartSec, offsetInClip + (clip.trim_start_ms || 0) / 1000);
+        } else {
+          source.start(0, offsetInClip + (clip.trim_start_ms || 0) / 1000);
+        }
+
+        activeSourcesRef.current.push(source);
+      }
+    }
+  };
+
   const togglePlay = () => {
     if (playing) {
       if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
+      stopAllAudio();
       setPlaying(false);
     } else {
       setPlaying(true);
-      let lastTime = performance.now();
+      playFromPosition(playheadMs);
+      const startMs = playheadMs;
+      const startTime = performance.now();
       const tick = (now: number) => {
-        const dt = now - lastTime;
-        lastTime = now;
-        setPlayheadMs((p) => p + dt);
+        const elapsed = now - startTime;
+        setPlayheadMs(startMs + elapsed);
         playTimerRef.current = requestAnimationFrame(tick);
       };
       playTimerRef.current = requestAnimationFrame(tick);
     }
   };
-  const seekTo = (ms: number) => setPlayheadMs(Math.max(0, ms));
+  const seekTo = (ms: number) => {
+    const newMs = Math.max(0, ms);
+    setPlayheadMs(newMs);
+    if (playing) {
+      // Restart audio from new position
+      if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
+      stopAllAudio();
+      playFromPosition(newMs);
+      const startTime = performance.now();
+      const tick = (now: number) => {
+        const elapsed = now - startTime;
+        setPlayheadMs(newMs + elapsed);
+        playTimerRef.current = requestAnimationFrame(tick);
+      };
+      playTimerRef.current = requestAnimationFrame(tick);
+    }
+  };
 
   // ── Track Actions ──
   const addTrack = async (type: string) => {
@@ -227,7 +324,11 @@ export function TimelinePage() {
     return null;
   };
   const getClipDuration = (clip: Clip) => {
-    const base = clip.trim_end_ms || 5000;
+    // Use asset_duration_ms from the joined audio_assets table if available
+    const assetDur = (clip as any).asset_duration_ms;
+    if (assetDur && assetDur > 0) return assetDur;
+    // Fallback: if trim_end_ms is set, use it as the duration indicator
+    const base = clip.trim_end_ms || 3000;
     return Math.max(base - clip.trim_start_ms, 200);
   };
   const totalDuration = () => {

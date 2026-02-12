@@ -15,10 +15,11 @@ export function timelineRouter(db: SqlJsDatabase): Router {
     const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
     const tracksWithClips = tracks.map((track: any) => {
       const clips = queryAll(db,
-        `SELECT c.*, s.text as segment_text, ch.name as character_name
+        `SELECT c.*, s.text as segment_text, ch.name as character_name, a.duration_ms as asset_duration_ms
          FROM clips c
          LEFT JOIN segments s ON c.segment_id = s.id
          LEFT JOIN characters ch ON s.character_id = ch.id
+         LEFT JOIN audio_assets a ON c.audio_asset_id = a.id
          WHERE c.track_id = ? ORDER BY c.position_ms`,
         [track.id]);
       return { ...track, clips };
@@ -160,8 +161,8 @@ export function timelineRouter(db: SqlJsDatabase): Router {
           const clipId = uuid();
           const durationMs = seg.duration_ms || 3000;
           run(db,
-            `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
+            `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_end_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs, durationMs]);
           clipsCreated.push({ id: clipId, segment_id: seg.id, position_ms: currentPositionMs, duration_ms: durationMs });
           currentPositionMs += durationMs + gapBetweenSegmentsMs;
         }
@@ -281,8 +282,8 @@ export function timelineRouter(db: SqlJsDatabase): Router {
 
           const clipId = uuid();
           const durationMs = seg.duration_ms || 3000;
-          run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
+          run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_end_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs, durationMs]);
           clipsCreated++;
           currentPositionMs += durationMs + gapBetweenSegmentsMs;
         }
@@ -340,8 +341,9 @@ export function timelineRouter(db: SqlJsDatabase): Router {
       const positionMs = lastClip ? (lastClip.position_ms + (lastClip.duration_ms || 3000) + 300) : 0;
 
       const clipId = uuid();
-      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-        [clipId, narrationTrack.id, seg.audio_asset_id, segment_id, positionMs]);
+      const clipDurationMs = asset.duration_ms || 3000;
+      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_end_ms) VALUES (?, ?, ?, ?, ?, ?)`,
+        [clipId, narrationTrack.id, seg.audio_asset_id, segment_id, positionMs, clipDurationMs]);
 
       res.json({ clip_id: clipId, position_ms: positionMs, duration_ms: asset.duration_ms, updated: false });
     } catch (err: any) {
