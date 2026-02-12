@@ -236,6 +236,27 @@ export function VoicesPage() {
               <label style={styles.sectionLabel}>1. Choose a Voice</label>
               <p style={styles.sectionHint}>Search by name or paste a voice ID directly from ElevenLabs.</p>
 
+              {/* Currently assigned voice */}
+              {selectedChar.voice_id && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'var(--bg-deep)', borderRadius: 8, border: '1px solid var(--border-subtle)' }}>
+                  <CheckCircle size={12} color="var(--success)" />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ fontSize: 12, color: 'var(--text-primary)' }}>{selectedChar.voice_name || 'Unknown'}</span>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', marginLeft: 8, fontFamily: 'monospace' }}>{selectedChar.voice_id}</span>
+                  </div>
+                  <button onClick={async () => {
+                    if (!bookId || !selectedChar) return;
+                    await charsApi.update(bookId, selectedChar.id, { voice_id: null, voice_name: null });
+                    const updated = { ...selectedChar, voice_id: null, voice_name: null };
+                    setSelectedChar(updated as any);
+                    setCharacterList(characterList.map((c) => (c.id === updated.id ? updated : c)) as any);
+                  }}
+                    style={{ background: 'none', border: '1px solid rgba(239,68,68,0.15)', color: 'var(--danger)', borderRadius: 6, padding: '3px 10px', cursor: 'pointer', fontSize: 10, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <X size={10} /> Clear
+                  </button>
+                </div>
+              )}
+
               {/* Voice ID lookup */}
               <div style={styles.voiceIdRow}>
                 <Hash size={14} color="#9B59B6" />
