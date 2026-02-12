@@ -620,29 +620,89 @@ export function TimelinePage() {
     if (!dragRef.current || !bookId) return;
     const dx = mx - dragRef.current.startMouseX;
     const dMs = dx / pxPerMs;
-    setTracks((prev) => prev.map((t) => ({
-      ...t,
-      clips: t.clips.map((c) => {
-        if (c.id !== dragRef.current!.clipId) return c;
-        if (dragRef.current!.mode === 'move') return { ...c, position_ms: Math.max(0, Math.round(dragRef.current!.origPos + dMs)) };
-        if (dragRef.current!.mode === 'trimStart') return { ...c, trim_start_ms: Math.max(0, Math.round(dragRef.current!.origTS + dMs)) };
-        if (dragRef.current!.mode === 'trimEnd') return { ...c, trim_end_ms: Math.max(0, Math.round(dragRef.current!.origTE - dMs)) };
-        return c;
-      }),
-    })));
+    setTracks((prev) => prev.map((t) => {
+      // For trim operations or tracks that don't contain the dragged clip, just update the dragged clip
+      if (dragRef.current!.mode !== 'move' || !t.clips.some((c) => c.id === dragRef.current!.clipId)) {
+        return {
+          ...t,
+          clips: t.clips.map((c) => {
+            if (c.id !== dragRef.current!.clipId) return c;
+            if (dragRef.current!.mode === 'trimStart') return { ...c, trim_start_ms: Math.max(0, Math.round(dragRef.current!.origTS + dMs)) };
+            if (dragRef.current!.mode === 'trimEnd') return { ...c, trim_end_ms: Math.max(0, Math.round(dragRef.current!.origTE - dMs)) };
+            return c;
+          }),
+        };
+      }
+
+      // Move mode on the track containing the dragged clip — push neighbors instead of overlapping
+      const newPos = Math.max(0, Math.round(dragRef.current!.origPos + dMs));
+      let updatedClips = t.clips.map((c) =>
+        c.id === dragRef.current!.clipId ? { ...c, position_ms: newPos } : { ...c }
+      );
+
+      // Sort by position for ripple push
+      updatedClips.sort((a, b) => a.position_ms - b.position_ms);
+
+      // Push clips to the right if they overlap with the dragged clip
+      const draggedIdx = updatedClips.findIndex((c) => c.id === dragRef.current!.clipId);
+      if (draggedIdx >= 0) {
+        const draggedClip = updatedClips[draggedIdx];
+        const draggedEnd = draggedClip.position_ms + getClipDuration(draggedClip);
+
+        // Push clips to the right of the dragged clip
+        for (let i = draggedIdx + 1; i < updatedClips.length; i++) {
+          const prevClip = updatedClips[i - 1];
+          const prevEnd = prevClip.position_ms + getClipDuration(prevClip);
+          if (updatedClips[i].position_ms < prevEnd) {
+            updatedClips[i] = { ...updatedClips[i], position_ms: Math.round(prevEnd) };
+          }
+        }
+
+        // Push clips to the left of the dragged clip (if dragged left into them)
+        for (let i = draggedIdx - 1; i >= 0; i--) {
+          const nextClip = updatedClips[i + 1];
+          const thisEnd = updatedClips[i].position_ms + getClipDuration(updatedClips[i]);
+          if (thisEnd > nextClip.position_ms) {
+            updatedClips[i] = { ...updatedClips[i], position_ms: Math.max(0, Math.round(nextClip.position_ms - getClipDuration(updatedClips[i]))) };
+          }
+        }
+      }
+
+      return { ...t, clips: updatedClips };
+    }));
   };
   const handleCanvasMouseUp = async () => {
     if (!dragRef.current || !bookId) return;
-    const clip = findClip(dragRef.current.clipId);
-    if (clip) {
-      pushSnapshot(tracks);
-      await timelineApi.updateClip(bookId, clip.id, {
-        position_ms: Math.round(clip.position_ms),
-        trim_start_ms: Math.round(clip.trim_start_ms),
-        trim_end_ms: Math.round(clip.trim_end_ms),
-      });
-    }
+    const draggedTrackId = dragRef.current.trackId;
+    const draggedClipId = dragRef.current.clipId;
+    const mode = dragRef.current.mode;
     dragRef.current = null;
+
+    if (mode === 'move') {
+      // Save all clips on the same track (positions may have shifted due to push)
+      const track = tracks.find((t) => t.id === draggedTrackId);
+      if (track) {
+        pushSnapshot(tracks);
+        for (const clip of track.clips) {
+          await timelineApi.updateClip(bookId, clip.id, {
+            position_ms: Math.round(clip.position_ms),
+            trim_start_ms: Math.round(clip.trim_start_ms),
+            trim_end_ms: Math.round(clip.trim_end_ms),
+          });
+        }
+      }
+    } else {
+      // Trim mode — only save the trimmed clip
+      const clip = findClip(draggedClipId);
+      if (clip) {
+        pushSnapshot(tracks);
+        await timelineApi.updateClip(bookId, clip.id, {
+          position_ms: Math.round(clip.position_ms),
+          trim_start_ms: Math.round(clip.trim_start_ms),
+          trim_end_ms: Math.round(clip.trim_end_ms),
+        });
+      }
+    }
   };
   const handleContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
     e.preventDefault();
@@ -796,12 +856,12 @@ export function TimelinePage() {
         </div>
         <div style={{ flex: 1 }} />
         <div style={S.toolGroup}>
-          <button onClick={handleSave} disabled={saving} style={S.toolBtn}><Save size={14} /> {saving ? '...' : 'Save'}</button>
-          {bookId && <a href={downloadProjectUrl(bookId)} style={{ ...S.toolBtn, textDecoration: 'none' }} download><Download size={14} /></a>}
-          <button onClick={handleRender} disabled={rendering} style={{ ...S.toolBtn, background: '#2d5a27', color: '#8f8' }}>
+          <button onClick={handleSave} disabled={saving} style={S.toolBtn} title="Save project to disk"><Save size={14} /> {saving ? '...' : 'Save'}</button>
+          {bookId && <a href={downloadProjectUrl(bookId)} style={{ ...S.toolBtn, textDecoration: 'none' }} title="Download project ZIP (all audio + metadata)" download><Download size={14} /></a>}
+          <button onClick={handleRender} disabled={rendering} style={{ ...S.toolBtn, background: '#2d5a27', color: '#8f8' }} title="Render per-chapter MP3 files for export">
             {rendering ? <Loader size={14} /> : <Play size={14} />} Render
           </button>
-          <button onClick={() => setShowHelp(true)} style={S.toolBtn}><HelpCircle size={14} /></button>
+          <button onClick={() => setShowHelp(true)} style={S.toolBtn} title="Keyboard shortcuts"><HelpCircle size={14} /></button>
         </div>
       </div>
 

@@ -144,6 +144,9 @@ export function QCPage() {
         <p style={{ color: '#555', fontSize: 11, marginTop: 8 }}>
           Values outside these ranges will be flagged in the QC report above.
         </p>
+        <p style={{ color: '#D4A843', fontSize: 11, marginTop: 6 }}>
+          ⚠ Audio levels are estimated from ElevenLabs defaults. For precise measurement, use a DAW or install FFmpeg.
+        </p>
       </div>
     </div>
   );
