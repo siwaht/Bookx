@@ -67,6 +67,7 @@ export function ManuscriptPage() {
   // Text editor ref
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   const selectedChapter = chapterList.find((c) => c.id === selectedChapterId) || null;
 
@@ -182,9 +183,12 @@ export function ManuscriptPage() {
     if (!selectedChapter || !bookId) return;
     // Update both raw_text and clear cleaned_text so the textarea reflects edits
     setChapterList((prev) => prev.map((c) => c.id === selectedChapter.id ? { ...c, raw_text: text, cleaned_text: null } : c));
+    setSaveStatus('saving');
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
-    saveTimerRef.current = setTimeout(() => {
-      chaptersApi.update(bookId, selectedChapter.id, { raw_text: text, cleaned_text: null });
+    saveTimerRef.current = setTimeout(async () => {
+      await chaptersApi.update(bookId, selectedChapter.id, { raw_text: text, cleaned_text: null });
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
     }, 800);
   };
 
@@ -541,7 +545,9 @@ export function ManuscriptPage() {
               <span style={{ fontSize: 11, color: '#555' }}>
                 {chapterText.length} chars · ~{Math.ceil(chapterText.split(/\s+/).length / 150)} min read
               </span>
-              <span style={{ fontSize: 11, color: '#555' }}>Auto-saves on edit</span>
+              <span style={{ fontSize: 11, color: saveStatus === 'saved' ? '#8f8' : saveStatus === 'saving' ? '#D97A4A' : '#555' }}>
+                {saveStatus === 'saving' ? '● Saving...' : saveStatus === 'saved' ? '✓ Saved' : 'Auto-saves on edit'}
+              </span>
             </div>
           </>
         ) : (
