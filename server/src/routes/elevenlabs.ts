@@ -7,7 +7,7 @@ import { queryAll, queryOne, run } from '../db/helpers.js';
 import {
   getCapabilities, getVoices, searchVoices,
   generateTTS, streamTTS, generateSFX, generateMusic,
-  getUsage, computePromptHash,
+  getUsage, computePromptHash, invalidateVoiceCache,
 } from '../elevenlabs/client.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
@@ -94,10 +94,47 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
         description: v.description || null,
         use_case: v.use_case || null,
         language: v.language || null,
+        public_owner_id: v.public_owner_id || null,
         sharing: true,
       }));
       res.json({ voices, has_more: data.has_more || false, last_sort_id: data.last_sort_id || null });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Add a shared voice to the user's ElevenLabs library
+  // This is REQUIRED before a shared/community voice can be used for TTS
+  router.post('/voices/add-shared', async (req, res) => {
+    try {
+      const apiKey = process.env.ELEVENLABS_API_KEY;
+      if (!apiKey) { res.status(400).json({ error: 'ELEVENLABS_API_KEY not set' }); return; }
+
+      const { public_owner_id, voice_id, name } = req.body;
+      if (!public_owner_id || !voice_id) {
+        res.status(400).json({ error: 'public_owner_id and voice_id are required' });
+        return;
+      }
+
+      const apiRes = await fetch(`https://api.elevenlabs.io/v1/voices/add/${public_owner_id}/${voice_id}`, {
+        method: 'POST',
+        headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ new_name: name || 'Shared Voice' }),
+      });
+
+      if (!apiRes.ok) {
+        const errText = await apiRes.text().catch(() => 'Unknown error');
+        res.status(apiRes.status).json({ error: `Failed to add shared voice: ${errText}` });
+        return;
+      }
+
+      const data = await apiRes.json() as any;
+      // The API returns a NEW voice_id that works for TTS
+      // Invalidate voice cache so the new voice shows up
+      invalidateVoiceCache();
+
+      res.json({ voice_id: data.voice_id, name: name || 'Shared Voice', added: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // Look up a specific voice by ID from ElevenLabs API
@@ -134,6 +171,7 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
             labels: sv.labels || {},
             preview_url: sv.preview_url || null,
             description: sv.description || null,
+            public_owner_id: sv.public_owner_id || null,
             sharing: true,
           });
           return;

@@ -109,6 +109,11 @@ export async function getVoices(): Promise<ElevenLabsVoice[]> {
   return voiceCache;
 }
 
+export function invalidateVoiceCache(): void {
+  voiceCache = null;
+  voiceCachedAt = 0;
+}
+
 export async function searchVoices(query: string): Promise<ElevenLabsVoice[]> {
   const voices = await getVoices();
   const q = query.toLowerCase();

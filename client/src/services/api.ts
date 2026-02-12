@@ -134,6 +134,10 @@ export const elevenlabs = {
     if (params.page_size) qs.set('page_size', String(params.page_size));
     return request<{ voices: any[]; has_more: boolean }>(`/elevenlabs/voices/library?${qs.toString()}`);
   },
+  addSharedVoice: (publicOwnerId: string, voiceId: string, name: string) =>
+    request<{ voice_id: string; name: string; added: boolean }>('/elevenlabs/voices/add-shared', {
+      method: 'POST', body: JSON.stringify({ public_owner_id: publicOwnerId, voice_id: voiceId, name }),
+    }),
   tts: (data: any) => request<any>('/elevenlabs/tts', { method: 'POST', body: JSON.stringify(data) }),
   sfx: (data: { prompt: string; duration_seconds?: number; prompt_influence?: number; loop?: boolean; model_id?: string; book_id?: string }) =>
     request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/sfx', { method: 'POST', body: JSON.stringify(data) }),

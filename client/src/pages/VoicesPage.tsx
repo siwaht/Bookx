@@ -79,6 +79,27 @@ export function VoicesPage() {
     setCharacterList(characterList.map((c) => (c.id === updated.id ? updated : c)));
   };
 
+  // Assign a shared/library voice — adds it to user's ElevenLabs account first
+  const assignSharedVoice = async (voice: any) => {
+    if (!bookId || !selectedChar) return;
+    if (!voice.public_owner_id) {
+      // No public_owner_id means we can't add it — try assigning directly (may fail at TTS time)
+      await assignVoice(voice.voice_id, voice.name);
+      return;
+    }
+    try {
+      const result = await elevenlabs.addSharedVoice(voice.public_owner_id, voice.voice_id, voice.name);
+      // Use the NEW voice_id returned by ElevenLabs (different from the shared one)
+      await assignVoice(result.voice_id, voice.name);
+      // Refresh voice list so the new voice appears in "My Voices"
+      loadVoices();
+    } catch (err: any) {
+      // If adding fails (e.g. already added), try assigning with original ID
+      console.warn('Failed to add shared voice, trying direct assign:', err.message);
+      await assignVoice(voice.voice_id, voice.name);
+    }
+  };
+
   // Look up voice by ID
   const handleVoiceIdLookup = async () => {
     const id = voiceIdInput.trim();
@@ -240,8 +261,12 @@ export function VoicesPage() {
                         <button onClick={() => new Audio(voiceIdResult.preview_url).play()}
                           style={styles.previewBtn} title="Preview"><Play size={12} /></button>
                       )}
-                      <button onClick={() => {
-                        assignVoice(voiceIdResult.voice_id, voiceIdResult.name);
+                      <button onClick={async () => {
+                        if (voiceIdResult._isShared && voiceIdResult.public_owner_id) {
+                          await assignSharedVoice(voiceIdResult);
+                        } else {
+                          assignVoice(voiceIdResult.voice_id, voiceIdResult.name);
+                        }
                         setVoiceIdResult(null); setVoiceIdInput('');
                       }} style={styles.assignIdBtn}>
                         <CheckCircle size={12} /> Assign
@@ -370,7 +395,7 @@ export function VoicesPage() {
                               <Play size={12} />
                             </button>
                           )}
-                          <button onClick={() => assignVoice(v.voice_id, v.name)}
+                          <button onClick={() => assignSharedVoice(v)}
                             style={styles.assignIdBtn} title="Assign this voice">
                             <CheckCircle size={12} /> Assign
                           </button>
