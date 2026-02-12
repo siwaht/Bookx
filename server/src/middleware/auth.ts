@@ -11,17 +11,7 @@ export function generateToken(password: string): string {
 
 const validToken = generateToken(APP_PASSWORD);
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  const header = req.headers.authorization;
-  if (!header || !header.startsWith('Bearer ')) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-  const token = header.slice(7);
-  if (token !== validToken) {
-    res.status(401).json({ error: 'Invalid token' });
-    return;
-  }
+export function authMiddleware(_req: Request, _res: Response, next: NextFunction): void {
   next();
 }
 

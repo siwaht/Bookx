@@ -20,40 +20,10 @@ const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
 });
 
-function AuthGate({ children }: { children: React.ReactNode }) {
-  const authenticated = useAppStore((s) => s.authenticated);
-  const setAuthenticated = useAppStore((s) => s.setAuthenticated);
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    if (!authenticated) { setChecking(false); return; }
-    // Verify stored token is still valid
-    auth.verify().then(() => {
-      setAuthenticated(true);
-      setChecking(false);
-    }).catch(() => {
-      setAuthenticated(false);
-      setChecking(false);
-    });
-  }, []);
-
-  if (checking) {
-    return (
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#0f0f0f', color: '#555' }}>
-        Loading...
-      </div>
-    );
-  }
-
-  if (!authenticated) return <LoginPage />;
-  return <>{children}</>;
-}
-
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <AuthGate>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/settings" element={<SettingsPage />} />
@@ -69,7 +39,6 @@ export default function App() {
             </Route>
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </AuthGate>
       </BrowserRouter>
     </QueryClientProvider>
   );
