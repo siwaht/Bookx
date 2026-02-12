@@ -184,6 +184,12 @@ export const settings = {
   delete: (key: string) => request<void>(`/settings/${key}`, { method: 'DELETE' }),
 };
 
+// ── Save ──
+export const saveProject = () => request<{ ok: boolean; saved_at: string }>('/save', { method: 'POST' });
+
+// ── Download Project ──
+export const downloadProjectUrl = (bookId: string) => `${API_BASE}/books/${bookId}/download-project`;
+
 // ── AI Parse ──
 export const aiParse = {
   parse: (bookId: string, chapterIds?: string[]) =>

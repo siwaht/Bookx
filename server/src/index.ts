@@ -2,8 +2,10 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { getDb, initializeSchema } from './db/schema.js';
+import { getDb, initializeSchema, saveDb } from './db/schema.js';
+import { queryAll, queryOne } from './db/helpers.js';
 import { authMiddleware, loginHandler } from './middleware/auth.js';
 import { booksRouter } from './routes/books.js';
 import { chaptersRouter } from './routes/chapters.js';
@@ -57,6 +59,60 @@ async function main() {
   app.use('/api/audio', audioRouter(db));
   app.use('/api/settings', settingsRouter(db));
   app.use('/api/books/:bookId/ai-parse', aiParseRouter(db));
+
+  // Save DB explicitly
+  app.post('/api/save', (_req, res) => {
+    saveDb();
+    res.json({ ok: true, saved_at: new Date().toISOString() });
+  });
+
+  // Download project as zip (all audio files + DB snapshot)
+  app.get('/api/books/:bookId/download-project', async (req, res) => {
+    try {
+      const bookId = req.params.bookId;
+      const book = queryOne(db, 'SELECT * FROM books WHERE id = ?', [bookId]);
+      if (!book) { res.status(404).json({ error: 'Book not found' }); return; }
+
+      const archiver = (await import('archiver')).default;
+      const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9_-]/g, '_');
+
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${sanitize(book.title)}_project.zip"`);
+
+      const archive = archiver('zip', { zlib: { level: 6 } });
+      archive.on('error', (err: any) => { res.status(500).json({ error: err.message }); });
+      archive.pipe(res);
+
+      // Add all audio assets for this book
+      const assets = queryAll(db, 'SELECT * FROM audio_assets WHERE book_id = ?', [bookId]);
+      for (const asset of assets as any[]) {
+        if (asset.file_path && fs.existsSync(asset.file_path)) {
+          archive.file(asset.file_path, { name: `audio/${path.basename(asset.file_path)}` });
+        }
+      }
+
+      // Add rendered files if they exist
+      const latestRender = queryOne(db, `SELECT * FROM render_jobs WHERE book_id = ? AND status = 'completed' ORDER BY completed_at DESC LIMIT 1`, [bookId]);
+      if (latestRender?.output_path && fs.existsSync(latestRender.output_path)) {
+        archive.directory(latestRender.output_path, 'rendered');
+      }
+
+      // Add a project manifest
+      const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
+      const characters = queryAll(db, 'SELECT * FROM characters WHERE book_id = ?', [bookId]);
+      const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [bookId]);
+      const manifest = {
+        book, chapters, characters, tracks,
+        assets: assets.length,
+        exported_at: new Date().toISOString(),
+      };
+      archive.append(JSON.stringify(manifest, null, 2), { name: 'project.json' });
+
+      await archive.finalize();
+    } catch (err: any) {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    }
+  });
 
   // Serve static client in production
   const clientDist = path.join(__dirname, '../../client/dist');
