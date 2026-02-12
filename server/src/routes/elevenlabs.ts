@@ -27,6 +27,48 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
     try { res.json(await searchVoices((req.query.q as string) || '')); } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
+  // Search the full ElevenLabs shared voice library
+  router.get('/voices/library', async (req, res) => {
+    try {
+      const apiKey = process.env.ELEVENLABS_API_KEY;
+      if (!apiKey) { res.status(400).json({ error: 'ELEVENLABS_API_KEY not set' }); return; }
+      const q = (req.query.q as string) || '';
+      const pageSize = parseInt((req.query.page_size as string) || '20', 10);
+      const gender = (req.query.gender as string) || '';
+      const language = (req.query.language as string) || '';
+      const useCase = (req.query.use_case as string) || '';
+
+      const params = new URLSearchParams();
+      params.set('page_size', String(Math.min(pageSize, 100)));
+      if (q) params.set('search', q);
+      if (gender) params.set('gender', gender);
+      if (language) params.set('language', language);
+      if (useCase) params.set('use_case', useCase);
+
+      const apiRes = await fetch(`https://api.elevenlabs.io/v1/shared-voices?${params.toString()}`, {
+        headers: { 'xi-api-key': apiKey },
+      });
+      if (!apiRes.ok) {
+        const errText = await apiRes.text().catch(() => 'Unknown error');
+        res.status(apiRes.status).json({ error: `ElevenLabs library search failed: ${errText}` });
+        return;
+      }
+      const data = await apiRes.json() as any;
+      const voices = (data.voices || []).map((v: any) => ({
+        voice_id: v.voice_id,
+        name: v.name,
+        category: v.category || 'shared',
+        labels: v.labels || {},
+        preview_url: v.preview_url || null,
+        description: v.description || null,
+        use_case: v.use_case || null,
+        language: v.language || null,
+        sharing: true,
+      }));
+      res.json({ voices, has_more: data.has_more || false, last_sort_id: data.last_sort_id || null });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
   // Look up a specific voice by ID from ElevenLabs API
   router.get('/voices/:voiceId', async (req, res) => {
     try {
@@ -35,19 +77,38 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       const voices = await getVoices();
       const local = voices.find((v: any) => v.voice_id === voiceId);
       if (local) { res.json(local); return; }
-      // Fetch directly from ElevenLabs
+      // Fetch directly from ElevenLabs (own voices)
       const apiKey = process.env.ELEVENLABS_API_KEY;
       if (!apiKey) { res.status(400).json({ error: 'ELEVENLABS_API_KEY not set' }); return; }
       const apiRes = await fetch(`https://api.elevenlabs.io/v1/voices/${voiceId}`, {
         headers: { 'xi-api-key': apiKey },
       });
-      if (!apiRes.ok) {
-        const errText = await apiRes.text().catch(() => 'Unknown error');
-        res.status(apiRes.status).json({ error: `Voice not found: ${errText}` });
+      if (apiRes.ok) {
+        const voice = await apiRes.json();
+        res.json(voice);
         return;
       }
-      const voice = await apiRes.json();
-      res.json(voice);
+      // Try the shared voice library as fallback
+      const libraryRes = await fetch(`https://api.elevenlabs.io/v1/shared-voices?voice_id=${voiceId}`, {
+        headers: { 'xi-api-key': apiKey },
+      });
+      if (libraryRes.ok) {
+        const libData = await libraryRes.json() as any;
+        if (libData.voices?.length > 0) {
+          const sv = libData.voices[0];
+          res.json({
+            voice_id: sv.voice_id || voiceId,
+            name: sv.name || 'Shared Voice',
+            category: sv.category || 'shared',
+            labels: sv.labels || {},
+            preview_url: sv.preview_url || null,
+            description: sv.description || null,
+            sharing: true,
+          });
+          return;
+        }
+      }
+      res.status(404).json({ error: `Voice ID "${voiceId}" not found. Check the ID is correct, or add it to your ElevenLabs voice library first.` });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

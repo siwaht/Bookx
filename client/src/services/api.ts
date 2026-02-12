@@ -90,6 +90,9 @@ export const characters = {
     request<any>(`/books/${bookId}/characters/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (bookId: string, id: string) =>
     request<void>(`/books/${bookId}/characters/${id}`, { method: 'DELETE' }),
+  autoAssignByName: (bookId: string) =>
+    request<{ assigned: number; total_segments: number; matches: { segment_id: string; character_name: string }[] }>(
+      `/books/${bookId}/characters/auto-assign-by-name`, { method: 'POST' }),
 };
 
 // ── Segments ──
@@ -114,6 +117,15 @@ export const elevenlabs = {
   voices: () => request<any[]>('/elevenlabs/voices'),
   searchVoices: (q: string) => request<any[]>(`/elevenlabs/voices/search?q=${encodeURIComponent(q)}`),
   getVoice: (voiceId: string) => request<any>(`/elevenlabs/voices/${voiceId}`),
+  searchLibrary: (params: { q?: string; gender?: string; language?: string; use_case?: string; page_size?: number }) => {
+    const qs = new URLSearchParams();
+    if (params.q) qs.set('q', params.q);
+    if (params.gender) qs.set('gender', params.gender);
+    if (params.language) qs.set('language', params.language);
+    if (params.use_case) qs.set('use_case', params.use_case);
+    if (params.page_size) qs.set('page_size', String(params.page_size));
+    return request<{ voices: any[]; has_more: boolean }>(`/elevenlabs/voices/library?${qs.toString()}`);
+  },
   tts: (data: any) => request<any>('/elevenlabs/tts', { method: 'POST', body: JSON.stringify(data) }),
   sfx: (data: { prompt: string; duration_seconds?: number; prompt_influence?: number; loop?: boolean; model_id?: string; book_id?: string }) =>
     request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/sfx', { method: 'POST', body: JSON.stringify(data) }),

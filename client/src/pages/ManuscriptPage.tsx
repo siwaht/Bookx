@@ -43,6 +43,7 @@ export function ManuscriptPage() {
   const [generatingId, setGeneratingId] = useState<string | null>(null);
   const [aiParsing, setAiParsing] = useState(false);
   const [aiTagging, setAiTagging] = useState(false);
+  const [nameAssigning, setNameAssigning] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   // Chapter editing state
@@ -339,6 +340,23 @@ export function ManuscriptPage() {
     finally { setAiParsing(false); }
   };
 
+  const handleAutoAssignByName = async () => {
+    if (!bookId) return;
+    setNameAssigning(true);
+    try {
+      const result = await charsApi.autoAssignByName(bookId);
+      if (result.assigned > 0) {
+        alert(`Auto-assigned ${result.assigned} segments by speaker name.\n\nMatches: ${result.matches.map(m => m.character_name).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`);
+      } else {
+        alert('No segments matched any character names.\n\nMake sure segment text starts with "NAME:" pattern (e.g. "KAI: Hello there").');
+      }
+      await loadChapters();
+      await loadCharacters();
+      if (selectedChapterId) loadSegments(selectedChapterId);
+    } catch (err: any) { alert(`Auto-assign failed: ${err.message}`); }
+    finally { setNameAssigning(false); }
+  };
+
   // ── Computed ──
 
   const segmentsWithAudio = segmentList.filter((s) => s.audio_asset_id);
@@ -398,7 +416,12 @@ export function ManuscriptPage() {
           <div style={styles.aiBar}>
             <button onClick={handleAiParse} disabled={aiParsing} style={styles.aiParseBtn}>
               {aiParsing ? <Loader size={13} /> : <Wand2 size={13} />}
-              {aiParsing ? 'Parsing...' : 'AI Auto-Assign All'}
+              {aiParsing ? 'Parsing...' : 'AI Auto-Assign'}
+            </button>
+            <button onClick={handleAutoAssignByName} disabled={nameAssigning}
+              style={{ ...styles.aiParseBtn, background: '#1a2a1a', color: '#8f8', borderColor: '#2a3a2a', marginTop: 4 }}>
+              {nameAssigning ? <Loader size={13} /> : <Users size={13} />}
+              {nameAssigning ? 'Matching...' : 'Match by Name'}
             </button>
           </div>
         )}

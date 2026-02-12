@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { characters as charsApi, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Character, ElevenLabsVoice } from '../types';
-import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader } from 'lucide-react';
+import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, Library } from 'lucide-react';
 
 export function VoicesPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -21,6 +21,14 @@ export function VoicesPage() {
   const [voiceIdLooking, setVoiceIdLooking] = useState(false);
   const [voiceIdResult, setVoiceIdResult] = useState<any | null>(null);
   const [voiceIdError, setVoiceIdError] = useState('');
+
+  // Library search
+  const [voiceTab, setVoiceTab] = useState<'my' | 'library'>('my');
+  const [libraryQuery, setLibraryQuery] = useState('');
+  const [libraryResults, setLibraryResults] = useState<any[]>([]);
+  const [librarySearching, setLibrarySearching] = useState(false);
+  const [libraryGender, setLibraryGender] = useState('');
+  const [libraryLanguage, setLibraryLanguage] = useState('');
 
   const loadCharacters = async () => {
     if (!bookId) return;
@@ -63,9 +71,12 @@ export function VoicesPage() {
   };
 
   // Assign voice by object (from search or ID lookup)
-  const assignVoice = (voiceId: string, voiceName: string) => {
-    handleUpdate('voice_id', voiceId);
-    handleUpdate('voice_name', voiceName);
+  const assignVoice = async (voiceId: string, voiceName: string) => {
+    if (!bookId || !selectedChar) return;
+    await charsApi.update(bookId, selectedChar.id, { voice_id: voiceId, voice_name: voiceName });
+    const updated = { ...selectedChar, voice_id: voiceId, voice_name: voiceName };
+    setSelectedChar(updated);
+    setCharacterList(characterList.map((c) => (c.id === updated.id ? updated : c)));
   };
 
   // Look up voice by ID
@@ -77,11 +88,41 @@ export function VoicesPage() {
     setVoiceIdResult(null);
     try {
       const voice = await elevenlabs.getVoice(id);
-      setVoiceIdResult(voice);
+      if (voice.sharing) {
+        // Shared voice — user may need to add it to their library first
+        setVoiceIdResult({ ...voice, _isShared: true });
+      } else {
+        setVoiceIdResult(voice);
+      }
     } catch (err: any) {
-      setVoiceIdError(err.message || 'Voice not found');
+      // Parse error message for cleaner display
+      let msg = err.message || 'Voice not found';
+      try {
+        const parsed = JSON.parse(msg);
+        msg = parsed.error || parsed.message || msg;
+      } catch { /* not JSON, use as-is */ }
+      setVoiceIdError(msg);
     } finally {
       setVoiceIdLooking(false);
+    }
+  };
+
+  // Search the shared voice library
+  const handleLibrarySearch = async () => {
+    if (!libraryQuery.trim() && !libraryGender && !libraryLanguage) return;
+    setLibrarySearching(true);
+    try {
+      const result = await elevenlabs.searchLibrary({
+        q: libraryQuery.trim(),
+        gender: libraryGender,
+        language: libraryLanguage,
+        page_size: 30,
+      });
+      setLibraryResults(result.voices || []);
+    } catch (err: any) {
+      alert(`Library search failed: ${err.message}`);
+    } finally {
+      setLibrarySearching(false);
     }
   };
 
@@ -207,6 +248,11 @@ export function VoicesPage() {
                       </button>
                     </div>
                   </div>
+                  {voiceIdResult._isShared && (
+                    <p style={{ fontSize: 10, color: '#D97A4A', marginTop: 4 }}>
+                      This is a shared/community voice. You can assign it, but you may need to add it to your ElevenLabs library for TTS to work.
+                    </p>
+                  )}
                   {voiceIdResult.labels && Object.keys(voiceIdResult.labels).length > 0 && (
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
                       {Object.entries(voiceIdResult.labels).map(([k, v]) => (
@@ -218,36 +264,133 @@ export function VoicesPage() {
               )}
               {voiceIdError && <p style={{ color: '#e55', fontSize: 11 }}>{voiceIdError}</p>}
 
-              {/* Name search */}
-              <div style={styles.voiceSearch}>
-                <Search size={14} color="#666" />
-                <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
-                  placeholder="Search voices by name or ID..." style={styles.searchInput} aria-label="Search voices" />
+              {/* Voice source tabs */}
+              <div style={styles.voiceTabs}>
+                <button onClick={() => setVoiceTab('my')}
+                  style={{ ...styles.voiceTabBtn, ...(voiceTab === 'my' ? styles.voiceTabActive : {}) }}>
+                  <Mic size={12} /> My Voices ({voices.length})
+                </button>
+                <button onClick={() => setVoiceTab('library')}
+                  style={{ ...styles.voiceTabBtn, ...(voiceTab === 'library' ? styles.voiceTabActive : {}) }}>
+                  <Globe size={12} /> Voice Library
+                </button>
               </div>
-              <div style={styles.voiceList}>
-                {filteredVoices.map((v) => (
-                  <div key={v.voice_id}
-                    onClick={() => assignVoice(v.voice_id, v.name)}
-                    style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a', borderLeft: selectedChar.voice_id === v.voice_id ? '3px solid #4A90D9' : '3px solid transparent' }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
-                      <span style={{ color: '#555', fontSize: 10, marginLeft: 6, fontFamily: 'monospace' }}>{v.voice_id.slice(0, 8)}...</span>
-                    </div>
-                    <span style={{ color: '#666', fontSize: 11 }}>{v.category}</span>
-                    {v.preview_url && (
-                      <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url!).play(); }}
-                        style={styles.previewBtn} aria-label={`Preview ${v.name}`} title="Preview this voice">
-                        <Play size={12} />
-                      </button>
+
+              {voiceTab === 'my' ? (
+                <>
+                  {/* Name search (my voices) */}
+                  <div style={styles.voiceSearch}>
+                    <Search size={14} color="#666" />
+                    <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
+                      placeholder="Search your voices by name or ID..." style={styles.searchInput} aria-label="Search voices" />
+                  </div>
+                  <div style={styles.voiceList}>
+                    {filteredVoices.map((v) => (
+                      <div key={v.voice_id}
+                        onClick={() => assignVoice(v.voice_id, v.name)}
+                        style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a', borderLeft: selectedChar.voice_id === v.voice_id ? '3px solid #4A90D9' : '3px solid transparent' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
+                          <span style={{ color: '#555', fontSize: 10, marginLeft: 6, fontFamily: 'monospace' }}>{v.voice_id.slice(0, 8)}...</span>
+                        </div>
+                        <span style={{ color: '#666', fontSize: 11 }}>{v.category}</span>
+                        {v.preview_url && (
+                          <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url!).play(); }}
+                            style={styles.previewBtn} aria-label={`Preview ${v.name}`} title="Preview this voice">
+                            <Play size={12} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    {filteredVoices.length === 0 && (
+                      <p style={{ color: '#555', fontSize: 12, padding: 12 }}>
+                        {voiceSearch ? 'No voices match. Try the Voice Library tab or paste a voice ID.' : 'No voices loaded. Check your ElevenLabs API key.'}
+                      </p>
                     )}
                   </div>
-                ))}
-                {filteredVoices.length === 0 && (
-                  <p style={{ color: '#555', fontSize: 12, padding: 12 }}>
-                    {voiceSearch ? 'No voices match. Try pasting a voice ID above.' : 'No voices loaded. Check your ElevenLabs API key.'}
-                  </p>
-                )}
-              </div>
+                </>
+              ) : (
+                <>
+                  {/* Library search */}
+                  <div style={styles.voiceSearch}>
+                    <Search size={14} color="#9B59B6" />
+                    <input value={libraryQuery} onChange={(e) => setLibraryQuery(e.target.value)}
+                      placeholder="Search voices by name, accent, style..."
+                      style={styles.searchInput}
+                      onKeyDown={(e) => e.key === 'Enter' && handleLibrarySearch()}
+                      aria-label="Search voice library" />
+                    <button onClick={handleLibrarySearch} disabled={librarySearching}
+                      style={{ ...styles.lookupBtn, background: '#9B59B6' }}>
+                      {librarySearching ? <Loader size={12} /> : 'Search'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'flex', gap: 6, padding: '0 0 4px' }}>
+                    <select value={libraryGender} onChange={(e) => setLibraryGender(e.target.value)}
+                      style={{ ...styles.filterSelect }} aria-label="Filter by gender">
+                      <option value="">Any gender</option>
+                      <option value="male">Male</option>
+                      <option value="female">Female</option>
+                      <option value="neutral">Neutral</option>
+                    </select>
+                    <select value={libraryLanguage} onChange={(e) => setLibraryLanguage(e.target.value)}
+                      style={{ ...styles.filterSelect }} aria-label="Filter by language">
+                      <option value="">Any language</option>
+                      <option value="en">English</option>
+                      <option value="es">Spanish</option>
+                      <option value="fr">French</option>
+                      <option value="de">German</option>
+                      <option value="it">Italian</option>
+                      <option value="pt">Portuguese</option>
+                      <option value="ja">Japanese</option>
+                      <option value="ko">Korean</option>
+                      <option value="zh">Chinese</option>
+                    </select>
+                  </div>
+                  <div style={styles.voiceList}>
+                    {libraryResults.map((v) => (
+                      <div key={v.voice_id} style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a', borderLeft: selectedChar.voice_id === v.voice_id ? '3px solid #4A90D9' : '3px solid transparent' }}>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
+                            <span style={{ color: '#9B59B6', fontSize: 9, background: '#2a1a3a', padding: '1px 5px', borderRadius: 3 }}>shared</span>
+                          </div>
+                          {v.description && <span style={{ color: '#555', fontSize: 10, display: 'block', marginTop: 2 }}>{v.description.slice(0, 80)}{v.description.length > 80 ? '...' : ''}</span>}
+                          {v.labels && Object.keys(v.labels).length > 0 && (
+                            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 3 }}>
+                              {Object.entries(v.labels).slice(0, 5).map(([k, val]) => (
+                                <span key={k} style={styles.voiceTag}>{k}: {val as string}</span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: 'flex', gap: 4, alignItems: 'center', flexShrink: 0 }}>
+                          {v.preview_url && (
+                            <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url).play(); }}
+                              style={styles.previewBtn} aria-label={`Preview ${v.name}`} title="Preview">
+                              <Play size={12} />
+                            </button>
+                          )}
+                          <button onClick={() => assignVoice(v.voice_id, v.name)}
+                            style={styles.assignIdBtn} title="Assign this voice">
+                            <CheckCircle size={12} /> Assign
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    {libraryResults.length === 0 && !librarySearching && (
+                      <p style={{ color: '#555', fontSize: 12, padding: 12, textAlign: 'center' }}>
+                        Search the ElevenLabs community voice library. Try "deep narrator", "young female", etc.
+                      </p>
+                    )}
+                    {librarySearching && (
+                      <div style={{ padding: 20, textAlign: 'center' }}>
+                        <Loader size={16} color="#9B59B6" />
+                        <p style={{ color: '#888', fontSize: 11, marginTop: 6 }}>Searching library...</p>
+                      </div>
+                    )}
+                  </div>
+                </>
+              )}
             </div>
 
             <div style={styles.section}>
@@ -368,5 +511,16 @@ const styles: Record<string, React.CSSProperties> = {
   voiceList: { maxHeight: 200, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2 },
   voiceItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: '#ddd' },
   previewBtn: { background: 'none', border: 'none', color: '#4A90D9', cursor: 'pointer', padding: 4 },
+  voiceTabs: { display: 'flex', gap: 4, marginTop: 4 },
+  voiceTabBtn: {
+    display: 'flex', alignItems: 'center', gap: 5, flex: 1, padding: '6px 10px',
+    background: '#222', color: '#888', border: '1px solid #333', borderRadius: 6,
+    cursor: 'pointer', fontSize: 11, justifyContent: 'center',
+  },
+  voiceTabActive: { background: '#1a2a3a', color: '#4A90D9', borderColor: '#4A90D9' },
+  filterSelect: {
+    flex: 1, padding: '4px 8px', background: '#0f0f0f', color: '#aaa', border: '1px solid #333',
+    borderRadius: 4, fontSize: 11, outline: 'none',
+  },
   emptySettings: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center' },
 };
