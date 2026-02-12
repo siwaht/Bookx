@@ -19,6 +19,7 @@ import { exportRouter } from './routes/export.js';
 import { audioRouter } from './routes/audio.js';
 import { settingsRouter, getSetting } from './routes/settings.js';
 import { aiParseRouter } from './routes/ai-parse.js';
+import { pronunciationRouter } from './routes/pronunciation.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -85,6 +86,7 @@ async function main() {
   app.use('/api/audio', audioRouter(db));
   app.use('/api/settings', settingsRouter(db));
   app.use('/api/books/:bookId/ai-parse', aiParseRouter(db));
+  app.use('/api/books/:bookId/pronunciation', pronunciationRouter(db));
 
   // Save DB explicitly
   app.post('/api/save', (_req, res) => {

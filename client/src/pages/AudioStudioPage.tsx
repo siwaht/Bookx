@@ -1,12 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { elevenlabs, audioUrl, timeline as timelineApi } from '../services/api';
+import { elevenlabs, audioUrl, timeline as timelineApi, uploadAudio } from '../services/api';
 import { useAppStore } from '../stores/appStore';
-import { Wand2, Music, Volume2, Play, Loader, Plus, Clock, Repeat } from 'lucide-react';
+import { Wand2, Music, Volume2, Play, Loader, Plus, Clock, Repeat, Upload } from 'lucide-react';
 
 interface GeneratedAsset {
   id: string;
-  type: 'sfx' | 'music';
+  type: 'sfx' | 'music' | 'imported';
   prompt: string;
   audio_asset_id: string;
   cached: boolean;
@@ -74,7 +74,11 @@ const V3_TAG_CATEGORIES = [
 export function AudioStudioPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const capabilities = useAppStore((s) => s.capabilities);
-  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'v3tags'>('sfx');
+  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'v3tags' | 'import'>('sfx');
+
+  // Import state
+  const [uploading, setUploading] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   // SFX state
   const [sfxPrompt, setSfxPrompt] = useState('');
@@ -163,6 +167,23 @@ export function AudioStudioPage() {
     finally { setPlacingId(null); }
   };
 
+  const handleImportAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !bookId) return;
+    setUploading(true);
+    try {
+      const result = await uploadAudio(bookId, file, file.name);
+      setGenerated((prev) => [{
+        id: Date.now().toString(),
+        type: 'imported',
+        prompt: file.name,
+        audio_asset_id: result.audio_asset_id,
+        cached: false,
+      }, ...prev]);
+    } catch (err: any) { alert(`Upload failed: ${err.message}`); }
+    finally { setUploading(false); if (importFileRef.current) importFileRef.current.value = ''; }
+  };
+
   const hasV3 = capabilities?.hasV3;
 
   return (
@@ -186,6 +207,10 @@ export function AudioStudioPage() {
           <button onClick={() => setActiveTab('v3tags')}
             style={{ ...styles.tab, ...(activeTab === 'v3tags' ? styles.tabActive : {}) }}>
             <Volume2 size={14} /> V3 Audio Tags {hasV3 && <span style={styles.badge}>v3</span>}
+          </button>
+          <button onClick={() => setActiveTab('import')}
+            style={{ ...styles.tab, ...(activeTab === 'import' ? styles.tabActive : {}) }}>
+            <Upload size={14} /> Import Audio
           </button>
         </div>
 
@@ -332,6 +357,29 @@ export function AudioStudioPage() {
                 </div>
               </div>
             ))}
+          </div>
+        )}
+
+        {/* ── Import Audio Tab ── */}
+        {activeTab === 'import' && (
+          <div style={styles.genPanel}>
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>Import Audio Files</label>
+              <p style={styles.hint}>
+                Upload existing audio files (recorded narration, intros, outros, pre-made effects) to use on the timeline.
+                Supported formats: MP3, WAV, OGG, M4A, FLAC, AAC.
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
+              <button onClick={() => importFileRef.current?.click()} disabled={uploading}
+                style={styles.generateBtn}>
+                {uploading ? <Loader size={16} /> : <Upload size={16} />}
+                {uploading ? 'Uploading...' : 'Choose Audio File'}
+              </button>
+              <input ref={importFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
+                onChange={handleImportAudio} hidden aria-label="Import audio file" />
+              <p style={styles.hint}>Uploaded files appear in the Generated Audio panel on the right, where you can preview and place them on the timeline.</p>
+            </div>
           </div>
         )}
       </div>

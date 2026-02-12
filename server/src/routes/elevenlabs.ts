@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
-import { queryOne, run } from '../db/helpers.js';
+import { queryAll, queryOne, run } from '../db/helpers.js';
 import {
   getCapabilities, getVoices, searchVoices,
   generateTTS, streamTTS, generateSFX, generateMusic,
@@ -148,6 +148,41 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
 
   router.get('/usage', async (_req, res) => {
     try { res.json(await getUsage()); } catch (err: any) { res.status(500).json({ error: err.message }); }
+  });
+
+  // Local usage stats from audit_log
+  router.get('/usage/local', (_req, res) => {
+    try {
+      const totalChars = queryOne(db, 'SELECT COALESCE(SUM(characters_used), 0) as total FROM audit_log') as any;
+      const totalGenerations = queryOne(db, 'SELECT COUNT(*) as count FROM audit_log WHERE action = ?', ['tts_generate']) as any;
+      const totalAssets = queryOne(db, 'SELECT COUNT(*) as count FROM audio_assets') as any;
+      const totalSizeBytes = queryOne(db, 'SELECT COALESCE(SUM(file_size_bytes), 0) as total FROM audio_assets') as any;
+
+      // Per-book breakdown
+      const perBook = queryAll(db,
+        `SELECT b.id, b.title, 
+          COALESCE(SUM(a.characters_used), 0) as characters_used,
+          COUNT(a.id) as generations,
+          (SELECT COUNT(*) FROM audio_assets aa WHERE aa.book_id = b.id) as assets,
+          (SELECT COALESCE(SUM(aa.file_size_bytes), 0) FROM audio_assets aa WHERE aa.book_id = b.id) as size_bytes
+         FROM books b LEFT JOIN audit_log a ON a.book_id = b.id
+         GROUP BY b.id ORDER BY b.title`,
+        []);
+
+      // Recent activity (last 20)
+      const recent = queryAll(db,
+        `SELECT action, details, characters_used, created_at FROM audit_log ORDER BY created_at DESC LIMIT 20`,
+        []);
+
+      res.json({
+        total_characters_used: totalChars.total,
+        total_generations: totalGenerations.count,
+        total_assets: totalAssets.count,
+        total_size_bytes: totalSizeBytes.total,
+        per_book: perBook,
+        recent_activity: recent,
+      });
+    } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
   return router;

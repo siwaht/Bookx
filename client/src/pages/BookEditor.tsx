@@ -3,15 +3,16 @@ import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { books, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings } from 'lucide-react';
+import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3 } from 'lucide-react';
 
 const STEPS = [
   { to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', step: 1, hint: 'Import & split text', podcastHint: 'Import script / text', end: true },
   { to: 'voices', icon: Users, label: 'Voices', podcastLabel: 'Voices', step: 2, hint: 'Assign character voices', podcastHint: 'Assign speaker voices' },
-  { to: 'studio', icon: Music, label: 'Audio Studio', podcastLabel: 'Audio Studio', step: 3, hint: 'SFX, music & v3 tags', podcastHint: 'SFX, music & effects' },
-  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', step: 4, hint: 'Arrange & preview audio', podcastHint: 'Arrange & preview' },
-  { to: 'qc', icon: CheckCircle, label: 'QC & Render', podcastLabel: 'QC & Render', step: 5, hint: 'Render & check quality', podcastHint: 'Render & check quality' },
-  { to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', step: 6, hint: 'Download ACX package', podcastHint: 'Download final audio' },
+  { to: 'pronunciation', icon: BookOpen, label: 'Pronunciation', podcastLabel: 'Pronunciation', step: 3, hint: 'Fix word pronunciations', podcastHint: 'Fix word pronunciations' },
+  { to: 'studio', icon: Music, label: 'Audio Studio', podcastLabel: 'Audio Studio', step: 4, hint: 'SFX, music & v3 tags', podcastHint: 'SFX, music & effects' },
+  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', step: 5, hint: 'Arrange & preview audio', podcastHint: 'Arrange & preview' },
+  { to: 'qc', icon: CheckCircle, label: 'QC & Render', podcastLabel: 'QC & Render', step: 6, hint: 'Render & check quality', podcastHint: 'Render & check quality' },
+  { to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', step: 7, hint: 'Download ACX package', podcastHint: 'Download final audio' },
 ];
 
 export function BookEditor() {
@@ -73,6 +74,9 @@ export function BookEditor() {
         </div>
 
         <div style={styles.sidebarFooter}>
+          <button onClick={() => navigate(`/book/${bookId}/usage`)} style={styles.settingsLink}>
+            <BarChart3 size={14} /> Usage & Costs
+          </button>
           <button onClick={() => navigate('/settings')} style={styles.settingsLink}>
             <Settings size={14} /> Settings & API Keys
           </button>

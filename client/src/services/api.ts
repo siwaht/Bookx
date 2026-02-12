@@ -220,3 +220,50 @@ export const aiParse = {
         method: 'POST', body: JSON.stringify({ text }),
       }),
 };
+
+// ── Pronunciation Rules ──
+export const pronunciation = {
+  list: (bookId: string) => request<any[]>(`/books/${bookId}/pronunciation`),
+  create: (bookId: string, data: { word: string; phoneme?: string; alias?: string; character_id?: string }) =>
+    request<any>(`/books/${bookId}/pronunciation`, { method: 'POST', body: JSON.stringify(data) }),
+  update: (bookId: string, ruleId: string, data: any) =>
+    request<any>(`/books/${bookId}/pronunciation/${ruleId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (bookId: string, ruleId: string) =>
+    request<void>(`/books/${bookId}/pronunciation/${ruleId}`, { method: 'DELETE' }),
+  apply: (bookId: string, text: string, characterId?: string) =>
+    request<{ original: string; processed: string; rules_applied: number }>(
+      `/books/${bookId}/pronunciation/apply`, { method: 'POST', body: JSON.stringify({ text, character_id: characterId }) }),
+};
+
+// ── Audio Upload ──
+export const uploadAudio = async (bookId: string, file: File, name?: string) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('book_id', bookId);
+  if (name) formData.append('name', name);
+
+  const res = await fetch(`${API_BASE}/audio/upload`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(err.error);
+  }
+  return res.json();
+};
+
+// ── Usage Stats ──
+export const usageStats = {
+  elevenlabs: () => request<any>('/elevenlabs/usage'),
+  local: () => request<{
+    total_characters_used: number;
+    total_generations: number;
+    total_assets: number;
+    total_size_bytes: number;
+    per_book: any[];
+    recent_activity: any[];
+  }>('/elevenlabs/usage/local'),
+};

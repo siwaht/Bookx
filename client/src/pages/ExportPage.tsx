@@ -1,11 +1,15 @@
 import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { exportBook } from '../services/api';
+import { useAppStore } from '../stores/appStore';
 import type { ValidationResult } from '../types';
-import { Download, CheckCircle, XCircle, Loader, Package } from 'lucide-react';
+import { Download, CheckCircle, XCircle, Loader, Package, Mic } from 'lucide-react';
 
 export function ExportPage() {
   const { bookId } = useParams<{ bookId: string }>();
+  const book = useAppStore((s) => s.currentBook);
+  const isPodcast = book?.project_type === 'podcast';
+  const [target, setTarget] = useState<'acx' | 'podcast'>(isPodcast ? 'podcast' : 'acx');
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<{ export_id: string; status: string; validation: ValidationResult } | null>(null);
 
@@ -13,7 +17,7 @@ export function ExportPage() {
     if (!bookId) return;
     setExporting(true);
     try {
-      const data = await exportBook.start(bookId, 'acx');
+      const data = await exportBook.start(bookId, target);
       setResult(data);
     } catch (err: any) { alert(`Export failed: ${err.message}`); }
     finally { setExporting(false); }
@@ -22,35 +26,70 @@ export function ExportPage() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h2 style={styles.title}>📦 Export — ACX/Audible</h2>
-        <p style={styles.subtitle}>Package your rendered audiobook for upload to ACX (Audible's publishing platform)</p>
+        <h2 style={styles.title}>📦 Export</h2>
+        <p style={styles.subtitle}>Package your rendered audio for distribution</p>
       </div>
 
-      <div style={styles.prereqBox}>
-        <h4 style={{ color: '#D4A843', marginBottom: 8 }}>Before exporting</h4>
-        <p style={styles.prereqText}>Make sure you've completed these steps:</p>
-        <div style={styles.prereqList}>
-          <span style={styles.prereqItem}>✓ All chapters have generated audio</span>
-          <span style={styles.prereqItem}>✓ Timeline is populated with clips</span>
-          <span style={styles.prereqItem}>✓ Render completed successfully (Step 4)</span>
-          <span style={styles.prereqItem}>✓ QC report shows all chapters passing</span>
-        </div>
+      {/* Target selector */}
+      <div style={styles.targetRow}>
+        <button onClick={() => { setTarget('acx'); setResult(null); }}
+          style={{ ...styles.targetBtn, ...(target === 'acx' ? styles.targetActive : {}) }}>
+          <Package size={14} /> ACX / Audible
+        </button>
+        <button onClick={() => { setTarget('podcast'); setResult(null); }}
+          style={{ ...styles.targetBtn, ...(target === 'podcast' ? styles.targetActive : {}) }}>
+          <Mic size={14} /> Podcast
+        </button>
       </div>
 
-      <div style={styles.specCard}>
-        <h4 style={{ color: '#fff', marginBottom: 12 }}>What's in the ACX package</h4>
-        <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
-          <li>Per-chapter MP3 files (192kbps CBR, 44.1kHz)</li>
-          <li>ACX-compliant file naming convention</li>
-          <li>Metadata CSV with chapter info</li>
-          <li>Cover art (if set on the book)</li>
-          <li>Everything bundled in a single ZIP download</li>
-        </ul>
-      </div>
+      {target === 'acx' ? (
+        <>
+          <div style={styles.prereqBox}>
+            <h4 style={{ color: '#D4A843', marginBottom: 8 }}>Before exporting (ACX)</h4>
+            <p style={styles.prereqText}>Make sure you've completed these steps:</p>
+            <div style={styles.prereqList}>
+              <span style={styles.prereqItem}>✓ All chapters have generated audio</span>
+              <span style={styles.prereqItem}>✓ Timeline is populated with clips</span>
+              <span style={styles.prereqItem}>✓ Render completed successfully</span>
+              <span style={styles.prereqItem}>✓ QC report shows all chapters passing</span>
+            </div>
+          </div>
+          <div style={styles.specCard}>
+            <h4 style={{ color: '#fff', marginBottom: 12 }}>ACX Package Contents</h4>
+            <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+              <li>Per-chapter MP3 files (192kbps CBR, 44.1kHz)</li>
+              <li>ACX-compliant file naming convention</li>
+              <li>Metadata CSV with chapter info</li>
+              <li>Cover art (if set)</li>
+              <li>Everything bundled in a single ZIP</li>
+            </ul>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={styles.prereqBox}>
+            <h4 style={{ color: '#D4A843', marginBottom: 8 }}>Before exporting (Podcast)</h4>
+            <p style={styles.prereqText}>Make sure you've completed these steps:</p>
+            <div style={styles.prereqList}>
+              <span style={styles.prereqItem}>✓ All episodes have generated audio</span>
+              <span style={styles.prereqItem}>✓ Render completed successfully</span>
+            </div>
+          </div>
+          <div style={styles.specCard}>
+            <h4 style={{ color: '#fff', marginBottom: 12 }}>Podcast Package Contents</h4>
+            <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+              <li>Per-episode MP3 files (192kbps, 44.1kHz)</li>
+              <li>Episode metadata JSON (for RSS feed generation)</li>
+              <li>Cover art (if set)</li>
+              <li>Everything bundled in a single ZIP</li>
+            </ul>
+          </div>
+        </>
+      )}
 
       <button onClick={handleExport} disabled={exporting} style={styles.exportBtn}>
         {exporting ? <Loader size={18} /> : <Package size={18} />}
-        {exporting ? 'Exporting...' : 'Export ACX Package'}
+        {exporting ? 'Exporting...' : target === 'acx' ? 'Export ACX Package' : 'Export Podcast Package'}
       </button>
 
       {result && (
@@ -92,6 +131,9 @@ const styles: Record<string, React.CSSProperties> = {
   header: { marginBottom: 4 },
   title: { fontSize: 20, color: '#fff' },
   subtitle: { fontSize: 13, color: '#555', marginTop: 4 },
+  targetRow: { display: 'flex', gap: 8 },
+  targetBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: '10px 20px', background: '#1a1a1a', color: '#888', border: '1px solid #222', borderRadius: 8, cursor: 'pointer', fontSize: 13 },
+  targetActive: { background: '#1e2a3a', color: '#4A90D9', borderColor: '#4A90D9' },
   prereqBox: { padding: 16, background: '#1a1a0f', borderRadius: 10, border: '1px solid #2a2a1a' },
   prereqText: { fontSize: 12, color: '#888', marginBottom: 8 },
   prereqList: { display: 'flex', flexDirection: 'column', gap: 4 },
