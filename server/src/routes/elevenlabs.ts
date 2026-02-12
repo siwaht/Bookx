@@ -162,10 +162,10 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       });
       if (libraryRes.ok) {
         const libData = await libraryRes.json() as any;
-        if (libData.voices?.length > 0) {
-          const sv = libData.voices[0];
+        const sv = (libData.voices || []).find((v: any) => v.voice_id === voiceId);
+        if (sv) {
           res.json({
-            voice_id: sv.voice_id || voiceId,
+            voice_id: sv.voice_id,
             name: sv.name || 'Shared Voice',
             category: sv.category || 'shared',
             labels: sv.labels || {},
