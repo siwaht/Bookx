@@ -4,3 +4,8 @@ data/
 .env
 *.sqlite
 *.sqlite3
+*.mp3
+*.wav
+client/dist/
+server/dist/
+server/data/

@@ -8,12 +8,11 @@ import {
   timeline as timelineApi,
   aiParse,
 } from '../services/api';
-import { useAppStore } from '../stores/appStore';
 import type { Chapter, Segment, Character } from '../types';
 import {
   Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen,
   Scissors, Users, Volume2, Wand2, Loader, Edit3, Copy, ChevronUp,
-  ChevronDown, Check, X, Tag, MoreVertical, GripVertical, Send,
+  ChevronDown, Check, X, Tag, MoreVertical, Send,
 } from 'lucide-react';
 
 // V3 audio tags for quick insertion
@@ -313,11 +312,18 @@ export function ManuscriptPage() {
     setAiParsing(true);
     try {
       const result = await aiParse.parse(bookId);
-      alert(`AI parsed: ${result.characters_created} characters, ${result.segments_created} segments, ${result.sfx_cues} SFX, ${result.music_cues} music cues. Provider: ${result.provider}`);
+      alert(`AI parsed: ${result.characters_created} characters, ${result.segments_created} segments, ${result.sfx_cues} SFX, ${result.music_cues} music cues.\nProvider: ${result.provider}`);
       await loadChapters();
       await loadCharacters();
       if (selectedChapterId) loadSegments(selectedChapterId);
-    } catch (err: any) { alert(`AI parse failed: ${err.message}`); }
+    } catch (err: any) {
+      const msg = err.message || 'Unknown error';
+      if (msg.includes('No LLM API key') || msg.includes('No API key')) {
+        alert(`AI Auto-Assign requires an LLM API key.\n\nGo to Settings (gear icon) and add an OpenAI, Mistral, or Gemini API key.\n\nError: ${msg}`);
+      } else {
+        alert(`AI parse failed: ${msg}`);
+      }
+    }
     finally { setAiParsing(false); }
   };
 

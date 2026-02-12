@@ -51,6 +51,10 @@ export function settingsRouter(db: SqlJsDatabase): Router {
     if (key === 'elevenlabs_api_key' && value) {
       process.env.ELEVENLABS_API_KEY = value;
     }
+    // Sync LLM keys to env vars for immediate availability
+    if (key === 'openai_api_key' && value) process.env.OPENAI_API_KEY = value;
+    if (key === 'mistral_api_key' && value) process.env.MISTRAL_API_KEY = value;
+    if (key === 'gemini_api_key' && value) process.env.GEMINI_API_KEY = value;
 
     res.json({ ok: true, key });
   });

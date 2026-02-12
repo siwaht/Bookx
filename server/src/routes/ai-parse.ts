@@ -43,9 +43,9 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
         return;
       }
 
-      const apiKey = getSetting(db, `${provider}_api_key`);
+      const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
       if (!apiKey) {
-        res.status(400).json({ error: `No API key found for ${provider}. Configure it in Settings.` });
+        res.status(400).json({ error: `No API key found for ${provider}. Go to Settings and add your ${provider} API key.` });
         return;
       }
 
@@ -101,7 +101,7 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
         res.status(400).json({ error: 'No LLM API key configured. Go to Settings and add an API key.' });
         return;
       }
-      const apiKey = getSetting(db, `${provider}_api_key`);
+      const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
       if (!apiKey) {
         res.status(400).json({ error: `No API key found for ${provider}.` });
         return;
@@ -152,6 +152,10 @@ function detectAvailableProvider(db: SqlJsDatabase): string | null {
     const key = getSetting(db, `${p}_api_key`);
     if (key) return p;
   }
+  // Fallback: check env vars
+  if (process.env.OPENAI_API_KEY) return 'openai';
+  if (process.env.MISTRAL_API_KEY) return 'mistral';
+  if (process.env.GEMINI_API_KEY) return 'gemini';
   return null;
 }
 
@@ -212,58 +216,77 @@ Rules:
 }
 
 async function callLLM(provider: string, apiKey: string, system: string, user: string): Promise<string> {
-  if (provider === 'openai') {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        temperature: 0.3,
-        max_tokens: 8000,
-        response_format: { type: 'json_object' },
-      }),
-    });
-    if (!res.ok) throw new Error(`OpenAI API error ${res.status}: ${await res.text()}`);
-    const data = await res.json() as any;
-    return data.choices[0].message.content;
-  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
 
-  if (provider === 'mistral') {
-    const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
-      body: JSON.stringify({
-        model: 'mistral-small-latest',
-        messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
-        temperature: 0.3,
-        max_tokens: 8000,
-        response_format: { type: 'json_object' },
-      }),
-    });
-    if (!res.ok) throw new Error(`Mistral API error ${res.status}: ${await res.text()}`);
-    const data = await res.json() as any;
-    return data.choices[0].message.content;
-  }
-
-  if (provider === 'gemini') {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
-      {
+  try {
+    if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: system + '\n\n' + user }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 8000, responseMimeType: 'application/json' },
+          model: 'gpt-4o-mini',
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          temperature: 0.3,
+          max_tokens: 8000,
+          response_format: { type: 'json_object' },
         }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        throw new Error(`OpenAI API error ${res.status}: ${errText}`);
       }
-    );
-    if (!res.ok) throw new Error(`Gemini API error ${res.status}: ${await res.text()}`);
-    const data = await res.json() as any;
-    return data.candidates[0].content.parts[0].text;
-  }
+      const data = await res.json() as any;
+      return data.choices[0].message.content;
+    }
 
-  throw new Error(`Unsupported LLM provider: ${provider}`);
+    if (provider === 'mistral') {
+      const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: 'mistral-small-latest',
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          temperature: 0.3,
+          max_tokens: 8000,
+          response_format: { type: 'json_object' },
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        throw new Error(`Mistral API error ${res.status}: ${errText}`);
+      }
+      const data = await res.json() as any;
+      return data.choices[0].message.content;
+    }
+
+    if (provider === 'gemini') {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: system + '\n\n' + user }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 8000, responseMimeType: 'application/json' },
+          }),
+          signal: controller.signal,
+        }
+      );
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        throw new Error(`Gemini API error ${res.status}: ${errText}`);
+      }
+      const data = await res.json() as any;
+      return data.candidates[0].content.parts[0].text;
+    }
+
+    throw new Error(`Unsupported LLM provider: ${provider}`);
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function applyParsedResult(

@@ -34,12 +34,33 @@ async function main() {
   if (storedElKey && !process.env.ELEVENLABS_API_KEY) {
     process.env.ELEVENLABS_API_KEY = storedElKey;
   }
+  for (const provider of ['openai', 'mistral', 'gemini']) {
+    const envKey = `${provider.toUpperCase()}_API_KEY`;
+    const storedKey = getSetting(db, `${provider}_api_key`);
+    if (storedKey && !process.env[envKey]) {
+      process.env[envKey] = storedKey;
+    }
+  }
 
   const app = express();
 
   // Middleware
   app.use(cors());
   app.use(express.json({ limit: '50mb' }));
+
+  // Security headers
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    next();
+  });
+
+  // Health check (no auth)
+  app.get('/api/health', (_req, res) => {
+    res.json({ status: 'ok', uptime: process.uptime() });
+  });
 
   // Auth
   app.post('/api/auth/login', loginHandler);
@@ -121,8 +142,39 @@ async function main() {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 
-  app.listen(PORT, () => {
+  // Global error handler
+  app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+    console.error('[Unhandled Error]', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  });
+
+  const server = app.listen(PORT, () => {
     console.log(`[Server] Audiobook Maker running on http://localhost:${PORT}`);
+  });
+
+  // Graceful shutdown
+  const shutdown = (signal: string) => {
+    console.log(`[Server] ${signal} received, shutting down...`);
+    saveDb();
+    server.close(() => {
+      console.log('[Server] Closed');
+      process.exit(0);
+    });
+    // Force exit after 10s
+    setTimeout(() => process.exit(1), 10000);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  // Catch unhandled errors
+  process.on('uncaughtException', (err) => {
+    console.error('[Uncaught Exception]', err);
+    saveDb();
+  });
+  process.on('unhandledRejection', (reason) => {
+    console.error('[Unhandled Rejection]', reason);
   });
 }
 
