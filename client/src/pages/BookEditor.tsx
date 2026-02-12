@@ -3,15 +3,15 @@ import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { books, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music } from 'lucide-react';
+import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings } from 'lucide-react';
 
 const STEPS = [
-  { to: '', icon: FileText, label: 'Manuscript', step: 1, hint: 'Import & split text', end: true },
-  { to: 'voices', icon: Users, label: 'Voices', step: 2, hint: 'Assign character voices' },
-  { to: 'studio', icon: Music, label: 'Audio Studio', step: 3, hint: 'SFX, music & v3 tags' },
-  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', step: 4, hint: 'Arrange & preview audio' },
-  { to: 'qc', icon: CheckCircle, label: 'QC & Render', step: 5, hint: 'Render & check quality' },
-  { to: 'export', icon: Download, label: 'Export', step: 6, hint: 'Download ACX package' },
+  { to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', step: 1, hint: 'Import & split text', podcastHint: 'Import script / text', end: true },
+  { to: 'voices', icon: Users, label: 'Voices', podcastLabel: 'Voices', step: 2, hint: 'Assign character voices', podcastHint: 'Assign speaker voices' },
+  { to: 'studio', icon: Music, label: 'Audio Studio', podcastLabel: 'Audio Studio', step: 3, hint: 'SFX, music & v3 tags', podcastHint: 'SFX, music & effects' },
+  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', step: 4, hint: 'Arrange & preview audio', podcastHint: 'Arrange & preview' },
+  { to: 'qc', icon: CheckCircle, label: 'QC & Render', podcastLabel: 'QC & Render', step: 5, hint: 'Render & check quality', podcastHint: 'Render & check quality' },
+  { to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', step: 6, hint: 'Download ACX package', podcastHint: 'Download final audio' },
 ];
 
 export function BookEditor() {
@@ -27,16 +27,23 @@ export function BookEditor() {
     return () => setCurrentBook(null);
   }, [bookId]);
 
-  if (!book) return <div style={styles.loading}>Loading book...</div>;
+  if (!book) return <div style={styles.loading}>Loading project...</div>;
+
+  const isPodcast = book.project_type === 'podcast';
 
   return (
     <div style={styles.layout}>
-      <nav style={styles.sidebar} aria-label="Book editor navigation">
+      <nav style={styles.sidebar} aria-label="Project editor navigation">
         <button onClick={() => navigate('/')} style={styles.backBtn}>
-          <ArrowLeft size={16} /> All Books
+          <ArrowLeft size={16} /> All Projects
         </button>
 
         <div style={styles.bookInfo}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+            <span style={{ fontSize: 10, padding: '1px 6px', borderRadius: 3, background: isPodcast ? '#2a1a3a' : '#1a2a3a', color: isPodcast ? '#b88ad9' : '#6a9ad0' }}>
+              {isPodcast ? '🎙️ Podcast' : '📖 Audiobook'}
+            </span>
+          </div>
           <h2 style={styles.bookTitle}>{book.title}</h2>
           {book.author && <p style={styles.bookAuthor}>by {book.author}</p>}
         </div>
@@ -57,18 +64,25 @@ export function BookEditor() {
               <div style={styles.stepNumber}>{item.step}</div>
               <div style={styles.navContent}>
                 <div style={styles.navLabel}>
-                  <item.icon size={15} style={{ opacity: 0.7 }} /> {item.label}
+                  <item.icon size={15} style={{ opacity: 0.7 }} /> {isPodcast ? item.podcastLabel : item.label}
                 </div>
-                <div style={styles.navHint}>{item.hint}</div>
+                <div style={styles.navHint}>{isPodcast ? item.podcastHint : item.hint}</div>
               </div>
             </NavLink>
           ))}
         </div>
 
         <div style={styles.sidebarFooter}>
+          <button onClick={() => navigate('/settings')} style={styles.settingsLink}>
+            <Settings size={14} /> Settings & API Keys
+          </button>
           <div style={styles.tipBox}>
             <span style={styles.tipIcon}>💡</span>
-            <span style={styles.tipText}>Follow steps 1→6 to produce your audiobook</span>
+            <span style={styles.tipText}>
+              {isPodcast
+                ? 'Import your script, AI assigns speakers, then generate audio'
+                : 'Follow steps 1→6 to produce your audiobook'}
+            </span>
           </div>
         </div>
       </nav>
@@ -109,7 +123,12 @@ const styles: Record<string, React.CSSProperties> = {
   navContent: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
   navLabel: { display: 'flex', alignItems: 'center', gap: 6, color: '#bbb', fontSize: 13 },
   navHint: { fontSize: 10, color: '#555' },
-  sidebarFooter: { padding: '12px 16px', borderTop: '1px solid #1e1e1e' },
+  sidebarFooter: { padding: '12px 16px', borderTop: '1px solid #1e1e1e', display: 'flex', flexDirection: 'column' as const, gap: 8 },
+  settingsLink: {
+    display: 'flex', alignItems: 'center', gap: 6, background: 'none',
+    border: '1px solid #1e1e1e', color: '#666', cursor: 'pointer', padding: '8px 12px',
+    borderRadius: 6, fontSize: 12, width: '100%',
+  },
   tipBox: {
     display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px',
     background: '#0d1520', borderRadius: 8, border: '1px solid #1a2a3a',

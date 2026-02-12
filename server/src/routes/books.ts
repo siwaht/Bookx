@@ -23,11 +23,12 @@ export function booksRouter(db: SqlJsDatabase): Router {
 
   router.post('/', (req: Request, res: Response) => {
     const id = uuid();
-    const { title, author, narrator, isbn, default_model } = req.body;
+    const { title, author, narrator, isbn, default_model, project_type, format } = req.body;
 
     run(db,
-      `INSERT INTO books (id, title, author, narrator, isbn, default_model) VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, title, author || null, narrator || null, isbn || null, default_model || 'eleven_v3']
+      `INSERT INTO books (id, title, author, narrator, isbn, default_model, project_type, format) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, title, author || null, narrator || null, isbn || null, default_model || 'eleven_v3',
+       project_type || 'audiobook', format || 'single_narrator']
     );
 
     const book = queryOne(db, 'SELECT * FROM books WHERE id = ?', [id]);
@@ -35,14 +36,15 @@ export function booksRouter(db: SqlJsDatabase): Router {
   });
 
   router.put('/:id', (req: Request, res: Response) => {
-    const { title, author, narrator, isbn, cover_art_path, default_model } = req.body;
+    const { title, author, narrator, isbn, cover_art_path, default_model, project_type, format } = req.body;
 
     run(db,
       `UPDATE books SET title = COALESCE(?, title), author = COALESCE(?, author),
        narrator = COALESCE(?, narrator), isbn = COALESCE(?, isbn),
        cover_art_path = COALESCE(?, cover_art_path), default_model = COALESCE(?, default_model),
+       project_type = COALESCE(?, project_type), format = COALESCE(?, format),
        updated_at = datetime('now') WHERE id = ?`,
-      [title, author, narrator, isbn, cover_art_path, default_model, req.params.id]
+      [title, author, narrator, isbn, cover_art_path, default_model, project_type, format, req.params.id]
     );
 
     const book = queryOne(db, 'SELECT * FROM books WHERE id = ?', [req.params.id]);

@@ -6,10 +6,11 @@ import {
   segments as segmentsApi,
   characters as charsApi,
   timeline as timelineApi,
+  aiParse,
 } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Chapter, Segment, Character } from '../types';
-import { Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen, Scissors, Users, Volume2 } from 'lucide-react';
+import { Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen, Scissors, Users, Volume2, Wand2, Loader } from 'lucide-react';
 
 export function ManuscriptPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -22,6 +23,7 @@ export function ManuscriptPage() {
   const [batchProgress, setBatchProgress] = useState('');
   const [populating, setPopulating] = useState(false);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [aiParsing, setAiParsing] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   const loadChapters = useCallback(async () => {
@@ -122,6 +124,22 @@ export function ManuscriptPage() {
     chaptersApi.update(bookId, selectedChapter.id, { raw_text: text });
   };
 
+  const handleAiParse = async () => {
+    if (!bookId) return;
+    setAiParsing(true);
+    try {
+      const result = await aiParse.parse(bookId);
+      alert(`AI parsed: ${result.characters_created} characters, ${result.segments_created} segments, ${result.sfx_cues} SFX cues, ${result.music_cues} music cues detected. Using ${result.provider}.`);
+      await loadChapters();
+      await loadCharacters();
+      if (selectedChapter) loadSegments(selectedChapter.id);
+    } catch (err: any) {
+      alert(`AI parse failed: ${err.message}`);
+    } finally {
+      setAiParsing(false);
+    }
+  };
+
   const segmentsWithAudio = segmentList.filter((s) => s.audio_asset_id);
   const segmentsWithoutAudio = segmentList.filter((s) => !s.audio_asset_id);
   const segmentsWithCharacter = segmentList.filter((s) => s.character_id);
@@ -143,6 +161,19 @@ export function ManuscriptPage() {
           </button>
           <input ref={fileRef} type="file" accept=".txt,.md,.docx,.epub,.html,.htm" onChange={handleImport} hidden aria-label="Import manuscript file" />
         </div>
+
+        {hasChapters && (
+          <div style={styles.aiParseBar}>
+            <button onClick={handleAiParse} disabled={aiParsing} style={styles.aiParseBtn}
+              title="Use AI to auto-detect characters, assign segments, and suggest SFX/music">
+              {aiParsing ? <Loader size={14} /> : <Wand2 size={14} />}
+              {aiParsing ? 'AI Parsing...' : 'AI Auto-Assign'}
+            </button>
+            <p style={{ fontSize: 10, color: '#555', textAlign: 'center' as const }}>
+              Detects characters, assigns speakers, suggests SFX & music
+            </p>
+          </div>
+        )}
 
         <div style={styles.chapterList}>
           {chapterList.map((ch) => (
@@ -391,4 +422,13 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer', fontSize: 12,
   },
   emptySegments: { padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' },
+  aiParseBar: {
+    padding: '8px 10px', borderBottom: '1px solid #222',
+    display: 'flex', flexDirection: 'column', gap: 4,
+  },
+  aiParseBtn: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, width: '100%',
+    padding: '8px 12px', background: '#2a1a3a', color: '#b88ad9', border: '1px solid #3a2a4a',
+    borderRadius: 6, cursor: 'pointer', fontSize: 12, fontWeight: 500,
+  },
 };

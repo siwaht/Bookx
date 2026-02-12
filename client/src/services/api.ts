@@ -175,3 +175,23 @@ export const exportBook = {
 
 // ── Audio ──
 export const audioUrl = (assetId: string) => `${API_BASE}/audio/${assetId}`;
+
+// ── Settings ──
+export const settings = {
+  getAll: () => request<Record<string, { value: string; masked: string; updated_at: string }>>('/settings'),
+  set: (key: string, value: string) =>
+    request<{ ok: boolean }>(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
+  delete: (key: string) => request<void>(`/settings/${key}`, { method: 'DELETE' }),
+};
+
+// ── AI Parse ──
+export const aiParse = {
+  parse: (bookId: string, chapterIds?: string[]) =>
+    request<{
+      characters_created: number; segments_created: number;
+      sfx_cues: number; music_cues: number;
+      provider: string; format: string; project_type: string;
+    }>(`/books/${bookId}/ai-parse`, {
+      method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }),
+    }),
+};

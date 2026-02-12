@@ -11,6 +11,7 @@ import { TimelinePage } from './pages/TimelinePage';
 import { QCPage } from './pages/QCPage';
 import { ExportPage } from './pages/ExportPage';
 import { AudioStudioPage } from './pages/AudioStudioPage';
+import { SettingsPage } from './pages/SettingsPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -22,6 +23,7 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Dashboard />} />
+          <Route path="/settings" element={<SettingsPage />} />
           <Route path="/book/:bookId" element={<BookEditor />}>
             <Route index element={<ManuscriptPage />} />
             <Route path="voices" element={<VoicesPage />} />

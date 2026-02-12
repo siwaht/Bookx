@@ -8,6 +8,8 @@ export interface Book {
   isbn: string | null;
   cover_art_path: string | null;
   default_model: string;
+  project_type: 'audiobook' | 'podcast';
+  format: string;
   created_at: string;
   updated_at: string;
   chapters?: Chapter[];

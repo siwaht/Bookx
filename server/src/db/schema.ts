@@ -1,6 +1,7 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
+import { queryAll } from './helpers.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -229,6 +230,15 @@ export function initializeSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // API keys / settings store
+  database.run(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL,
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
   // Indexes
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, sort_order)',
@@ -240,6 +250,15 @@ export function initializeSchema(database: SqlJsDatabase): void {
   ];
   for (const idx of indexes) {
     database.run(idx);
+  }
+
+  // Migrations: add columns if missing
+  const bookCols = queryAll(database, "PRAGMA table_info(books)").map((c: any) => c.name);
+  if (!bookCols.includes('project_type')) {
+    database.run("ALTER TABLE books ADD COLUMN project_type TEXT DEFAULT 'audiobook'");
+  }
+  if (!bookCols.includes('format')) {
+    database.run("ALTER TABLE books ADD COLUMN format TEXT DEFAULT 'single_narrator'");
   }
 
   saveDb();
