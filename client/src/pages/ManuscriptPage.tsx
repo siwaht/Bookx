@@ -41,6 +41,8 @@ export function ManuscriptPage() {
   const [batchProgress, setBatchProgress] = useState('');
   const [populating, setPopulating] = useState(false);
   const [generatingId, setGeneratingId] = useState<string | null>(null);
+  const [sendingId, setSendingId] = useState<string | null>(null);
+  const [sentSegments, setSentSegments] = useState<Set<string>>(new Set());
   const [aiParsing, setAiParsing] = useState(false);
   const [aiTagging, setAiTagging] = useState(false);
   const [nameAssigning, setNameAssigning] = useState(false);
@@ -239,10 +241,26 @@ export function ManuscriptPage() {
     setGeneratingId(segmentId);
     try {
       await segmentsApi.generate(selectedChapter.id, segmentId);
+      // Remove from sent set since audio changed
+      setSentSegments((prev) => { const next = new Set(prev); next.delete(segmentId); return next; });
       loadSegments(selectedChapter.id);
       loadChapters();
     } catch (err: any) { alert(`Generation failed: ${err.message}`); }
     finally { setGeneratingId(null); }
+  };
+
+  const handleSendSegmentToTimeline = async (segmentId: string) => {
+    if (!bookId) return;
+    setSendingId(segmentId);
+    try {
+      const result = await timelineApi.sendSegment(bookId, segmentId);
+      setSentSegments((prev) => new Set(prev).add(segmentId));
+      if (result.updated) {
+        // Clip was updated with new audio
+      }
+      loadChapters();
+    } catch (err: any) { alert(`Send to timeline failed: ${err.message}`); }
+    finally { setSendingId(null); }
   };
 
   const handleBatchGenerate = async () => {
@@ -678,31 +696,38 @@ export function ManuscriptPage() {
         <div style={styles.segmentList}>
           {segmentList.map((seg, idx) => {
             const isEditingSeg = editingSegId === seg.id;
+            const isGenerating = generatingId === seg.id;
+            const isSending = sendingId === seg.id;
+            const isSent = sentSegments.has(seg.id);
+            const hasAudio = !!seg.audio_asset_id;
+            const hasChar = !!seg.character_id;
+            const charName = characterList.find(c => c.id === seg.character_id)?.name;
+
             return (
               <div key={seg.id} style={{
                 ...styles.segmentItem,
-                borderLeft: `3px solid ${seg.audio_asset_id ? '#2d5a27' : seg.character_id ? '#4A90D9' : '#333'}`,
+                borderLeft: `3px solid ${isSent ? '#9B59B6' : hasAudio ? '#2d5a27' : hasChar ? '#4A90D9' : '#333'}`,
               }}>
+                {/* Header: index + character + actions */}
                 <div style={styles.segmentHeader}>
                   <span style={styles.segNum}>#{idx + 1}</span>
                   <select value={seg.character_id || ''} onChange={(e) => handleAssignCharacter(seg.id, e.target.value || null)}
-                    style={{ ...styles.charSelect, borderColor: seg.character_id ? '#4A90D9' : '#333' }}
+                    style={{ ...styles.charSelect, borderColor: hasChar ? '#4A90D9' : '#333' }}
                     aria-label="Assign character">
                     <option value="">— character —</option>
                     {characterList.map((c) => (
                       <option key={c.id} value={c.id}>{c.name} ({c.role})</option>
                     ))}
                   </select>
-                  <button onClick={() => { setEditingSegId(seg.id); setEditingSegText(seg.text); }}
-                    style={styles.iconBtn} title="Edit segment text"><Edit3 size={11} /></button>
                   <button onClick={() => handleDeleteSegment(seg.id)} style={styles.iconBtn} title="Delete segment">
                     <Trash2 size={11} /></button>
                 </div>
 
+                {/* Text: always visible, click to edit */}
                 {isEditingSeg ? (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                     <textarea value={editingSegText} onChange={(e) => setEditingSegText(e.target.value)}
-                      style={styles.segEditArea} rows={3} aria-label="Edit segment text" />
+                      style={styles.segEditArea} rows={4} autoFocus aria-label="Edit segment text" />
                     <div style={{ display: 'flex', gap: 4 }}>
                       <button onClick={() => handleUpdateSegmentText(seg.id)} style={{ ...styles.tinyBtn, background: '#2d5a27', color: '#8f8' }}>
                         <Check size={11} /> Save
@@ -711,26 +736,56 @@ export function ManuscriptPage() {
                     </div>
                   </div>
                 ) : (
-                  <p style={styles.segText} onDoubleClick={() => { setEditingSegId(seg.id); setEditingSegText(seg.text); }}>
-                    {seg.text.slice(0, 150)}{seg.text.length > 150 ? '...' : ''}
+                  <p style={styles.segText} onClick={() => { setEditingSegId(seg.id); setEditingSegText(seg.text); }}
+                    title="Click to edit text">
+                    {seg.text.slice(0, 200)}{seg.text.length > 200 ? '...' : ''}
                   </p>
                 )}
 
-                <div style={styles.segActions}>
-                  {seg.audio_asset_id ? (
+                {/* Audio player + controls */}
+                <div style={styles.segStudio}>
+                  {hasAudio && (
                     <audio src={`/api/audio/${seg.audio_asset_id}`} controls style={{ height: 28, width: '100%' }} />
-                  ) : (
-                    <button onClick={() => handleGenerate(seg.id)} style={styles.genBtn}
-                      disabled={generatingId === seg.id || !seg.character_id}
-                      title={!seg.character_id ? 'Assign a character first' : 'Generate TTS'}>
-                      <Play size={11} /> {generatingId === seg.id ? '...' : !seg.character_id ? 'Needs character' : 'Generate'}
-                    </button>
                   )}
-                  {seg.audio_asset_id && (
-                    <button onClick={() => handleGenerate(seg.id)} style={styles.regenBtn}
-                      disabled={generatingId === seg.id} title="Regenerate">
-                      <RefreshCw size={11} />
+
+                  <div style={styles.segBtnRow}>
+                    {/* Generate / Regenerate */}
+                    <button onClick={() => handleGenerate(seg.id)} style={{
+                      ...styles.genBtn,
+                      opacity: (!hasChar || isGenerating) ? 0.5 : 1,
+                    }}
+                      disabled={isGenerating || !hasChar}
+                      title={!hasChar ? 'Assign a character first' : hasAudio ? 'Regenerate with current text' : 'Generate TTS'}>
+                      {isGenerating ? <Loader size={11} /> : hasAudio ? <RefreshCw size={11} /> : <Play size={11} />}
+                      {isGenerating ? 'Generating...' : hasAudio ? 'Regenerate' : !hasChar ? 'Needs voice' : 'Generate'}
                     </button>
+
+                    {/* Send to Timeline — only when audio exists */}
+                    {hasAudio && (
+                      <button onClick={() => handleSendSegmentToTimeline(seg.id)}
+                        disabled={isSending}
+                        style={{
+                          ...styles.sendBtn,
+                          background: isSent ? '#2a1a3a' : '#1a2a3a',
+                          color: isSent ? '#b88ad9' : '#4A90D9',
+                          borderColor: isSent ? '#3a2a4a' : '#2a3a5a',
+                        }}
+                        title={isSent ? 'Already on timeline (click to update)' : 'Send this audio to the timeline'}>
+                        {isSending ? <Loader size={11} /> : <Send size={11} />}
+                        {isSending ? 'Sending...' : isSent ? 'Sent ✓' : 'Send to Timeline'}
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Status hint */}
+                  {!hasChar && !hasAudio && (
+                    <span style={{ fontSize: 9, color: '#555' }}>① Assign a character → ② Generate → ③ Listen & tweak → ④ Send to timeline</span>
+                  )}
+                  {hasChar && !hasAudio && (
+                    <span style={{ fontSize: 9, color: '#666' }}>Ready to generate. Click Generate to preview audio.</span>
+                  )}
+                  {hasAudio && !isSent && (
+                    <span style={{ fontSize: 9, color: '#4A90D9' }}>Listen, edit text & regenerate until satisfied, then send to timeline.</span>
                   )}
                 </div>
               </div>
@@ -870,15 +925,21 @@ const styles: Record<string, React.CSSProperties> = {
     flex: 1, padding: '2px 4px', background: '#0f0f0f', color: '#aaa', border: '1px solid #333',
     borderRadius: 4, fontSize: 10, outline: 'none',
   },
-  segText: { fontSize: 11, color: '#999', lineHeight: 1.5, cursor: 'pointer' },
+  segText: { fontSize: 11, color: '#999', lineHeight: 1.5, cursor: 'pointer', padding: '2px 4px', borderRadius: 4, border: '1px solid transparent' },
   segEditArea: {
     padding: 8, background: '#0f0f0f', color: '#ddd', border: '1px solid #444',
     borderRadius: 4, fontSize: 12, lineHeight: 1.5, outline: 'none', resize: 'vertical', fontFamily: 'inherit',
   },
+  segStudio: { display: 'flex', flexDirection: 'column', gap: 4 },
+  segBtnRow: { display: 'flex', gap: 4, flexWrap: 'wrap' },
   segActions: { display: 'flex', alignItems: 'center', gap: 4 },
   genBtn: {
-    display: 'flex', alignItems: 'center', gap: 3, padding: '3px 8px',
+    display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px',
     background: '#2d5a27', color: '#8f8', border: 'none', borderRadius: 4, cursor: 'pointer', fontSize: 10,
+  },
+  sendBtn: {
+    display: 'flex', alignItems: 'center', gap: 3, padding: '4px 10px',
+    border: '1px solid #2a3a5a', borderRadius: 4, cursor: 'pointer', fontSize: 10,
   },
   regenBtn: {
     padding: '3px 5px', background: '#333', color: '#888',

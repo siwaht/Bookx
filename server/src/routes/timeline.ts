@@ -14,7 +14,13 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   router.get('/tracks', (req: Request, res: Response) => {
     const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
     const tracksWithClips = tracks.map((track: any) => {
-      const clips = queryAll(db, 'SELECT * FROM clips WHERE track_id = ? ORDER BY position_ms', [track.id]);
+      const clips = queryAll(db,
+        `SELECT c.*, s.text as segment_text, ch.name as character_name
+         FROM clips c
+         LEFT JOIN segments s ON c.segment_id = s.id
+         LEFT JOIN characters ch ON s.character_id = ch.id
+         WHERE c.track_id = ? ORDER BY c.position_ms`,
+        [track.id]);
       return { ...track, clips };
     });
     res.json(tracksWithClips);
@@ -294,11 +300,57 @@ export function timelineRouter(db: SqlJsDatabase): Router {
     }
   });
 
+  // ── Send a single segment (with audio) to the timeline ──
+  router.post('/send-segment-to-timeline', (req: Request, res: Response) => {
+    try {
+      const bookId = req.params.bookId;
+      const { segment_id } = req.body;
+      if (!segment_id) { res.status(400).json({ error: 'segment_id required' }); return; }
+
+      const seg = queryOne(db, 'SELECT * FROM segments WHERE id = ?', [segment_id]) as any;
+      if (!seg) { res.status(404).json({ error: 'Segment not found' }); return; }
+      if (!seg.audio_asset_id) { res.status(400).json({ error: 'Segment has no audio. Generate audio first.' }); return; }
+
+      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [seg.audio_asset_id]) as any;
+      if (!asset) { res.status(400).json({ error: 'Audio asset not found' }); return; }
+
+      // Ensure narration track exists
+      let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]) as any;
+      if (!narrationTrack) {
+        const trackId = uuid();
+        run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, 'Narration', 'narration', 0, '#4A90D9')`, [trackId, bookId]);
+        narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]) as any;
+      }
+
+      // Check if clip already exists for this segment
+      const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [segment_id, narrationTrack.id]) as any;
+      if (existing) {
+        // Update the existing clip's audio asset (in case user regenerated)
+        run(db, `UPDATE clips SET audio_asset_id = ? WHERE id = ?`, [seg.audio_asset_id, existing.id]);
+        res.json({ clip_id: existing.id, position_ms: existing.position_ms, updated: true });
+        return;
+      }
+
+      // Find the end position of the last clip on this track
+      const lastClip = queryOne(db,
+        `SELECT c.position_ms, a.duration_ms FROM clips c
+         LEFT JOIN audio_assets a ON c.audio_asset_id = a.id
+         WHERE c.track_id = ? ORDER BY c.position_ms DESC LIMIT 1`,
+        [narrationTrack.id]) as any;
+      const positionMs = lastClip ? (lastClip.position_ms + (lastClip.duration_ms || 3000) + 300) : 0;
+
+      const clipId = uuid();
+      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+        [clipId, narrationTrack.id, seg.audio_asset_id, segment_id, positionMs]);
+
+      res.json({ clip_id: clipId, position_ms: positionMs, duration_ms: asset.duration_ms, updated: false });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
 }
-
-
-// Shared TTS generation logic for timeline population
 async function generateSegmentAudioForTimeline(
   db: SqlJsDatabase,
   segment: any

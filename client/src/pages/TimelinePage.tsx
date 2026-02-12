@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { timeline as timelineApi, elevenlabs, audioUrl, render, saveProject, downloadProjectUrl } from '../services/api';
+import { timeline as timelineApi, elevenlabs, audioUrl, render, saveProject, downloadProjectUrl, uploadAudio } from '../services/api';
 import type { Track, Clip, ChapterMarker } from '../types';
 import {
   Play, Pause, SkipBack, ZoomIn, ZoomOut, Plus, Trash2, Volume2, VolumeX,
   Save, Download, Scissors, Copy, Clipboard, Undo2, Redo2, HelpCircle, X,
-  Wand2, Loader,
+  Wand2, Loader, Upload,
 } from 'lucide-react';
 
 type DragMode = 'move' | 'trimStart' | 'trimEnd';
@@ -45,6 +45,8 @@ export function TimelinePage() {
   const playTimerRef = useRef<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [importing, setImporting] = useState(false);
+  const importFileRef = useRef<HTMLInputElement>(null);
   const [showQuickAdd, setShowQuickAdd] = useState(false);
   const [quickPrompt, setQuickPrompt] = useState('');
   const [quickType, setQuickType] = useState<'sfx' | 'music'>('sfx');
@@ -311,7 +313,7 @@ export function TimelinePage() {
         if (cw > 30) {
           ctx.fillStyle = '#ddd';
           ctx.font = '10px sans-serif';
-          const label = clip.notes || clip.segment_id?.slice(0, 8) || clip.audio_asset_id.slice(0, 8);
+          const label = clip.notes || (clip as any).character_name || (clip as any).segment_text?.slice(0, 40) || clip.audio_asset_id.slice(0, 8);
           ctx.fillText(label, cx + 4, y + TRACK_H / 2 + 1, cw - 8);
         }
         if (isSelected) {
@@ -505,6 +507,34 @@ export function TimelinePage() {
   const selectedClip = selectedClipId ? findClip(selectedClipId) : null;
   const selectedTrack = selectedClip ? tracks.find((t) => t.clips.some((c) => c.id === selectedClipId)) : null;
 
+  // ── Import Audio File ──
+  const handleImportAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !bookId) return;
+    setImporting(true);
+    try {
+      const result = await uploadAudio(bookId, file, file.name);
+      // Find or create an "Imported" track
+      let importTrack = tracks.find((t) => t.type === 'imported');
+      if (!importTrack) {
+        importTrack = await timelineApi.createTrack(bookId, { name: 'Imported', type: 'imported' });
+      }
+      if (!importTrack) throw new Error('Failed to create track');
+      // Place clip at playhead
+      await timelineApi.createClip(bookId, importTrack.id, {
+        audio_asset_id: result.audio_asset_id,
+        position_ms: playheadMs,
+        notes: file.name.replace(/\.[^.]+$/, ''),
+      });
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { alert(`Import failed: ${err.message}`); }
+    finally {
+      setImporting(false);
+      if (importFileRef.current) importFileRef.current.value = '';
+    }
+  };
+
   return (
     <div style={S.container}>
       {/* Toolbar */}
@@ -531,6 +561,10 @@ export function TimelinePage() {
           <button onClick={() => setShowQuickAdd(!showQuickAdd)} style={{ ...S.toolBtn, background: showQuickAdd ? '#2a1a3a' : '#222' }} title="Quick add SFX/Music">
             <Wand2 size={14} />
           </button>
+          <button onClick={() => importFileRef.current?.click()} disabled={importing} style={S.toolBtn} title="Import audio file to timeline">
+            <Upload size={14} /> {importing ? '...' : 'Import'}
+          </button>
+          <input ref={importFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac" onChange={handleImportAudio} hidden aria-label="Import audio file" />
         </div>
         <div style={{ flex: 1 }} />
         <div style={S.toolGroup}>

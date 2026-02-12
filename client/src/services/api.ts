@@ -160,6 +160,9 @@ export const timeline = {
       tts: { generated: number; cached: number; skipped: number; failed: number; errors: string[] };
       timeline: { clips_created: number; markers_created: number; total_duration_ms: number };
     }>(`/books/${bookId}/generate-and-populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }) }),
+  sendSegment: (bookId: string, segmentId: string) =>
+    request<{ clip_id: string; position_ms: number; duration_ms?: number; updated: boolean }>(
+      `/books/${bookId}/send-segment-to-timeline`, { method: 'POST', body: JSON.stringify({ segment_id: segmentId }) }),
 };
 
 // ── Import ──
