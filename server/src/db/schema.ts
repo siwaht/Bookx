@@ -246,6 +246,12 @@ export function initializeSchema(database: SqlJsDatabase): void {
     database.run("ALTER TABLE clips ADD COLUMN speed REAL DEFAULT 1.0");
   }
 
+  // Migration: add name column to audio_assets if missing
+  const assetCols = queryAll(database, "PRAGMA table_info(audio_assets)").map((c: any) => c.name);
+  if (!assetCols.includes('name')) {
+    database.run("ALTER TABLE audio_assets ADD COLUMN name TEXT");
+  }
+
   // Indexes
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, sort_order)',

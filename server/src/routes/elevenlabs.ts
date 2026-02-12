@@ -204,8 +204,8 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
 
       if (book_id) {
         run(db,
-          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'sfx', ?, ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, estimatedDurationMs, promptHash, JSON.stringify({ prompt, duration_seconds, prompt_influence, loop, model_id }), buffer.length]);
+          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes, name) VALUES (?, ?, 'sfx', ?, ?, ?, ?, ?, ?)`,
+          [assetId, book_id, filePath, estimatedDurationMs, promptHash, JSON.stringify({ prompt, duration_seconds, prompt_influence, loop, model_id }), buffer.length, prompt.slice(0, 100)]);
       }
 
       res.json({ audio_asset_id: assetId, file_path: filePath, cached: false, duration_ms: estimatedDurationMs });
@@ -236,8 +236,8 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
 
       if (book_id) {
         run(db,
-          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes) VALUES (?, ?, 'music', ?, ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, estimatedDurationMs, promptHash, JSON.stringify({ prompt, music_length_ms: lengthMs, force_instrumental, model_id }), buffer.length]);
+          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes, name) VALUES (?, ?, 'music', ?, ?, ?, ?, ?, ?)`,
+          [assetId, book_id, filePath, estimatedDurationMs, promptHash, JSON.stringify({ prompt, music_length_ms: lengthMs, force_instrumental, model_id }), buffer.length, prompt.slice(0, 100)]);
       }
 
       res.json({ audio_asset_id: assetId, file_path: filePath, cached: false, duration_ms: estimatedDurationMs });

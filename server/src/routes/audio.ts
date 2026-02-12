@@ -27,6 +27,57 @@ export function audioRouter(db: SqlJsDatabase): Router {
     res.json(assets);
   });
 
+  // List SFX and music assets for a book (for the library)
+  router.get('/book/:bookId/library', (req: Request, res: Response) => {
+    const assets = queryAll(db,
+      `SELECT * FROM audio_assets WHERE book_id = ? AND type IN ('sfx', 'music', 'imported') ORDER BY created_at DESC`,
+      [req.params.bookId]);
+    res.json(assets);
+  });
+
+  // Download an audio asset as a file
+  router.get('/:assetId/download', (req: Request, res: Response) => {
+    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
+    if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+
+    const ext = path.extname(asset.file_path).toLowerCase();
+    const name = asset.name || asset.id;
+    const safeName = name.replace(/[^a-zA-Z0-9_\-\s]/g, '').slice(0, 60) || 'audio';
+    res.setHeader('Content-Disposition', `attachment; filename="${safeName}${ext}"`);
+    res.setHeader('Content-Type', ext === '.wav' ? 'audio/wav' : 'audio/mpeg');
+    res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
+    fs.createReadStream(asset.file_path).pipe(res);
+  });
+
+  // Rename an audio asset
+  router.put('/:assetId', (req: Request, res: Response) => {
+    const { name } = req.body;
+    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
+    if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+    if (name !== undefined) {
+      run(db, 'UPDATE audio_assets SET name = ? WHERE id = ?', [name, req.params.assetId]);
+    }
+    const updated = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
+    res.json(updated);
+  });
+
+  // Delete an audio asset
+  router.delete('/:assetId', (req: Request, res: Response) => {
+    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
+    if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+    // Remove file from disk
+    if (asset.file_path && fs.existsSync(asset.file_path)) {
+      try { fs.unlinkSync(asset.file_path); } catch {}
+    }
+    // Remove any clips referencing this asset
+    run(db, 'DELETE FROM clips WHERE audio_asset_id = ?', [req.params.assetId]);
+    // Clear segment references
+    run(db, 'UPDATE segments SET audio_asset_id = NULL WHERE audio_asset_id = ?', [req.params.assetId]);
+    // Delete the asset record
+    run(db, 'DELETE FROM audio_assets WHERE id = ?', [req.params.assetId]);
+    res.status(204).send();
+  });
+
   // Upload audio file
   router.post('/upload', async (req: Request, res: Response) => {
     try {

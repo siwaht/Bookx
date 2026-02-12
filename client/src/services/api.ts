@@ -212,6 +212,15 @@ export const exportBook = {
 
 // ── Audio ──
 export const audioUrl = (assetId: string) => `${API_BASE}/audio/${assetId}`;
+export const audioDownloadUrl = (assetId: string) => `${API_BASE}/audio/${assetId}/download`;
+
+export const audioAssets = {
+  listLibrary: (bookId: string) => request<any[]>(`/audio/book/${bookId}/library`),
+  rename: (assetId: string, name: string) =>
+    request<any>(`/audio/${assetId}`, { method: 'PUT', body: JSON.stringify({ name }) }),
+  delete: (assetId: string) =>
+    request<void>(`/audio/${assetId}`, { method: 'DELETE' }),
+};
 
 // ── Settings ──
 export const settings = {

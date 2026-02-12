@@ -1,8 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { elevenlabs, audioUrl, timeline as timelineApi, uploadAudio } from '../services/api';
+import { elevenlabs, audioUrl, audioDownloadUrl, audioAssets, timeline as timelineApi, uploadAudio } from '../services/api';
 import { useAppStore } from '../stores/appStore';
-import { Wand2, Music, Volume2, Play, Loader, Plus, Clock, Repeat, Upload } from 'lucide-react';
+import { Wand2, Music, Volume2, Loader, Plus, Clock, Repeat, Upload, Download, Trash2, Edit3, Check, X, FolderOpen } from 'lucide-react';
 
 interface GeneratedAsset {
   id: string;
@@ -74,7 +74,45 @@ const V3_TAG_CATEGORIES = [
 export function AudioStudioPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const capabilities = useAppStore((s) => s.capabilities);
-  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'v3tags' | 'import'>('sfx');
+  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'v3tags' | 'import' | 'library'>('sfx');
+
+  // Library state
+  const [libraryAssets, setLibraryAssets] = useState<any[]>([]);
+  const [libraryLoading, setLibraryLoading] = useState(false);
+  const [renamingId, setRenamingId] = useState<string | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const loadLibrary = useCallback(async () => {
+    if (!bookId) return;
+    setLibraryLoading(true);
+    try {
+      const data = await audioAssets.listLibrary(bookId);
+      setLibraryAssets(data);
+    } catch (err) { console.error('Failed to load library:', err); }
+    finally { setLibraryLoading(false); }
+  }, [bookId]);
+
+  useEffect(() => {
+    if (activeTab === 'library') loadLibrary();
+  }, [activeTab, loadLibrary]);
+
+  const handleRename = async (assetId: string) => {
+    if (!renameValue.trim()) return;
+    await audioAssets.rename(assetId, renameValue.trim());
+    setRenamingId(null);
+    loadLibrary();
+  };
+
+  const handleDeleteAsset = async (assetId: string) => {
+    if (!confirm('Delete this audio asset? This will also remove it from the timeline.')) return;
+    setDeletingId(assetId);
+    try {
+      await audioAssets.delete(assetId);
+      setLibraryAssets((prev) => prev.filter((a) => a.id !== assetId));
+    } catch (err: any) { alert(`Delete failed: ${err.message}`); }
+    finally { setDeletingId(null); }
+  };
 
   // Import state
   const [uploading, setUploading] = useState(false);
@@ -116,7 +154,7 @@ export function AudioStudioPage() {
         cached: result.cached,
       }, ...prev]);
     } catch (err: any) { alert(`SFX generation failed: ${err.message}`); }
-    finally { setSfxGenerating(false); }
+    finally { setSfxGenerating(false); if (activeTab === 'library') loadLibrary(); }
   };
 
   const handleGenerateMusic = async () => {
@@ -137,7 +175,7 @@ export function AudioStudioPage() {
         cached: result.cached,
       }, ...prev]);
     } catch (err: any) { alert(`Music generation failed: ${err.message}`); }
-    finally { setMusicGenerating(false); }
+    finally { setMusicGenerating(false); if (activeTab === 'library') loadLibrary(); }
   };
 
   const handlePlaceOnTimeline = async (asset: GeneratedAsset) => {
@@ -211,6 +249,10 @@ export function AudioStudioPage() {
           <button onClick={() => setActiveTab('import')}
             style={{ ...styles.tab, ...(activeTab === 'import' ? styles.tabActive : {}) }}>
             <Upload size={14} /> Import Audio
+          </button>
+          <button onClick={() => setActiveTab('library')}
+            style={{ ...styles.tab, ...(activeTab === 'library' ? styles.tabActive : {}) }}>
+            <FolderOpen size={14} /> Library
           </button>
         </div>
 
@@ -379,6 +421,90 @@ export function AudioStudioPage() {
               <input ref={importFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
                 onChange={handleImportAudio} hidden aria-label="Import audio file" />
               <p style={styles.hint}>Uploaded files appear in the Generated Audio panel on the right, where you can preview and place them on the timeline.</p>
+            </div>
+          </div>
+        )}
+
+        {/* ── Library Tab ── */}
+        {activeTab === 'library' && (
+          <div style={styles.genPanel}>
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>Saved Audio Library</label>
+              <p style={styles.hint}>
+                All your generated SFX, music, and imported audio files. Preview, rename, download, or reuse them on the timeline.
+              </p>
+            </div>
+
+            {libraryLoading && <div style={{ color: '#888', fontSize: 12 }}><Loader size={14} /> Loading...</div>}
+
+            {!libraryLoading && libraryAssets.length === 0 && (
+              <div style={{ padding: 24, textAlign: 'center', color: '#555', fontSize: 13 }}>
+                No audio assets yet. Generate SFX or music, or import audio files.
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {libraryAssets.map((asset) => {
+                const isRenaming = renamingId === asset.id;
+                const isDeleting = deletingId === asset.id;
+                const displayName = asset.name || asset.generation_params ? (asset.name || JSON.parse(asset.generation_params || '{}').prompt || asset.id.slice(0, 8)) : asset.id.slice(0, 8);
+                const durationSec = asset.duration_ms ? (asset.duration_ms / 1000).toFixed(1) : '?';
+                const sizeMb = asset.file_size_bytes ? (asset.file_size_bytes / (1024 * 1024)).toFixed(2) : '?';
+
+                return (
+                  <div key={asset.id} style={{
+                    padding: 12, background: '#141414', borderRadius: 8, border: '1px solid #1e1e1e',
+                    display: 'flex', flexDirection: 'column', gap: 8, opacity: isDeleting ? 0.4 : 1,
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{
+                        fontSize: 9, fontWeight: 600, padding: '2px 6px', borderRadius: 3,
+                        background: asset.type === 'sfx' ? '#2a3a1a' : asset.type === 'music' ? '#1a2a3a' : '#2a2a1a',
+                        color: asset.type === 'sfx' ? '#8f8' : asset.type === 'music' ? '#88f' : '#aa8',
+                      }}>
+                        {asset.type.toUpperCase()}
+                      </span>
+
+                      {isRenaming ? (
+                        <div style={{ flex: 1, display: 'flex', gap: 4, alignItems: 'center' }}>
+                          <input value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
+                            style={{ flex: 1, padding: '4px 8px', background: '#0a0a0a', color: '#ddd', border: '1px solid #444', borderRadius: 4, fontSize: 12, outline: 'none' }}
+                            autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleRename(asset.id); if (e.key === 'Escape') setRenamingId(null); }}
+                            aria-label="Rename asset" />
+                          <button onClick={() => handleRename(asset.id)} style={styles.presetBtn}><Check size={11} /></button>
+                          <button onClick={() => setRenamingId(null)} style={styles.presetBtn}><X size={11} /></button>
+                        </div>
+                      ) : (
+                        <span style={{ flex: 1, fontSize: 12, color: '#ccc', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {displayName}
+                        </span>
+                      )}
+
+                      <span style={{ fontSize: 10, color: '#555' }}>{durationSec}s · {sizeMb}MB</span>
+                    </div>
+
+                    <audio src={audioUrl(asset.id)} controls style={{ width: '100%', height: 32 }} />
+
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                      <button onClick={() => { setRenamingId(asset.id); setRenameValue(asset.name || displayName); }}
+                        style={styles.presetBtn}><Edit3 size={10} /> Rename</button>
+                      <a href={audioDownloadUrl(asset.id)} download
+                        style={{ ...styles.presetBtn, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Download size={10} /> Download
+                      </a>
+                      <button onClick={() => handlePlaceOnTimeline({ id: asset.id, type: asset.type, prompt: displayName, audio_asset_id: asset.id, cached: false })}
+                        disabled={placingId === asset.id}
+                        style={{ ...styles.presetBtn, background: '#1a2a1a', color: '#8f8', borderColor: '#2a3a2a' }}>
+                        <Plus size={10} /> {placingId === asset.id ? '...' : 'Place on Timeline'}
+                      </button>
+                      <button onClick={() => handleDeleteAsset(asset.id)}
+                        style={{ ...styles.presetBtn, color: '#a66', borderColor: '#3a2222' }}>
+                        <Trash2 size={10} /> Delete
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
