@@ -55,7 +55,7 @@ async function main() {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
 
-  app.listen(PORT, () => {
+  app.listen(PORT, 'localhost', () => {
     console.log(`[Server] Audiobook Maker running on http://localhost:${PORT}`);
   });
 }
