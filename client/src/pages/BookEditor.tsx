@@ -5,6 +5,14 @@ import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
 import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download } from 'lucide-react';
 
+const STEPS = [
+  { to: '', icon: FileText, label: 'Manuscript', step: 1, hint: 'Import & split text', end: true },
+  { to: 'voices', icon: Users, label: 'Voices', step: 2, hint: 'Assign character voices' },
+  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', step: 3, hint: 'Arrange & preview audio' },
+  { to: 'qc', icon: CheckCircle, label: 'QC & Render', step: 4, hint: 'Render & check quality' },
+  { to: 'export', icon: Download, label: 'Export', step: 5, hint: 'Download ACX package' },
+];
+
 export function BookEditor() {
   const { bookId } = useParams<{ bookId: string }>();
   const navigate = useNavigate();
@@ -13,55 +21,54 @@ export function BookEditor() {
 
   useEffect(() => {
     if (!bookId) return;
-
-    books.get(bookId).then((b) => {
-      setBook(b);
-      setCurrentBook(b);
-    }).catch((err) => {
-      console.error('Failed to load book:', err);
-    });
-
-    elevenlabs.capabilities().then(setCapabilities).catch(() => {
-      // ElevenLabs API key may not be set yet — that's OK
-      console.warn('Could not load ElevenLabs capabilities. Check your API key.');
-    });
-
+    books.get(bookId).then((b) => { setBook(b); setCurrentBook(b); }).catch(console.error);
+    elevenlabs.capabilities().then(setCapabilities).catch(() => {});
     return () => setCurrentBook(null);
   }, [bookId]);
 
-  if (!book) return <div style={{ padding: 32, color: '#888' }}>Loading...</div>;
-
-  const navItems = [
-    { to: '', icon: FileText, label: 'Manuscript', end: true },
-    { to: 'voices', icon: Users, label: 'Voices' },
-    { to: 'timeline', icon: LayoutDashboard, label: 'Timeline' },
-    { to: 'qc', icon: CheckCircle, label: 'QC & Render' },
-    { to: 'export', icon: Download, label: 'Export' },
-  ];
+  if (!book) return <div style={styles.loading}>Loading book...</div>;
 
   return (
     <div style={styles.layout}>
-      <nav style={styles.sidebar}>
+      <nav style={styles.sidebar} aria-label="Book editor navigation">
         <button onClick={() => navigate('/')} style={styles.backBtn}>
-          <ArrowLeft size={18} /> Back
+          <ArrowLeft size={16} /> All Books
         </button>
-        <h2 style={styles.bookTitle}>{book.title}</h2>
-        {book.author && <p style={styles.bookAuthor}>{book.author}</p>}
+
+        <div style={styles.bookInfo}>
+          <h2 style={styles.bookTitle}>{book.title}</h2>
+          {book.author && <p style={styles.bookAuthor}>by {book.author}</p>}
+        </div>
+
+        <div style={styles.stepsLabel}>WORKFLOW</div>
         <div style={styles.navList}>
-          {navItems.map((item) => (
+          {STEPS.map((item) => (
             <NavLink
               key={item.to}
               to={item.to}
               end={item.end}
               style={({ isActive }) => ({
                 ...styles.navItem,
-                background: isActive ? '#2a2a2a' : 'transparent',
-                color: isActive ? '#4A90D9' : '#888',
+                background: isActive ? '#1e2a3a' : 'transparent',
+                borderLeft: isActive ? '3px solid #4A90D9' : '3px solid transparent',
               })}
             >
-              <item.icon size={18} /> {item.label}
+              <div style={styles.stepNumber}>{item.step}</div>
+              <div style={styles.navContent}>
+                <div style={styles.navLabel}>
+                  <item.icon size={15} style={{ opacity: 0.7 }} /> {item.label}
+                </div>
+                <div style={styles.navHint}>{item.hint}</div>
+              </div>
             </NavLink>
           ))}
+        </div>
+
+        <div style={styles.sidebarFooter}>
+          <div style={styles.tipBox}>
+            <span style={styles.tipIcon}>💡</span>
+            <span style={styles.tipText}>Follow steps 1→5 to produce your audiobook</span>
+          </div>
         </div>
       </nav>
       <main style={styles.main}>
@@ -73,20 +80,40 @@ export function BookEditor() {
 
 const styles: Record<string, React.CSSProperties> = {
   layout: { display: 'flex', minHeight: '100vh' },
+  loading: { padding: 32, color: '#888', display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' },
   sidebar: {
-    width: 220, background: '#141414', padding: 20,
-    display: 'flex', flexDirection: 'column', gap: 8, borderRight: '1px solid #222',
+    width: 240, background: '#111', padding: '16px 0',
+    display: 'flex', flexDirection: 'column', borderRight: '1px solid #1e1e1e',
+    flexShrink: 0,
   },
   backBtn: {
-    display: 'flex', alignItems: 'center', gap: 8, background: 'none',
-    border: 'none', color: '#888', cursor: 'pointer', padding: '8px 0', fontSize: 14,
+    display: 'flex', alignItems: 'center', gap: 6, background: 'none',
+    border: 'none', color: '#666', cursor: 'pointer', padding: '8px 16px', fontSize: 13,
+    transition: 'color 0.2s',
   },
-  bookTitle: { fontSize: 16, color: '#fff', marginTop: 8 },
-  bookAuthor: { fontSize: 13, color: '#666', marginBottom: 16 },
-  navList: { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 8 },
+  bookInfo: { padding: '12px 16px', borderBottom: '1px solid #1e1e1e', marginBottom: 8 },
+  bookTitle: { fontSize: 15, color: '#e0e0e0', lineHeight: 1.3 },
+  bookAuthor: { fontSize: 12, color: '#555', marginTop: 4 },
+  stepsLabel: { fontSize: 10, color: '#444', letterSpacing: 1.5, padding: '12px 16px 6px', fontWeight: 600 },
+  navList: { display: 'flex', flexDirection: 'column', gap: 2, flex: 1 },
   navItem: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px',
-    borderRadius: 8, textDecoration: 'none', fontSize: 14, transition: 'background 0.2s',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px',
+    textDecoration: 'none', transition: 'background 0.2s', cursor: 'pointer',
   },
-  main: { flex: 1, padding: 24, overflow: 'auto' },
+  stepNumber: {
+    width: 22, height: 22, borderRadius: '50%', background: '#1e1e1e',
+    color: '#666', fontSize: 11, fontWeight: 600,
+    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+  },
+  navContent: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
+  navLabel: { display: 'flex', alignItems: 'center', gap: 6, color: '#bbb', fontSize: 13 },
+  navHint: { fontSize: 10, color: '#555' },
+  sidebarFooter: { padding: '12px 16px', borderTop: '1px solid #1e1e1e' },
+  tipBox: {
+    display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px',
+    background: '#0d1520', borderRadius: 8, border: '1px solid #1a2a3a',
+  },
+  tipIcon: { fontSize: 14, flexShrink: 0 },
+  tipText: { fontSize: 11, color: '#6a8ab0', lineHeight: 1.4 },
+  main: { flex: 1, overflow: 'auto', background: '#0a0a0a' },
 };

@@ -498,9 +498,19 @@ export function TimelinePage() {
       )}
 
       {tracks.length === 0 && (
-        <p style={{ color: '#444', textAlign: 'center', padding: 40 }}>
-          Add tracks above, or use "Send to Timeline" from the Manuscript page to auto-populate
-        </p>
+        <div style={styles.emptyState}>
+          <div style={{ fontSize: 36, marginBottom: 8 }}>🎚️</div>
+          <h3 style={{ color: '#ccc', fontSize: 16, marginBottom: 8 }}>Timeline is empty</h3>
+          <p style={{ color: '#666', fontSize: 13, maxWidth: 440, lineHeight: 1.6, textAlign: 'center' }}>
+            The timeline is where you arrange and preview your audiobook audio before rendering.
+          </p>
+          <div style={styles.emptySteps}>
+            <p style={styles.emptyStep}>1. Go to the Manuscript page and generate audio for your segments</p>
+            <p style={styles.emptyStep}>2. Click "Send to Timeline" to auto-populate tracks and clips</p>
+            <p style={styles.emptyStep}>3. Or manually add tracks using the buttons above</p>
+          </div>
+          <p style={{ color: '#555', fontSize: 11, marginTop: 12 }}>Controls: Click canvas to set playhead · Zoom slider to adjust view · Mute/Solo per track</p>
+        </div>
       )}
     </div>
   );
@@ -540,4 +550,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap',
   },
   inspectorRow: { display: 'flex', flexDirection: 'column', gap: 2, fontSize: 11, color: '#888' },
+  emptyState: { display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '48px 20px' },
+  emptySteps: { display: 'flex', flexDirection: 'column', gap: 6, marginTop: 16, textAlign: 'left' },
+  emptyStep: { color: '#888', fontSize: 12, lineHeight: 1.5 },
 };

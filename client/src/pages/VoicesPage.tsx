@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { characters as charsApi, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Character, ElevenLabsVoice } from '../types';
-import { Plus, Search, Play, Trash2 } from 'lucide-react';
+import { Plus, Search, Play, Trash2, Mic, CheckCircle } from 'lucide-react';
 
 export function VoicesPage() {
   const { bookId } = useParams<{ bookId: string }>();
@@ -21,18 +21,14 @@ export function VoicesPage() {
     try {
       const data = await charsApi.list(bookId);
       setCharacterList(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load characters:', err);
-    }
+    } catch (err) { console.error('Failed to load characters:', err); }
   };
 
   const loadVoices = async () => {
     try {
       const data = await elevenlabs.voices();
       setVoices(Array.isArray(data) ? data : []);
-    } catch (err) {
-      console.error('Failed to load voices (check ElevenLabs API key):', err);
-    }
+    } catch (err) { console.error('Failed to load voices (check ElevenLabs API key):', err); }
   };
 
   useEffect(() => { loadCharacters(); loadVoices(); }, [bookId]);
@@ -40,8 +36,7 @@ export function VoicesPage() {
   const handleCreate = async () => {
     if (!bookId || !newName.trim()) return;
     const char = await charsApi.create(bookId, { name: newName, role: newRole });
-    setNewName('');
-    setShowCreate(false);
+    setNewName(''); setShowCreate(false);
     setCharacterList([...characterList, char]);
     setSelectedChar(char);
   };
@@ -66,165 +61,179 @@ export function VoicesPage() {
     : voices.slice(0, 20);
 
   const models = capabilities?.models || [];
+  const charsWithVoice = characterList.filter((c) => c.voice_id);
+  const charsWithoutVoice = characterList.filter((c) => !c.voice_id);
 
   return (
     <div style={styles.container}>
+      {/* ── Left: Character List ── */}
       <div style={styles.charPanel}>
         <div style={styles.panelHeader}>
-          <h3 style={styles.title}>Characters</h3>
-          <button onClick={() => setShowCreate(true)} style={styles.addBtn}><Plus size={16} /></button>
+          <h3 style={styles.title}>🎭 Characters</h3>
+          <button onClick={() => setShowCreate(true)} style={styles.addBtn} title="Add a new character or narrator">
+            <Plus size={16} />
+          </button>
         </div>
+
+        {/* Progress summary */}
+        {characterList.length > 0 && (
+          <div style={styles.progressBar}>
+            <span style={{ fontSize: 11, color: charsWithoutVoice.length === 0 ? '#8f8' : '#888' }}>
+              {charsWithVoice.length}/{characterList.length} voices assigned
+            </span>
+            {charsWithoutVoice.length === 0 && <CheckCircle size={12} color="#8f8" />}
+          </div>
+        )}
 
         {showCreate && (
           <div style={styles.createForm}>
-            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name" style={styles.input} aria-label="Character name" />
+            <p style={styles.formHint}>Add a narrator or character. You'll assign an ElevenLabs voice next.</p>
+            <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Name (e.g. Narrator, Alice)" style={styles.input} autoFocus aria-label="Character name" />
             <select value={newRole} onChange={(e) => setNewRole(e.target.value as any)} style={styles.input} aria-label="Character role">
               <option value="narrator">Narrator</option>
               <option value="character">Character</option>
             </select>
-            <button onClick={handleCreate} style={styles.submitBtn}>Add</button>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button onClick={handleCreate} style={styles.submitBtn}>Add</button>
+              <button onClick={() => setShowCreate(false)} style={styles.cancelBtn}>Cancel</button>
+            </div>
           </div>
         )}
 
         {characterList.map((char) => (
-          <div
-            key={char.id}
-            onClick={() => setSelectedChar(char)}
-            style={{
-              ...styles.charItem,
-              background: selectedChar?.id === char.id ? '#2a2a2a' : 'transparent',
-              borderLeft: `3px solid ${selectedChar?.id === char.id ? '#4A90D9' : 'transparent'}`,
-            }}
-          >
-            <span style={{ color: '#ddd', fontSize: 14 }}>{char.name}</span>
-            <span style={{ color: '#666', fontSize: 11 }}>{char.role} {char.voice_name ? `• ${char.voice_name}` : ''}</span>
+          <div key={char.id} onClick={() => setSelectedChar(char)}
+            style={{ ...styles.charItem, background: selectedChar?.id === char.id ? '#2a2a2a' : 'transparent', borderLeft: `3px solid ${selectedChar?.id === char.id ? '#4A90D9' : 'transparent'}` }}>
+            <div style={styles.charItemTop}>
+              <span style={{ color: '#ddd', fontSize: 14 }}>{char.name}</span>
+              {char.voice_id ? <CheckCircle size={12} color="#8f8" /> : <Mic size={12} color="#555" />}
+            </div>
+            <span style={{ color: '#666', fontSize: 11 }}>
+              {char.role}{char.voice_name ? ` · ${char.voice_name}` : ' · no voice yet'}
+            </span>
             <button onClick={(e) => { e.stopPropagation(); handleDelete(char.id); }} style={styles.delBtn} aria-label={`Delete ${char.name}`}>
               <Trash2 size={12} />
             </button>
           </div>
         ))}
+
+        {characterList.length === 0 && !showCreate && (
+          <div style={styles.emptyState}>
+            <Mic size={28} color="#444" />
+            <p style={styles.emptyTitle}>No characters yet</p>
+            <p style={styles.emptyHint}>Create at least one character (usually a "Narrator") and assign an ElevenLabs voice to it.</p>
+            <p style={styles.emptyHint}>Characters are used in Step 1 (Manuscript) to assign voices to text segments.</p>
+            <button onClick={() => setShowCreate(true)} style={styles.emptyBtn}>
+              <Plus size={14} /> Create First Character
+            </button>
+          </div>
+        )}
       </div>
 
+      {/* ── Right: Voice Settings ── */}
       <div style={styles.settingsPanel}>
         {selectedChar ? (
           <>
-            <h3 style={styles.title}>{selectedChar.name} — Voice Settings</h3>
-
-            <label style={styles.label}>Voice</label>
-            <div style={styles.voiceSearch}>
-              <Search size={14} color="#666" />
-              <input
-                value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
-                placeholder="Search voices..." style={styles.searchInput}
-                aria-label="Search voices"
-              />
-            </div>
-            <div style={styles.voiceList}>
-              {filteredVoices.map((v) => (
-                <div
-                  key={v.voice_id}
-                  onClick={() => { handleUpdate('voice_id', v.voice_id); handleUpdate('voice_name', v.name); }}
-                  style={{
-                    ...styles.voiceItem,
-                    background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a',
-                  }}
-                >
-                  <span>{v.name}</span>
-                  <span style={{ color: '#666', fontSize: 11 }}>{v.category}</span>
-                  {v.preview_url && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url!).play(); }}
-                      style={styles.previewBtn} aria-label={`Preview ${v.name}`}
-                    >
-                      <Play size={12} />
-                    </button>
-                  )}
-                </div>
-              ))}
+            <div style={styles.settingsHeader}>
+              <h3 style={styles.title}>{selectedChar.name}</h3>
+              <span style={styles.settingsRole}>{selectedChar.role}</span>
             </div>
 
-            <label style={styles.label}>Model</label>
-            <select
-              value={selectedChar.model_id}
-              onChange={(e) => handleUpdate('model_id', e.target.value)}
-              style={styles.input}
-              aria-label="TTS model"
-            >
-              {models.map((m) => (
-                <option key={m.model_id} value={m.model_id}>{m.name || m.model_id}</option>
-              ))}
-              {models.length === 0 && <option value="eleven_v3">Eleven v3</option>}
-            </select>
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>1. Choose a Voice</label>
+              <p style={styles.sectionHint}>Search ElevenLabs voices and click to assign. Use the play button to preview.</p>
+              <div style={styles.voiceSearch}>
+                <Search size={14} color="#666" />
+                <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
+                  placeholder="Search voices by name..." style={styles.searchInput} aria-label="Search voices" />
+              </div>
+              <div style={styles.voiceList}>
+                {filteredVoices.map((v) => (
+                  <div key={v.voice_id}
+                    onClick={() => { handleUpdate('voice_id', v.voice_id); handleUpdate('voice_name', v.name); }}
+                    style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a', borderLeft: selectedChar.voice_id === v.voice_id ? '3px solid #4A90D9' : '3px solid transparent' }}>
+                    <span>{v.name}</span>
+                    <span style={{ color: '#666', fontSize: 11 }}>{v.category}</span>
+                    {v.preview_url && (
+                      <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url!).play(); }}
+                        style={styles.previewBtn} aria-label={`Preview ${v.name}`} title="Preview this voice">
+                        <Play size={12} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {filteredVoices.length === 0 && (
+                  <p style={{ color: '#555', fontSize: 12, padding: 12 }}>
+                    {voiceSearch ? 'No voices match your search' : 'No voices loaded. Check your ElevenLabs API key.'}
+                  </p>
+                )}
+              </div>
+            </div>
 
-            <label style={styles.label}>Stability: {selectedChar.stability.toFixed(2)}</label>
-            <input type="range" min="0" max="1" step="0.05" value={selectedChar.stability}
-              onChange={(e) => handleUpdate('stability', parseFloat(e.target.value))} style={styles.slider}
-              aria-label="Stability" />
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>2. Fine-tune Settings</label>
+              <p style={styles.sectionHint}>Adjust voice parameters. Defaults work well for most cases.</p>
 
-            <label style={styles.label}>Similarity: {selectedChar.similarity_boost.toFixed(2)}</label>
-            <input type="range" min="0" max="1" step="0.05" value={selectedChar.similarity_boost}
-              onChange={(e) => handleUpdate('similarity_boost', parseFloat(e.target.value))} style={styles.slider}
-              aria-label="Similarity boost" />
+              <label style={styles.label}>Model</label>
+              <select value={selectedChar.model_id} onChange={(e) => handleUpdate('model_id', e.target.value)}
+                style={styles.input} aria-label="TTS model">
+                {models.map((m) => <option key={m.model_id} value={m.model_id}>{m.name || m.model_id}</option>)}
+                {models.length === 0 && <option value="eleven_v3">Eleven v3</option>}
+              </select>
 
-            <label style={styles.label}>Style: {selectedChar.style.toFixed(2)}</label>
-            <input type="range" min="0" max="1" step="0.05" value={selectedChar.style}
-              onChange={(e) => handleUpdate('style', parseFloat(e.target.value))} style={styles.slider}
-              aria-label="Style exaggeration" />
+              <label style={styles.label}>Stability: {selectedChar.stability.toFixed(2)}</label>
+              <input type="range" min="0" max="1" step="0.05" value={selectedChar.stability}
+                onChange={(e) => handleUpdate('stability', parseFloat(e.target.value))} style={styles.slider} aria-label="Stability" />
 
-            <label style={styles.label}>Speed: {selectedChar.speed.toFixed(2)}</label>
-            <input type="range" min="0.5" max="2.0" step="0.05" value={selectedChar.speed}
-              onChange={(e) => handleUpdate('speed', parseFloat(e.target.value))} style={styles.slider}
-              aria-label="Speed" />
+              <label style={styles.label}>Similarity: {selectedChar.similarity_boost.toFixed(2)}</label>
+              <input type="range" min="0" max="1" step="0.05" value={selectedChar.similarity_boost}
+                onChange={(e) => handleUpdate('similarity_boost', parseFloat(e.target.value))} style={styles.slider} aria-label="Similarity boost" />
 
-            <label style={styles.checkLabel}>
-              <input type="checkbox" checked={!!selectedChar.speaker_boost}
-                onChange={(e) => handleUpdate('speaker_boost', e.target.checked ? 1 : 0)} />
-              Speaker Boost
-            </label>
+              <label style={styles.label}>Style: {selectedChar.style.toFixed(2)}</label>
+              <input type="range" min="0" max="1" step="0.05" value={selectedChar.style}
+                onChange={(e) => handleUpdate('style', parseFloat(e.target.value))} style={styles.slider} aria-label="Style exaggeration" />
 
-            <div style={{ marginTop: 16, borderTop: '1px solid #222', paddingTop: 12 }}>
-              <label style={styles.label}>Test Voice</label>
-              <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-                <input
-                  id="preview-text"
-                  placeholder="Type sample text to preview..."
-                  style={{ ...styles.input, flex: 1 }}
-                  aria-label="Preview text"
-                  defaultValue="The quick brown fox jumps over the lazy dog."
-                />
-                <button
-                  onClick={async () => {
+              <label style={styles.label}>Speed: {selectedChar.speed.toFixed(2)}</label>
+              <input type="range" min="0.5" max="2.0" step="0.05" value={selectedChar.speed}
+                onChange={(e) => handleUpdate('speed', parseFloat(e.target.value))} style={styles.slider} aria-label="Speed" />
+
+              <label style={styles.checkLabel}>
+                <input type="checkbox" checked={!!selectedChar.speaker_boost}
+                  onChange={(e) => handleUpdate('speaker_boost', e.target.checked ? 1 : 0)} />
+                Speaker Boost
+              </label>
+            </div>
+
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>3. Test Voice</label>
+              <p style={styles.sectionHint}>Preview how this voice sounds with your settings before generating the full book.</p>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input id="preview-text" placeholder="Type sample text to preview..."
+                  style={{ ...styles.input, flex: 1 }} aria-label="Preview text"
+                  defaultValue="The quick brown fox jumps over the lazy dog." />
+                <button onClick={async () => {
                     const input = document.getElementById('preview-text') as HTMLInputElement;
                     if (!input?.value || !selectedChar.voice_id) return;
                     try {
                       const result = await elevenlabs.tts({
-                        text: input.value,
-                        voice_id: selectedChar.voice_id,
-                        model_id: selectedChar.model_id,
-                        voice_settings: {
-                          stability: selectedChar.stability,
-                          similarity_boost: selectedChar.similarity_boost,
-                          style: selectedChar.style,
-                          use_speaker_boost: !!selectedChar.speaker_boost,
-                        },
+                        text: input.value, voice_id: selectedChar.voice_id, model_id: selectedChar.model_id,
+                        voice_settings: { stability: selectedChar.stability, similarity_boost: selectedChar.similarity_boost, style: selectedChar.style, use_speaker_boost: !!selectedChar.speaker_boost },
                         book_id: bookId,
                       });
-                      const audio = new Audio(`/api/audio/${result.audio_asset_id}`);
-                      audio.play();
-                    } catch (err: any) {
-                      alert(`Preview failed: ${err.message}`);
-                    }
+                      new Audio(`/api/audio/${result.audio_asset_id}`).play();
+                    } catch (err: any) { alert(`Preview failed: ${err.message}`); }
                   }}
-                  style={styles.submitBtn}
-                  disabled={!selectedChar.voice_id}
-                >
-                  Preview
+                  style={{ ...styles.submitBtn, opacity: selectedChar.voice_id ? 1 : 0.5 }}
+                  disabled={!selectedChar.voice_id} title={selectedChar.voice_id ? 'Generate and play preview' : 'Select a voice first'}>
+                  <Play size={14} /> Preview
                 </button>
               </div>
             </div>
           </>
         ) : (
-          <p style={{ color: '#555' }}>Select a character to configure voice settings</p>
+          <div style={styles.emptySettings}>
+            <p style={styles.emptyTitle}>← Select a character to configure its voice</p>
+            <p style={styles.emptyHint}>Each character needs an ElevenLabs voice assigned. You can fine-tune stability, similarity, style, and speed.</p>
+          </div>
         )}
       </div>
     </div>
@@ -233,17 +242,30 @@ export function VoicesPage() {
 
 const styles: Record<string, React.CSSProperties> = {
   container: { display: 'flex', gap: 16, height: 'calc(100vh - 48px)' },
-  charPanel: { width: 280, background: '#1a1a1a', borderRadius: 12, overflow: 'auto' },
+  charPanel: { width: 300, background: '#1a1a1a', borderRadius: 12, overflow: 'auto', display: 'flex', flexDirection: 'column' },
   panelHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', borderBottom: '1px solid #222' },
   title: { fontSize: 14, color: '#fff' },
   addBtn: { background: '#333', border: 'none', color: '#aaa', borderRadius: 6, padding: '4px 8px', cursor: 'pointer' },
-  createForm: { padding: 12, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: '1px solid #222' },
+  progressBar: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 16px', borderBottom: '1px solid #222', gap: 6 },
+  createForm: { padding: 12, display: 'flex', flexDirection: 'column', gap: 8, borderBottom: '1px solid #222', background: '#151515' },
+  formHint: { fontSize: 11, color: '#555', lineHeight: 1.4 },
   input: { padding: '8px 12px', borderRadius: 6, border: '1px solid #333', background: '#0f0f0f', color: '#fff', fontSize: 13, outline: 'none' },
-  submitBtn: { padding: '8px 12px', background: '#4A90D9', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
+  submitBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 14px', background: '#4A90D9', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
+  cancelBtn: { padding: '8px 12px', background: '#1e1e1e', color: '#888', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 13 },
   charItem: { display: 'flex', flexDirection: 'column', gap: 2, padding: '10px 16px', cursor: 'pointer', position: 'relative' },
+  charItemTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   delBtn: { position: 'absolute', right: 12, top: 12, background: 'none', border: 'none', color: '#555', cursor: 'pointer' },
-  settingsPanel: { flex: 1, background: '#1a1a1a', borderRadius: 12, padding: 20, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 },
-  label: { fontSize: 12, color: '#888', marginTop: 8 },
+  emptyState: { padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center', flex: 1, justifyContent: 'center' },
+  emptyTitle: { fontSize: 14, color: '#888', fontWeight: 500 },
+  emptyHint: { fontSize: 12, color: '#555', lineHeight: 1.5, maxWidth: 260 },
+  emptyBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: '#4A90D9', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, marginTop: 8 },
+  settingsPanel: { flex: 1, background: '#1a1a1a', borderRadius: 12, padding: 20, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 4 },
+  settingsHeader: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, paddingBottom: 12, borderBottom: '1px solid #222' },
+  settingsRole: { fontSize: 12, color: '#666', background: '#222', padding: '2px 8px', borderRadius: 4 },
+  section: { display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 0', borderBottom: '1px solid #1e1e1e' },
+  sectionLabel: { fontSize: 13, color: '#4A90D9', fontWeight: 500 },
+  sectionHint: { fontSize: 11, color: '#555', lineHeight: 1.4, marginBottom: 4 },
+  label: { fontSize: 12, color: '#888', marginTop: 4 },
   checkLabel: { fontSize: 13, color: '#aaa', display: 'flex', alignItems: 'center', gap: 8 },
   slider: { width: '100%', accentColor: '#4A90D9' },
   voiceSearch: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: '#0f0f0f', borderRadius: 6, border: '1px solid #333' },
@@ -251,4 +273,5 @@ const styles: Record<string, React.CSSProperties> = {
   voiceList: { maxHeight: 200, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 2 },
   voiceItem: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: '#ddd' },
   previewBtn: { background: 'none', border: 'none', color: '#4A90D9', cursor: 'pointer', padding: 4 },
+  emptySettings: { flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center' },
 };
