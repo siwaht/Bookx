@@ -16,12 +16,6 @@ const queryClient = new QueryClient({
 });
 
 export default function App() {
-  const authenticated = useAppStore((s) => s.authenticated);
-
-  if (!authenticated) {
-    return <LoginPage />;
-  }
-
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

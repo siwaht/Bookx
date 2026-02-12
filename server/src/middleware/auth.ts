@@ -9,20 +9,6 @@ export function generateToken(password: string): string {
 }
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // Skip auth for login endpoint
-  if (req.path === '/api/auth/login') {
-    next();
-    return;
-  }
-
-  const token = req.headers.authorization?.replace('Bearer ', '');
-  const expectedToken = generateToken(APP_PASSWORD);
-
-  if (!token || token !== expectedToken) {
-    res.status(401).json({ error: 'Unauthorized' });
-    return;
-  }
-
   next();
 }
 
