@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { characters as charsApi, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Character, ElevenLabsVoice } from '../types';
-import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, Library } from 'lucide-react';
+import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, Library, X } from 'lucide-react';
 
 export function VoicesPage() {
   const { bookId } = useParams<{ bookId: string }>();
