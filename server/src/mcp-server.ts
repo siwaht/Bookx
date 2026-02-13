@@ -788,6 +788,411 @@ server.tool('update_setting', 'Update an app setting (e.g. API keys, default LLM
   return txt({ updated: key });
 });
 
+// ═══════════════════════════════════════════════════════
+// VOICE LIBRARY SEARCH (shared/community voices)
+// ═══════════════════════════════════════════════════════
+
+server.tool('search_voice_library', 'Search the ElevenLabs shared voice library (community voices) by name, gender, language, or use case', {
+  query: z.string().optional().describe('Search query'),
+  gender: z.string().optional().describe('Filter by gender (e.g. "male", "female")'),
+  language: z.string().optional().describe('Filter by language (e.g. "en", "es")'),
+  use_case: z.string().optional().describe('Filter by use case (e.g. "narration", "conversational")'),
+  page_size: z.number().default(20).describe('Results per page (max 100)'),
+}, async ({ query, gender, language, use_case, page_size }) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) return err('ELEVENLABS_API_KEY not set');
+  const params = new URLSearchParams();
+  params.set('page_size', String(Math.min(page_size, 100)));
+  if (query) params.set('search', query);
+  if (gender) params.set('gender', gender);
+  if (language) params.set('language', language);
+  if (use_case) params.set('use_case', use_case);
+  try {
+    const res = await fetch(`https://api.elevenlabs.io/v1/shared-voices?${params.toString()}`, {
+      headers: { 'xi-api-key': apiKey },
+    });
+    if (!res.ok) return err(`ElevenLabs API ${res.status}: ${await res.text()}`);
+    const data = await res.json() as any;
+    const voices = (data.voices || []).map((v: any) => ({
+      voice_id: v.voice_id, name: v.name, category: v.category || 'shared',
+      labels: v.labels || {}, preview_url: v.preview_url, description: v.description,
+      use_case: v.use_case, language: v.language, public_owner_id: v.public_owner_id,
+    }));
+    return txt({ voices, has_more: data.has_more || false });
+  } catch (e: any) { return err(e.message); }
+});
+
+server.tool('add_shared_voice', 'Add a shared/community voice to your ElevenLabs library so it can be used for TTS', {
+  public_owner_id: z.string(), voice_id: z.string(), name: z.string().optional(),
+}, async ({ public_owner_id, voice_id, name }) => {
+  const apiKey = process.env.ELEVENLABS_API_KEY;
+  if (!apiKey) return err('ELEVENLABS_API_KEY not set');
+  try {
+    const res = await fetch(`https://api.elevenlabs.io/v1/voices/add/${public_owner_id}/${voice_id}`, {
+      method: 'POST',
+      headers: { 'xi-api-key': apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ new_name: name || 'Shared Voice' }),
+    });
+    if (!res.ok) return err(`Failed: ${await res.text()}`);
+    const data = await res.json() as any;
+    return txt({ voice_id: data.voice_id, name: name || 'Shared Voice', added: true });
+  } catch (e: any) { return err(e.message); }
+});
+
+// ═══════════════════════════════════════════════════════
+// AI PARSE (auto-detect characters, assign segments)
+// ═══════════════════════════════════════════════════════
+
+server.tool('ai_parse_chapters', 'Use an LLM to auto-detect characters, assign dialogue segments, and suggest SFX/music cues from raw chapter text. Requires an LLM API key in settings.', {
+  book_id: z.string(),
+  chapter_ids: z.array(z.string()).optional().describe('Specific chapters to parse (omit for all)'),
+}, async ({ book_id, chapter_ids }) => {
+  const db = await dbReady;
+  const book = queryOne(db, 'SELECT * FROM books WHERE id = ?', [book_id]);
+  if (!book) return err('Book not found');
+
+  let chapters;
+  if (chapter_ids?.length) {
+    const ph = chapter_ids.map(() => '?').join(',');
+    chapters = queryAll(db, `SELECT * FROM chapters WHERE book_id = ? AND id IN (${ph}) ORDER BY sort_order`, [book_id, ...chapter_ids]);
+  } else {
+    chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [book_id]);
+  }
+  if (!chapters.length) return err('No chapters found. Add chapters first.');
+
+  const provider = detectProvider(db);
+  if (!provider) return err('No LLM API key configured. Use update_setting to add an openai_api_key, mistral_api_key, or gemini_api_key.');
+  const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
+  if (!apiKey) return err(`No API key for ${provider}`);
+
+  const format = book.format || 'single_narrator';
+  const projectType = book.project_type || 'audiobook';
+
+  const chapterTexts = (chapters as any[]).map((ch: any) =>
+    `--- ${ch.title} ---\n${(ch.cleaned_text || ch.raw_text).slice(0, 6000)}`
+  ).join('\n\n');
+
+  const systemPrompt = buildParseSystemPrompt(projectType, format);
+  const userPrompt = `Here is the text to analyze:\n\n${chapterTexts.slice(0, 24000)}`;
+
+  log(`AI parsing ${chapters.length} chapters with ${provider}...`);
+  const result = await callLLM(provider, apiKey, systemPrompt, userPrompt);
+
+  let parsed;
+  try {
+    const jsonMatch = result.match(/```json\s*([\s\S]*?)```/) || result.match(/\{[\s\S]*\}/);
+    parsed = JSON.parse(jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : result);
+  } catch { return err('LLM returned invalid JSON. Try again.'); }
+
+  // Apply: create characters and segments
+  let charactersCreated = 0, segmentsCreated = 0;
+  const charMap = new Map<string, string>();
+
+  if (parsed.characters?.length) {
+    run(db, 'DELETE FROM characters WHERE book_id = ?', [book_id]);
+    for (const ch of parsed.characters) {
+      const id = uuid();
+      run(db, `INSERT INTO characters (id, book_id, name, role) VALUES (?, ?, ?, ?)`, [id, book_id, ch.name, ch.role || 'character']);
+      charMap.set(ch.name, id);
+      charactersCreated++;
+    }
+  }
+
+  if (parsed.chapters?.length) {
+    for (let i = 0; i < parsed.chapters.length && i < chapters.length; i++) {
+      const parsedCh = parsed.chapters[i];
+      const dbCh = chapters[i];
+      run(db, 'DELETE FROM segments WHERE chapter_id = ?', [dbCh.id]);
+      if (parsedCh.segments?.length) {
+        for (let j = 0; j < parsedCh.segments.length; j++) {
+          const seg = parsedCh.segments[j];
+          run(db, `INSERT INTO segments (id, chapter_id, character_id, sort_order, text) VALUES (?, ?, ?, ?, ?)`,
+            [uuid(), dbCh.id, charMap.get(seg.speaker) || null, j, seg.text]);
+          segmentsCreated++;
+        }
+      }
+    }
+  }
+
+  return txt({ characters_created: charactersCreated, segments_created: segmentsCreated, provider, sfx_cues: parsed.chapters?.reduce((n: number, c: any) => n + (c.sfx_cues?.length || 0), 0) || 0 });
+});
+
+server.tool('ai_suggest_v3_tags', 'Use an LLM to suggest ElevenLabs v3 audio tags for expressive narration on a given text', {
+  text: z.string().describe('The text to add v3 tags to'),
+}, async ({ text }) => {
+  const db = await dbReady;
+  const provider = detectProvider(db);
+  if (!provider) return err('No LLM API key configured.');
+  const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
+  if (!apiKey) return err(`No API key for ${provider}`);
+
+  const systemPrompt = `You are an expert audio production assistant specializing in ElevenLabs v3 audio tags.
+Given text from an audiobook or podcast, insert appropriate v3 audio tags to make the narration more expressive.
+
+Available tags (wrap in square brackets):
+- Emotions: [happy], [sad], [angry], [fearful], [excited], [melancholic], [romantic], [mysterious], [anxious], [confident], [nostalgic], [playful], [serious], [tender], [dramatic]
+- Vocal Effects: [whisper], [shout], [gasp], [sigh], [laugh], [sob], [yawn], [cough], [chuckle], [giggle], [growl], [murmur], [panting], [clears throat]
+- Styles: [conversational], [formal], [theatrical], [monotone], [breathy], [crisp], [commanding], [gentle], [intimate], [distant], [warm], [cold]
+- Narrative: [storytelling tone], [voice-over style], [documentary style], [bedtime story], [dramatic pause], [suspense build-up], [inner monologue], [flashback tone]
+- Rhythm: [slow], [fast], [dramatic pause], [pauses for effect], [staccato], [measured], [rushed], [languid], [building tension]
+
+Rules: Insert tags naturally, 2-5 per paragraph max. Keep original text exactly as-is. Return ONLY JSON: {"tagged_text": "...", "tags_used": ["..."]}`;
+
+  const result = await callLLM(provider, apiKey, systemPrompt, text.slice(0, 4000));
+  try {
+    const jsonMatch = result.match(/```json\s*([\s\S]*?)```/) || result.match(/\{[\s\S]*\}/);
+    const parsed = JSON.parse(jsonMatch ? (jsonMatch[1] || jsonMatch[0]) : result);
+    return txt({ tagged_text: parsed.tagged_text || text, tags_used: parsed.tags_used || [], provider });
+  } catch { return err('LLM returned invalid response. Try again.'); }
+});
+
+// ═══════════════════════════════════════════════════════
+// IMPORT MANUSCRIPT
+// ═══════════════════════════════════════════════════════
+
+server.tool('import_text', 'Import raw text as chapters into a book. Auto-splits into chapters by detecting headings.', {
+  book_id: z.string(),
+  text: z.string().describe('The full manuscript text. Chapter headings like "Chapter 1: Title" will be auto-detected.'),
+  replace_existing: z.boolean().default(true).describe('Replace existing chapters or append'),
+}, async ({ book_id, text, replace_existing }) => {
+  const db = await dbReady;
+  if (!queryOne(db, 'SELECT id FROM books WHERE id = ?', [book_id])) return err('Book not found');
+
+  const chapters = splitIntoChapters(text);
+  if (chapters.length === 0) return err('No content found in text');
+
+  if (replace_existing) {
+    const existing = queryAll(db, 'SELECT id FROM chapters WHERE book_id = ?', [book_id]);
+    for (const ch of existing) run(db, 'DELETE FROM segments WHERE chapter_id = ?', [ch.id]);
+    run(db, 'DELETE FROM chapters WHERE book_id = ?', [book_id]);
+  }
+
+  const startOrder = replace_existing ? 0 : ((queryOne(db, 'SELECT MAX(sort_order) as m FROM chapters WHERE book_id = ?', [book_id])?.m ?? -1) + 1);
+
+  const created: any[] = [];
+  chapters.forEach((ch, i) => {
+    const id = uuid();
+    run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text, cleaned_text) VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, book_id, ch.title, startOrder + i, ch.text, ch.text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()]);
+    created.push({ id, title: ch.title, text_length: ch.text.length });
+  });
+
+  return txt({ chapters_created: created.length, chapters: created });
+});
+
+// ═══════════════════════════════════════════════════════
+// GENERATE + POPULATE TIMELINE (combo)
+// ═══════════════════════════════════════════════════════
+
+server.tool('generate_and_populate', 'Generate TTS for all segments then auto-populate the timeline in one step', {
+  book_id: z.string(),
+  chapter_ids: z.array(z.string()).optional(),
+  gap_between_segments_ms: z.number().default(300),
+  gap_between_chapters_ms: z.number().default(2000),
+}, async ({ book_id, chapter_ids, gap_between_segments_ms, gap_between_chapters_ms }) => {
+  const db = await dbReady;
+  let chapters;
+  if (chapter_ids?.length) {
+    const ph = chapter_ids.map(() => '?').join(',');
+    chapters = queryAll(db, `SELECT * FROM chapters WHERE book_id = ? AND id IN (${ph}) ORDER BY sort_order`, [book_id, ...chapter_ids]);
+  } else {
+    chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [book_id]);
+  }
+  if (!chapters.length) return err('No chapters found');
+
+  // Apply pronunciation rules
+  const pronRules = queryAll(db, 'SELECT * FROM pronunciation_rules WHERE book_id = ? ORDER BY length(word) DESC', [book_id]);
+
+  // 1. Generate TTS
+  let ttsGenerated = 0, ttsCached = 0, ttsFailed = 0, ttsSkipped = 0;
+  const errors: string[] = [];
+
+  for (const ch of chapters) {
+    const segs = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [ch.id]);
+    for (const seg of segs) {
+      if (seg.audio_asset_id && queryOne(db, 'SELECT id FROM audio_assets WHERE id = ?', [seg.audio_asset_id])) { ttsSkipped++; continue; }
+      const char = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [seg.character_id]);
+      if (!char?.voice_id) { ttsFailed++; errors.push(`Seg ${seg.id}: no voice`); continue; }
+
+      let processedText = seg.text;
+      for (const rule of pronRules as any[]) {
+        if (rule.character_id && rule.character_id !== seg.character_id) continue;
+        const escaped = rule.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+        if (rule.alias) processedText = processedText.replace(regex, rule.alias);
+        else if (rule.phoneme) processedText = processedText.replace(regex, `<phoneme alphabet="ipa" ph="${rule.phoneme}">${rule.word}</phoneme>`);
+      }
+
+      const voiceSettings = { stability: char.stability, similarity_boost: char.similarity_boost, style: char.style, use_speaker_boost: !!char.speaker_boost };
+      const hashParams = { text: processedText, voice_id: char.voice_id, model_id: char.model_id, voice_settings: voiceSettings };
+      const promptHash = computePromptHash(hashParams);
+
+      const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ?', [promptHash]);
+      if (cached && fs.existsSync(cached.file_path)) {
+        run(db, `UPDATE segments SET audio_asset_id = ?, updated_at = datetime('now') WHERE id = ?`, [cached.id, seg.id]);
+        ttsCached++; continue;
+      }
+
+      try {
+        const { buffer, requestId } = await generateTTS({
+          voice_id: char.voice_id, text: processedText, model_id: char.model_id,
+          voice_settings: voiceSettings, output_format: 'mp3_44100_192',
+        });
+        const assetId = uuid();
+        const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
+        fs.writeFileSync(filePath, buffer);
+        const dur = Math.round((buffer.length / 24000) * 1000);
+        run(db, `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes) VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
+          [assetId, book_id, filePath, dur, promptHash, requestId, JSON.stringify(hashParams), buffer.length]);
+        run(db, `UPDATE segments SET audio_asset_id = ?, previous_request_id = ?, updated_at = datetime('now') WHERE id = ?`, [assetId, requestId, seg.id]);
+        ttsGenerated++;
+        log(`Generated: ${(buffer.length / 1024).toFixed(1)} KB`);
+      } catch (e: any) { ttsFailed++; errors.push(`Seg ${seg.id}: ${e.message}`); }
+    }
+  }
+
+  // 2. Populate timeline
+  let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [book_id]);
+  if (!narrationTrack) {
+    const trackId = uuid();
+    run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, 'Narration', 'narration', 0, '#4A90D9')`, [trackId, book_id]);
+    narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
+  }
+
+  let currentMs = 0, clipsCreated = 0, markersCreated = 0;
+  run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [book_id]);
+
+  for (const ch of chapters) {
+    run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), book_id, ch.id, currentMs, ch.title]);
+    markersCreated++;
+    const segs = queryAll(db,
+      `SELECT s.*, a.duration_ms FROM segments s JOIN audio_assets a ON s.audio_asset_id = a.id WHERE s.chapter_id = ? ORDER BY s.sort_order`, [ch.id]);
+    for (const seg of segs) {
+      const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
+      if (existing) { currentMs = existing.position_ms + (seg.duration_ms || 3000) + gap_between_segments_ms; continue; }
+      const clipId = uuid();
+      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+        [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentMs]);
+      clipsCreated++;
+      currentMs += (seg.duration_ms || 3000) + gap_between_segments_ms;
+    }
+    currentMs += gap_between_chapters_ms - gap_between_segments_ms;
+  }
+
+  return txt({
+    tts: { generated: ttsGenerated, cached: ttsCached, skipped: ttsSkipped, failed: ttsFailed, errors: errors.slice(0, 10) },
+    timeline: { clips_created: clipsCreated, markers_created: markersCreated, total_duration_ms: currentMs },
+  });
+});
+
+// ═══════════════════════════════════════════════════════
+// HELPER FUNCTIONS
+// ═══════════════════════════════════════════════════════
+
+function detectProvider(db: any): string | null {
+  for (const p of ['openai', 'mistral', 'gemini']) {
+    if (getSetting(db, `${p}_api_key`)) return p;
+  }
+  if (process.env.OPENAI_API_KEY) return 'openai';
+  if (process.env.MISTRAL_API_KEY) return 'mistral';
+  if (process.env.GEMINI_API_KEY) return 'gemini';
+  return null;
+}
+
+async function callLLM(provider: string, apiKey: string, system: string, user: string): Promise<string> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 120000);
+  try {
+    if (provider === 'openai') {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.3, max_tokens: 8000, response_format: { type: 'json_object' } }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
+      return ((await res.json()) as any).choices[0].message.content;
+    }
+    if (provider === 'mistral') {
+      const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: 'mistral-small-latest', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.3, max_tokens: 8000, response_format: { type: 'json_object' } }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Mistral ${res.status}: ${await res.text()}`);
+      return ((await res.json()) as any).choices[0].message.content;
+    }
+    if (provider === 'gemini') {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ contents: [{ parts: [{ text: system + '\n\n' + user }] }], generationConfig: { temperature: 0.3, maxOutputTokens: 8000, responseMimeType: 'application/json' } }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
+      return ((await res.json()) as any).candidates[0].content.parts[0].text;
+    }
+    throw new Error(`Unsupported provider: ${provider}`);
+  } finally { clearTimeout(timeout); }
+}
+
+function buildParseSystemPrompt(projectType: string, format: string): string {
+  const typeDesc = projectType === 'podcast' ? 'podcast episode' : 'audiobook';
+  return `You are an expert audio production assistant. Analyze text for a ${typeDesc} (format: ${format}).
+
+Your job:
+1. Identify all distinct speakers/characters. For each, provide name, role (narrator/character), and voice description.
+2. Break text into segments, assigning each to the correct speaker.
+3. Suggest SFX cues where appropriate.
+4. Suggest background music cues.
+
+Respond with ONLY JSON:
+{
+  "characters": [{"name": "Narrator", "role": "narrator", "voice_description": "warm male, 40s"}],
+  "chapters": [{
+    "title": "Chapter title",
+    "segments": [{"speaker": "Narrator", "text": "...", "type": "narration"}],
+    "sfx_cues": [{"after_segment": 2, "description": "door creaking"}],
+    "music_cues": [{"at_start": true, "description": "soft piano"}]
+  }]
+}
+
+Rules: Keep text faithful to original. Use "Narrator" for description paragraphs. Be specific with SFX. Don't over-annotate.`;
+}
+
+function splitIntoChapters(text: string): Array<{ title: string; text: string }> {
+  const patterns = [
+    /^(Chapter\s+\d+[.:\s].*)$/gim, /^(CHAPTER\s+\d+[.:\s].*)$/gm,
+    /^(Chapter\s+[IVXLCDM]+[.:\s].*)$/gim, /^(Part\s+\d+[.:\s].*)$/gim,
+    /^(#{1,3}\s+.+)$/gm, /^(Chapter\s+\d+)$/gim, /^(CHAPTER\s+[IVXLCDM]+)$/gm,
+  ];
+  for (const pattern of patterns) {
+    const matches = [...text.matchAll(pattern)];
+    if (matches.length >= 2) {
+      const chapters: Array<{ title: string; text: string }> = [];
+      for (let i = 0; i < matches.length; i++) {
+        const start = matches[i].index!;
+        const end = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+        chapters.push({ title: matches[i][1].replace(/^#+\s*/, '').trim(), text: text.slice(start, end).trim() });
+      }
+      return chapters;
+    }
+  }
+  if (text.length > 10000) {
+    const paragraphs = text.split(/\n\s*\n/);
+    const chapters: Array<{ title: string; text: string }> = [];
+    let current = ''; let num = 1;
+    for (const para of paragraphs) {
+      if (current.length + para.length > 8000 && current.length > 0) {
+        chapters.push({ title: `Chapter ${num}`, text: current.trim() }); num++; current = '';
+      }
+      current += para + '\n\n';
+    }
+    if (current.trim()) chapters.push({ title: `Chapter ${num}`, text: current.trim() });
+    return chapters;
+  }
+  return [{ title: 'Chapter 1', text: text.trim() }];
+}
+
 // ── Start ──
 
 async function main() {
