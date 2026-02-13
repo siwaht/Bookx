@@ -9,3 +9,7 @@ data/
 client/dist/
 server/dist/
 server/data/
+
+# Local podcast generation test scripts
+generate-podcast*.mjs
+podcast_*.mp3

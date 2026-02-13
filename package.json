@@ -8,7 +8,8 @@
     "dev:client": "npm run dev --workspace=client",
     "build": "npm run build --workspace=client && npm run build --workspace=server",
     "start": "npm run start --workspace=server",
-    "lint": "npm run lint --workspace=client && npm run lint --workspace=server"
+    "lint": "npm run lint --workspace=client && npm run lint --workspace=server",
+    "mcp": "npx tsx server/src/mcp-server.ts"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "audiobook-maker": {
+      "command": "npx",
+      "args": [
+        "tsx",
+        "server/src/mcp-server.ts"
+      ],
+      "env": {
+        "DATA_DIR": "./data"
+      },
+      "disabled": false,
+      "autoApprove": [
+        "list_books",
+        "list_voices"
+      ]
+    }
+  }
+}
