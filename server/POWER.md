@@ -24,6 +24,7 @@ An MCP server that exposes audiobook and podcast generation as tools for AI agen
 4. `add_segments` → Break chapters into dialogue segments per character
 5. `generate_chapter_audio` → Generate TTS for all segments
 6. `export_chapter_audio` or `export_book_audio` → Get final MP3
+7. `download_file` → Retrieve the MP3 as base64 over MCP (no filesystem needed)
 
 **Shortcut:** Use `quick_podcast` for one-shot generation without any DB setup.
 
@@ -31,7 +32,7 @@ An MCP server that exposes audiobook and podcast generation as tools for AI agen
 
 **Combo:** Use `generate_and_populate` to generate TTS + build timeline in one call.
 
-## Tools (40)
+## Tools (45)
 
 ### Project Management
 - `list_books` — List all projects
@@ -62,9 +63,11 @@ An MCP server that exposes audiobook and podcast generation as tools for AI agen
 - `generate_single_segment` — Generate one segment
 - `generate_and_populate` — Generate TTS + populate timeline in one step
 
-### Export
+### Export & Download
 - `export_chapter_audio` — Concatenate chapter to MP3 (configurable silence gaps)
 - `export_book_audio` — Export full book as MP3
+- `list_exports` — List all exported files with sizes
+- `download_file` — Retrieve exported audio as base64 over MCP (no filesystem access needed)
 - `quick_podcast` — One-shot: transcript + voice IDs → MP3
 
 ### Pronunciation
@@ -116,3 +119,12 @@ Embed these in segment text for expressive narration:
 - Vocal: `[whisper]`, `[shout]`, `[laugh]`, `[sigh]`, `[gasp]`
 - Style: `[conversational]`, `[formal]`, `[theatrical]`, `[commanding]`, `[gentle]`
 - Rhythm: `[slow]`, `[fast]`, `[dramatic pause]`, `[building tension]`
+
+## MCP Resources
+
+The server also exposes audio files as MCP resources for clients that support the resources protocol:
+
+- `audio://exports/{filename}` — Exported MP3 files (listable)
+- `audio://assets/{assetId}` — Individual audio assets by ID
+
+For agents without resource support, use `list_exports` + `download_file` tools instead.

@@ -6,7 +6,7 @@
  * Usage: npx tsx server/src/mcp-server.ts
  */
 import 'dotenv/config';
-import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { v4 as uuid } from 'uuid';
@@ -453,6 +453,63 @@ server.tool('export_book_audio', 'Export all chapters of a book as a single MP3 
   const final = Buffer.concat(buffers);
   fs.writeFileSync(outputPath, final);
   return txt({ output_path: outputPath, chapters: chapters.length, segments: totalSegs, size_mb: (final.length / 1024 / 1024).toFixed(2) });
+});
+
+// ═══════════════════════════════════════════════════════
+// FILE DOWNLOAD / RETRIEVAL
+// ═══════════════════════════════════════════════════════
+
+server.tool('list_exports', 'List all exported audio files available for download', {},
+  async () => {
+    const exportsDir = path.join(DATA_DIR, 'exports');
+    if (!fs.existsSync(exportsDir)) return txt([]);
+    const files = fs.readdirSync(exportsDir).filter(f => !f.startsWith('.'));
+    return txt(files.map(f => {
+      const stat = fs.statSync(path.join(exportsDir, f));
+      return { filename: f, size_mb: (stat.size / 1024 / 1024).toFixed(2), created: stat.mtime.toISOString() };
+    }));
+  }
+);
+
+server.tool('download_file', 'Download/retrieve an exported audio file as base64-encoded data. Use after export_chapter_audio or export_book_audio to get the actual file content over MCP.', {
+  file_path: z.string().describe('File path returned by export tools (e.g. "data/exports/my_podcast.mp3"), or just a filename to look in the exports directory'),
+}, async ({ file_path }) => {
+  // Resolve the path — accept both full paths and just filenames
+  let resolved = file_path;
+  if (!fs.existsSync(resolved)) {
+    // Try in exports dir
+    resolved = path.join(DATA_DIR, 'exports', path.basename(file_path));
+  }
+  if (!fs.existsSync(resolved)) {
+    // Try in audio dir
+    resolved = path.join(DATA_DIR, 'audio', path.basename(file_path));
+  }
+  if (!fs.existsSync(resolved)) return err(`File not found: ${file_path}`);
+
+  // Security: ensure the resolved path is within DATA_DIR
+  const realPath = fs.realpathSync(resolved);
+  const realDataDir = fs.realpathSync(DATA_DIR);
+  if (!realPath.startsWith(realDataDir)) return err('Access denied: path outside data directory');
+
+  const stat = fs.statSync(realPath);
+  const MAX_SIZE = 50 * 1024 * 1024; // 50MB limit for base64 transfer
+  if (stat.size > MAX_SIZE) return err(`File too large for MCP transfer (${(stat.size / 1024 / 1024).toFixed(1)} MB). Max: 50 MB.`);
+
+  const buffer = fs.readFileSync(realPath);
+  const base64 = buffer.toString('base64');
+  const ext = path.extname(realPath).toLowerCase();
+  const mimeType = ext === '.mp3' ? 'audio/mpeg' : ext === '.wav' ? 'audio/wav' : 'application/octet-stream';
+
+  return {
+    content: [{
+      type: 'resource' as const,
+      resource: {
+        uri: `audio://exports/${path.basename(realPath)}`,
+        mimeType,
+        blob: base64,
+      },
+    }],
+  };
 });
 
 /** Create a minimal MP3 silence buffer for the given duration */
@@ -1192,6 +1249,60 @@ function splitIntoChapters(text: string): Array<{ title: string; text: string }>
   }
   return [{ title: 'Chapter 1', text: text.trim() }];
 }
+
+// ── Resources (for MCP clients that support resource reading) ──
+
+server.resource(
+  'Exported Audio Files',
+  new ResourceTemplate('audio://exports/{filename}', { list: async () => {
+    const exportsDir = path.join(DATA_DIR, 'exports');
+    if (!fs.existsSync(exportsDir)) return { resources: [] };
+    const files = fs.readdirSync(exportsDir).filter(f => !f.startsWith('.'));
+    return {
+      resources: files.map(f => ({
+        uri: `audio://exports/${f}`,
+        name: f,
+        mimeType: f.endsWith('.mp3') ? 'audio/mpeg' : f.endsWith('.wav') ? 'audio/wav' : 'application/octet-stream',
+      })),
+    };
+  }}),
+  { description: 'Audio files exported from audiobook/podcast projects' },
+  async (uri, variables) => {
+    const filename = variables.filename as string;
+    const filePath = path.join(DATA_DIR, 'exports', path.basename(filename));
+    if (!fs.existsSync(filePath)) return { contents: [] };
+    const buffer = fs.readFileSync(filePath);
+    const ext = path.extname(filePath).toLowerCase();
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: ext === '.mp3' ? 'audio/mpeg' : ext === '.wav' ? 'audio/wav' : 'application/octet-stream',
+        blob: buffer.toString('base64'),
+      }],
+    };
+  }
+);
+
+server.resource(
+  'Audio Assets',
+  new ResourceTemplate('audio://assets/{assetId}', { list: undefined }),
+  { description: 'Individual audio assets (TTS segments, SFX, music)' },
+  async (uri, variables) => {
+    const db = await dbReady;
+    const assetId = variables.assetId as string;
+    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [assetId]);
+    if (!asset?.file_path || !fs.existsSync(asset.file_path)) return { contents: [] };
+    const buffer = fs.readFileSync(asset.file_path);
+    const ext = path.extname(asset.file_path).toLowerCase();
+    return {
+      contents: [{
+        uri: uri.href,
+        mimeType: ext === '.mp3' ? 'audio/mpeg' : ext === '.wav' ? 'audio/wav' : 'application/octet-stream',
+        blob: buffer.toString('base64'),
+      }],
+    };
+  }
+);
 
 // ── Start ──
 
