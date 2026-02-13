@@ -1,7 +1,10 @@
 {
   "name": "audiobook-maker",
   "private": true,
-  "workspaces": ["client", "server"],
+  "workspaces": [
+    "client",
+    "server"
+  ],
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "npm run dev --workspace=server",
@@ -12,7 +15,9 @@
     "mcp": "npx tsx server/src/mcp-server.ts"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "concurrently": "^9.1.0",
+    "dotenv": "^17.3.1",
     "typescript": "^5.7.0"
   }
 }
