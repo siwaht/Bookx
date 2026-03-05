@@ -30,6 +30,7 @@ export interface Character {
   role: 'narrator' | 'character';
   voice_id: string | null;
   voice_name: string | null;
+  tts_provider: 'elevenlabs' | 'openai' | 'google' | 'amazon';
   model_id: string;
   stability: number;
   similarity_boost: number;

@@ -20,6 +20,7 @@ import { audioRouter } from './routes/audio.js';
 import { settingsRouter, getSetting } from './routes/settings.js';
 import { aiParseRouter } from './routes/ai-parse.js';
 import { pronunciationRouter } from './routes/pronunciation.js';
+import { ttsProvidersRouter } from './routes/tts-providers.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -45,13 +46,20 @@ async function main() {
   } else {
     console.log('[Config] WARNING: No ElevenLabs API key found. Set it in Settings page.');
   }
-  for (const provider of ['openai', 'mistral', 'gemini']) {
-    const envKey = `${provider.toUpperCase()}_API_KEY`;
-    const storedKey = getSetting(db, `${provider}_api_key`);
+  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key']) {
+    const settingKey = `${provider}_api_key`;
+    const envKey = provider === 'google_tts' ? 'GOOGLE_TTS_API_KEY'
+      : provider === 'aws_access_key' ? 'AWS_ACCESS_KEY_ID'
+      : provider === 'aws_secret_access_key' ? 'AWS_SECRET_ACCESS_KEY'
+      : `${provider.toUpperCase()}_API_KEY`;
+    const storedKey = getSetting(db, settingKey);
     if (storedKey) {
       process.env[envKey] = storedKey;
     }
   }
+  // AWS region
+  const awsRegion = getSetting(db, 'aws_region');
+  if (awsRegion) process.env.AWS_REGION = awsRegion;
 
   const app = express();
 
@@ -92,6 +100,7 @@ async function main() {
   app.use('/api/settings', settingsRouter(db));
   app.use('/api/books/:bookId/ai-parse', aiParseRouter(db));
   app.use('/api/books/:bookId/pronunciation', pronunciationRouter(db));
+  app.use('/api/tts', ttsProvidersRouter(db));
 
   // Save DB explicitly
   app.post('/api/save', (_req, res) => {
@@ -163,7 +172,7 @@ async function main() {
   });
 
   const server = app.listen(PORT, () => {
-    console.log(`[Server] Audiobook Maker running on http://localhost:${PORT}`);
+    console.log(`[Server] Audio Producer running on http://localhost:${PORT}`);
   });
 
   // Graceful shutdown

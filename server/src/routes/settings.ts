@@ -9,7 +9,12 @@ const ALLOWED_KEYS = [
   'openai_api_key',
   'mistral_api_key',
   'gemini_api_key',
+  'google_tts_api_key',
+  'aws_access_key_api_key',
+  'aws_secret_access_key_api_key',
+  'aws_region',
   'default_llm_provider',
+  'default_tts_provider',
 ];
 
 export function settingsRouter(db: SqlJsDatabase): Router {
@@ -55,6 +60,11 @@ export function settingsRouter(db: SqlJsDatabase): Router {
     if (key === 'openai_api_key' && value) process.env.OPENAI_API_KEY = value;
     if (key === 'mistral_api_key' && value) process.env.MISTRAL_API_KEY = value;
     if (key === 'gemini_api_key' && value) process.env.GEMINI_API_KEY = value;
+    // Sync TTS provider keys
+    if (key === 'google_tts_api_key' && value) process.env.GOOGLE_TTS_API_KEY = value;
+    if (key === 'aws_access_key_api_key' && value) process.env.AWS_ACCESS_KEY_ID = value;
+    if (key === 'aws_secret_access_key_api_key' && value) process.env.AWS_SECRET_ACCESS_KEY = value;
+    if (key === 'aws_region' && value) process.env.AWS_REGION = value;
 
     res.json({ ok: true, key });
   });

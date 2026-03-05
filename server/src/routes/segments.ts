@@ -5,6 +5,8 @@ import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
+import { generateWithProvider } from '../tts/registry.js';
+import type { TTSProviderName } from '../tts/provider.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -109,12 +111,16 @@ async function generateSegmentAudio(
   let voiceId = 'default';
   let voiceSettings = { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true };
   let modelId = 'eleven_v3';
+  let ttsProvider: TTSProviderName = 'elevenlabs';
+  let speed = 1.0;
 
   if (segment.character_id) {
     const char = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [segment.character_id]);
     if (char?.voice_id) {
       voiceId = char.voice_id;
       modelId = char.model_id;
+      ttsProvider = char.tts_provider || 'elevenlabs';
+      speed = char.speed || 1.0;
       voiceSettings = {
         stability: char.stability,
         similarity_boost: char.similarity_boost,
@@ -128,7 +134,7 @@ async function generateSegmentAudio(
     throw new Error('No voice assigned to character. Assign a voice first.');
   }
 
-  const hashParams = { text: segment.text, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
+  const hashParams = { provider: ttsProvider, text: segment.text, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
   const promptHash = computePromptHash(hashParams);
 
   // Check cache
@@ -140,37 +146,58 @@ async function generateSegmentAudio(
 
   const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [segment.chapter_id]);
 
-  // Get previous segment's request ID for continuity stitching
-  const prevSegment = queryOne(db,
-    'SELECT previous_request_id FROM segments WHERE chapter_id = ? AND sort_order < ? AND previous_request_id IS NOT NULL ORDER BY sort_order DESC LIMIT 1',
-    [segment.chapter_id, segment.sort_order]);
+  let buffer: Buffer;
+  let requestId: string | null = null;
+  let durationMs: number;
 
-  const { buffer, requestId } = await generateTTS({
-    text: segment.text,
-    voice_id: voiceId,
-    model_id: modelId,
-    voice_settings: voiceSettings,
-    previous_request_ids: prevSegment?.previous_request_id ? [prevSegment.previous_request_id] : undefined,
-    output_format: 'mp3_44100_192',
-  });
+  if (ttsProvider === 'elevenlabs') {
+    // Use ElevenLabs directly for stitching support
+    const prevSegment = queryOne(db,
+      'SELECT previous_request_id FROM segments WHERE chapter_id = ? AND sort_order < ? AND previous_request_id IS NOT NULL ORDER BY sort_order DESC LIMIT 1',
+      [segment.chapter_id, segment.sort_order]);
+
+    const result = await generateTTS({
+      text: segment.text,
+      voice_id: voiceId,
+      model_id: modelId,
+      voice_settings: voiceSettings,
+      previous_request_ids: prevSegment?.previous_request_id ? [prevSegment.previous_request_id] : undefined,
+      output_format: 'mp3_44100_192',
+    });
+    buffer = result.buffer;
+    requestId = result.requestId;
+    durationMs = Math.round((buffer.length / 24000) * 1000);
+  } else {
+    // Use the provider abstraction for other providers
+    const result = await generateWithProvider(ttsProvider, {
+      text: segment.text,
+      voiceId,
+      modelId,
+      speed,
+      stability: voiceSettings.stability,
+      similarityBoost: voiceSettings.similarity_boost,
+      style: voiceSettings.style,
+      speakerBoost: voiceSettings.use_speaker_boost,
+    });
+    buffer = result.buffer;
+    requestId = result.requestId;
+    durationMs = result.durationMs || Math.round((buffer.length / 24000) * 1000);
+  }
 
   const assetId = uuid();
   const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
   fs.writeFileSync(filePath, buffer);
 
-  // Estimate duration from MP3 file size (192kbps = 24000 bytes/sec)
-  const estimatedDurationMs = Math.round((buffer.length / 24000) * 1000);
-
   run(db,
     `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
      VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
-    [assetId, chapter.book_id, filePath, estimatedDurationMs, promptHash, requestId, JSON.stringify(hashParams), buffer.length]);
+    [assetId, chapter.book_id, filePath, durationMs, promptHash, requestId, JSON.stringify({ ...hashParams, provider: ttsProvider }), buffer.length]);
 
   run(db, `UPDATE segments SET audio_asset_id = ?, previous_request_id = ?, updated_at = datetime('now') WHERE id = ?`,
     [assetId, requestId, segment.id]);
 
   run(db, `INSERT INTO audit_log (book_id, action, details, elevenlabs_request_id, characters_used) VALUES (?, 'tts_generate', ?, ?, ?)`,
-    [chapter.book_id, JSON.stringify({ segment_id: segment.id, model: modelId }), requestId, segment.text.length]);
+    [chapter.book_id, JSON.stringify({ segment_id: segment.id, model: modelId, provider: ttsProvider }), requestId, segment.text.length]);
 
-  return { audio_asset_id: assetId, request_id: requestId, cached: false, duration_ms: estimatedDurationMs };
+  return { audio_asset_id: assetId, request_id: requestId, cached: false, duration_ms: durationMs };
 }

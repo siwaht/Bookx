@@ -13,13 +13,13 @@ export function charactersRouter(db: SqlJsDatabase): Router {
 
   router.post('/', (req: Request, res: Response) => {
     const id = uuid();
-    const { name, role, voice_id, voice_name, model_id, stability, similarity_boost, style, speed, speaker_boost } = req.body;
+    const { name, role, voice_id, voice_name, tts_provider, model_id, stability, similarity_boost, style, speed, speaker_boost } = req.body;
 
     run(db,
-      `INSERT INTO characters (id, book_id, name, role, voice_id, voice_name, model_id, stability, similarity_boost, style, speed, speaker_boost)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO characters (id, book_id, name, role, voice_id, voice_name, tts_provider, model_id, stability, similarity_boost, style, speed, speaker_boost)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [id, req.params.bookId, name, role || 'character', voice_id || null, voice_name || null,
-       model_id || 'eleven_v3', stability ?? 0.5, similarity_boost ?? 0.75, style ?? 0.0, speed ?? 1.0, speaker_boost ?? 1]
+       tts_provider || 'elevenlabs', model_id || 'eleven_v3', stability ?? 0.5, similarity_boost ?? 0.75, style ?? 0.0, speed ?? 1.0, speaker_boost ?? 1]
     );
 
     const character = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [id]);
@@ -27,7 +27,7 @@ export function charactersRouter(db: SqlJsDatabase): Router {
   });
 
   router.put('/:id', (req: Request, res: Response) => {
-    const fields = ['name', 'role', 'voice_id', 'voice_name', 'model_id', 'stability', 'similarity_boost', 'style', 'speed', 'speaker_boost'];
+    const fields = ['name', 'role', 'voice_id', 'voice_name', 'tts_provider', 'model_id', 'stability', 'similarity_boost', 'style', 'speed', 'speaker_boost'];
     const updates: string[] = [];
     const values: any[] = [];
 

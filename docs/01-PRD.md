@@ -1,7 +1,7 @@
-# Audiobook Maker — Product Requirements Document
+# Audio Producer — Product Requirements Document
 
 ## Vision
-A single-user web app for producing publisher-ready audiobooks using ElevenLabs' full API surface (TTS v3, Text-to-Dialogue, Sound Effects, Music). Hosted on Replit, optimized for one author/producer workflow.
+A single-user web app for producing publisher-ready audiobooks and podcasts using multiple TTS providers (ElevenLabs, OpenAI, Google Cloud TTS, Amazon Polly) plus ElevenLabs' SFX and Music APIs. Hosted on Replit, optimized for one author/producer workflow.
 
 ## User Stories (MVP)
 

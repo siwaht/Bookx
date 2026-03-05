@@ -53,7 +53,7 @@ export function Dashboard() {
             <div style={styles.logoCircle}><Headphones size={20} color="#5b8def" /></div>
             <h1 style={styles.h1}>Audio Producer</h1>
           </div>
-          <p style={styles.subtitle}>Create audiobooks and podcasts with AI voices, sound effects, and music</p>
+          <p style={styles.subtitle}>Create audiobooks and podcasts with multi-provider AI voices, sound effects, and music</p>
         </div>
         <div style={styles.headerActions}>
           <button onClick={() => navigate('/settings')} style={styles.iconBtn} title="Settings">
@@ -160,7 +160,7 @@ export function Dashboard() {
           </div>
           <h3 style={styles.emptyTitle}>No projects yet</h3>
           <p style={styles.emptyText}>
-            Create a project, import your text, and AI will assign characters and generate audio with ElevenLabs voices.
+            Create a project, import your text, and generate audio with AI voices from ElevenLabs, OpenAI, Google, or Amazon Polly.
           </p>
           <div style={styles.emptySteps} className="stagger-children">
             {[

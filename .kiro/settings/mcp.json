@@ -9,7 +9,7 @@
       "env": {
         "DATA_DIR": "./data"
       },
-      "disabled": false,
+      "disabled": true,
       "autoApprove": [
         "list_books",
         "list_voices"

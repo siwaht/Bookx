@@ -31,6 +31,8 @@ export interface Chapter {
   };
 }
 
+export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon';
+
 export interface Character {
   id: string;
   book_id: string;
@@ -38,6 +40,7 @@ export interface Character {
   role: 'narrator' | 'character';
   voice_id: string | null;
   voice_name: string | null;
+  tts_provider: TTSProviderName;
   model_id: string;
   stability: number;
   similarity_boost: number;
@@ -153,4 +156,23 @@ export interface RenderJob {
 export interface ValidationResult {
   pass: boolean;
   checks: Array<{ name: string; pass: boolean; message: string }>;
+}
+
+
+export interface TTSProviderInfo {
+  name: TTSProviderName;
+  displayName: string;
+  configured: boolean;
+}
+
+export interface TTSVoice {
+  voiceId: string;
+  name: string;
+  provider: TTSProviderName;
+  category?: string;
+  language?: string;
+  gender?: string;
+  previewUrl?: string | null;
+  description?: string | null;
+  labels?: Record<string, string>;
 }

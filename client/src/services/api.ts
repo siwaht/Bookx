@@ -303,3 +303,17 @@ export const usageStats = {
     recent_activity: any[];
   }>('/elevenlabs/usage/local'),
 };
+
+// ── TTS Providers ──
+export const ttsProviders = {
+  list: () => request<Array<{ name: string; displayName: string; configured: boolean }>>('/tts/providers'),
+  testConnection: (name: string) => request<{ connected: boolean; error?: string; details?: any }>(`/tts/providers/${name}/test`),
+  voices: (name: string) => request<any[]>(`/tts/providers/${name}/voices`),
+  allVoices: () => request<any[]>('/tts/voices'),
+  generate: (data: {
+    provider: string; text: string; voice_id: string; model_id?: string;
+    speed?: number; stability?: number; similarity_boost?: number;
+    style?: number; speaker_boost?: boolean; book_id?: string;
+  }) => request<{ audio_asset_id: string; provider: string; request_id?: string; duration_ms?: number }>(
+    '/tts/generate', { method: 'POST', body: JSON.stringify(data) }),
+};

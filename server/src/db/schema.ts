@@ -77,6 +77,7 @@ export function initializeSchema(database: SqlJsDatabase): void {
       role TEXT DEFAULT 'character',
       voice_id TEXT,
       voice_name TEXT,
+      tts_provider TEXT DEFAULT 'elevenlabs',
       model_id TEXT DEFAULT 'eleven_v3',
       stability REAL DEFAULT 0.5,
       similarity_boost REAL DEFAULT 0.75,
@@ -287,6 +288,12 @@ export function initializeSchema(database: SqlJsDatabase): void {
   }
   if (!bookCols.includes('format')) {
     database.run("ALTER TABLE books ADD COLUMN format TEXT DEFAULT 'single_narrator'");
+  }
+
+  // Migration: add tts_provider column to characters if missing
+  const charCols = queryAll(database, "PRAGMA table_info(characters)").map((c: any) => c.name);
+  if (!charCols.includes('tts_provider')) {
+    database.run("ALTER TABLE characters ADD COLUMN tts_provider TEXT DEFAULT 'elevenlabs'");
   }
 
   saveDb();
