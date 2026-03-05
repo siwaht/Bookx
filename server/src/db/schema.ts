@@ -296,5 +296,38 @@ export function initializeSchema(database: SqlJsDatabase): void {
     database.run("ALTER TABLE characters ADD COLUMN tts_provider TEXT DEFAULT 'elevenlabs'");
   }
 
+  // Migration: add pacing columns to books if missing
+  const bookCols2 = queryAll(database, "PRAGMA table_info(books)").map((c: any) => c.name);
+  if (!bookCols2.includes('default_gap_ms')) {
+    database.run("ALTER TABLE books ADD COLUMN default_gap_ms INTEGER DEFAULT 300");
+  }
+  if (!bookCols2.includes('chapter_gap_ms')) {
+    database.run("ALTER TABLE books ADD COLUMN chapter_gap_ms INTEGER DEFAULT 2000");
+  }
+  if (!bookCols2.includes('default_speed')) {
+    database.run("ALTER TABLE books ADD COLUMN default_speed REAL DEFAULT 1.0");
+  }
+  if (!bookCols2.includes('intro_asset_id')) {
+    database.run("ALTER TABLE books ADD COLUMN intro_asset_id TEXT");
+  }
+  if (!bookCols2.includes('outro_asset_id')) {
+    database.run("ALTER TABLE books ADD COLUMN outro_asset_id TEXT");
+  }
+
+  // Migration: add ducking columns to tracks if missing
+  const trackCols = queryAll(database, "PRAGMA table_info(tracks)").map((c: any) => c.name);
+  if (!trackCols.includes('duck_amount_db')) {
+    database.run("ALTER TABLE tracks ADD COLUMN duck_amount_db REAL DEFAULT -12.0");
+  }
+  if (!trackCols.includes('duck_attack_ms')) {
+    database.run("ALTER TABLE tracks ADD COLUMN duck_attack_ms INTEGER DEFAULT 200");
+  }
+  if (!trackCols.includes('duck_release_ms')) {
+    database.run("ALTER TABLE tracks ADD COLUMN duck_release_ms INTEGER DEFAULT 500");
+  }
+  if (!trackCols.includes('ducking_enabled')) {
+    database.run("ALTER TABLE tracks ADD COLUMN ducking_enabled INTEGER DEFAULT 0");
+  }
+
   saveDb();
 }

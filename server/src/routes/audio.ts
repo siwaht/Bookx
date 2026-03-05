@@ -78,6 +78,58 @@ export function audioRouter(db: SqlJsDatabase): Router {
     res.status(204).send();
   });
 
+  // Generate a silence audio asset (for pause insertion)
+  router.post('/silence', (req: Request, res: Response) => {
+    try {
+      const { duration_ms, book_id } = req.body;
+      if (!duration_ms || !book_id) { res.status(400).json({ error: 'duration_ms and book_id required' }); return; }
+
+      const durationMs = Math.min(Math.max(100, duration_ms), 30000); // 100ms to 30s
+      const assetId = uuid();
+      const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
+
+      // Generate a silent MP3 frame — minimal valid MP3 with silence
+      // For simplicity, create a WAV file with silence then store it
+      const sampleRate = 44100;
+      const numSamples = Math.round((durationMs / 1000) * sampleRate);
+      const dataSize = numSamples * 2; // 16-bit mono
+      const headerSize = 44;
+      const buffer = Buffer.alloc(headerSize + dataSize);
+
+      // WAV header
+      buffer.write('RIFF', 0);
+      buffer.writeUInt32LE(36 + dataSize, 4);
+      buffer.write('WAVE', 8);
+      buffer.write('fmt ', 12);
+      buffer.writeUInt32LE(16, 16); // chunk size
+      buffer.writeUInt16LE(1, 20); // PCM
+      buffer.writeUInt16LE(1, 22); // mono
+      buffer.writeUInt32LE(sampleRate, 24);
+      buffer.writeUInt32LE(sampleRate * 2, 28); // byte rate
+      buffer.writeUInt16LE(2, 32); // block align
+      buffer.writeUInt16LE(16, 34); // bits per sample
+      buffer.write('data', 36);
+      buffer.writeUInt32LE(dataSize, 40);
+      // Data is already zeroed (silence)
+
+      const wavPath = filePath.replace('.mp3', '.wav');
+      fs.writeFileSync(wavPath, buffer);
+
+      run(db,
+        `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
+         VALUES (?, ?, 'sfx', ?, ?, ?, ?)`,
+        [assetId, book_id, wavPath, durationMs, buffer.length, `Silence ${durationMs}ms`]);
+
+      res.status(201).json({
+        audio_asset_id: assetId,
+        duration_ms: durationMs,
+        name: `Silence ${durationMs}ms`,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Upload audio file
   router.post('/upload', async (req: Request, res: Response) => {
     try {

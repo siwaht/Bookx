@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
-import { timeline as timelineApi, elevenlabs, audioUrl, render, saveProject, downloadProjectUrl, uploadAudio } from '../services/api';
+import { timeline as timelineApi, elevenlabs, audioUrl, render, saveProject, downloadProjectUrl, uploadAudio, audioAssets } from '../services/api';
 import type { Track, Clip, ChapterMarker } from '../types';
 import {
   Play, Pause, SkipBack, ZoomIn, ZoomOut, Plus, Trash2, Volume2, VolumeX,
   Save, Download, Scissors, Copy, Clipboard, Undo2, Redo2, HelpCircle, X,
-  Wand2, Loader, Upload,
+  Wand2, Loader, Upload, Clock,
 } from 'lucide-react';
 
 type DragMode = 'move' | 'trimStart' | 'trimEnd';
@@ -51,6 +51,9 @@ export function TimelinePage() {
   const [quickPrompt, setQuickPrompt] = useState('');
   const [quickType, setQuickType] = useState<'sfx' | 'music'>('sfx');
   const [quickGenerating, setQuickGenerating] = useState(false);
+  const [showSilenceMenu, setShowSilenceMenu] = useState(false);
+  const [silenceDuration, setSilenceDuration] = useState(1000);
+  const [insertingSilence, setInsertingSilence] = useState(false);
 
   // ── Data Loading ──
   const loadTracks = useCallback(async () => {
@@ -795,6 +798,30 @@ export function TimelinePage() {
   const selectedClip = selectedClipId ? findClip(selectedClipId) : null;
   const selectedTrack = selectedClip ? tracks.find((t) => t.clips.some((c) => c.id === selectedClipId)) : null;
 
+  // ── Insert Silence ──
+  const handleInsertSilence = async (durationMs: number) => {
+    if (!bookId) return;
+    setInsertingSilence(true);
+    try {
+      const result = await audioAssets.generateSilence(bookId, durationMs);
+      // Find or create an SFX track for silence
+      let sfxTrack = tracks.find((t) => t.type === 'sfx');
+      if (!sfxTrack) {
+        sfxTrack = await timelineApi.createTrack(bookId, { name: 'SFX', type: 'sfx' }) as any;
+      }
+      if (!sfxTrack) throw new Error('Failed to create track');
+      await timelineApi.createClip(bookId, sfxTrack.id, {
+        audio_asset_id: result.audio_asset_id,
+        position_ms: playheadMs,
+        notes: `Silence ${durationMs}ms`,
+      });
+      setShowSilenceMenu(false);
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { alert(`Insert silence failed: ${err.message}`); }
+    finally { setInsertingSilence(false); }
+  };
+
   // ── Import Audio File ──
   const handleImportAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -853,6 +880,10 @@ export function TimelinePage() {
             <Upload size={14} /> {importing ? '...' : 'Import'}
           </button>
           <input ref={importFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac" onChange={handleImportAudio} hidden aria-label="Import audio file" />
+          <button onClick={() => setShowSilenceMenu(!showSilenceMenu)} disabled={insertingSilence}
+            style={{ ...S.toolBtn, background: showSilenceMenu ? '#1a2a1a' : '#222' }} title="Insert silence/pause at playhead">
+            <Clock size={14} /> {insertingSilence ? '...' : 'Pause'}
+          </button>
         </div>
         <div style={{ flex: 1 }} />
         <div style={S.toolGroup}>
@@ -878,6 +909,31 @@ export function TimelinePage() {
             <button onClick={handleQuickAdd} disabled={quickGenerating || !quickPrompt.trim()} style={S.quickBtn}>
               {quickGenerating ? <Loader size={12} /> : <Plus size={12} />} {quickGenerating ? '...' : 'Add at Playhead'}
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Silence/Pause Insert Panel */}
+      {showSilenceMenu && (
+        <div style={S.quickPanel}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: '#aaa' }}>Insert silence at playhead:</span>
+            {[500, 1000, 1500, 2000, 3000, 5000].map((ms) => (
+              <button key={ms} onClick={() => handleInsertSilence(ms)} disabled={insertingSilence}
+                style={{ ...S.presetBtn, padding: '5px 12px', fontSize: 11 }}>
+                {ms >= 1000 ? `${ms / 1000}s` : `${ms}ms`}
+              </button>
+            ))}
+            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+              <input type="number" min={100} max={30000} step={100} value={silenceDuration}
+                onChange={(e) => setSilenceDuration(parseInt(e.target.value) || 1000)}
+                style={{ ...S.quickSelect, width: 70 }} aria-label="Custom silence duration" />
+              <span style={{ fontSize: 10, color: '#666' }}>ms</span>
+              <button onClick={() => handleInsertSilence(silenceDuration)} disabled={insertingSilence}
+                style={S.quickBtn}>
+                {insertingSilence ? <Loader size={12} /> : <Clock size={12} />} Insert
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -911,6 +967,28 @@ export function TimelinePage() {
                   />
                   <span style={{ fontSize: 8, color: '#555', width: 28, textAlign: 'right' }}>{track.gain > 0 ? '+' : ''}{track.gain.toFixed(1)}</span>
                 </div>
+                {/* Ducking controls for music tracks */}
+                {track.type === 'music' && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <label style={{ fontSize: 8, color: track.ducking_enabled ? '#b88ad9' : '#444', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 2 }}>
+                      <input type="checkbox" checked={!!track.ducking_enabled}
+                        onChange={(e) => timelineApi.updateTrack(bookId!, track.id, { ducking_enabled: e.target.checked ? 1 : 0 }).then(() => { skipSnap.current = true; loadTracks(); })}
+                        style={{ width: 10, height: 10 }} />
+                      Duck
+                    </label>
+                    {!!track.ducking_enabled && (
+                      <>
+                        <input type="range" min={-24} max={0} step={1}
+                          value={track.duck_amount_db ?? -12}
+                          onChange={(e) => timelineApi.updateTrack(bookId!, track.id, { duck_amount_db: parseFloat(e.target.value) }).then(() => { skipSnap.current = true; loadTracks(); })}
+                          style={{ ...S.trackSlider, flex: 1 }}
+                          title={`Duck: ${track.duck_amount_db ?? -12}dB`}
+                          aria-label="Duck amount" />
+                        <span style={{ fontSize: 7, color: '#666', width: 24 }}>{track.duck_amount_db ?? -12}dB</span>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           ))}

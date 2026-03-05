@@ -164,14 +164,14 @@ export const timeline = {
   chapterMarkers: (bookId: string) => request<any[]>(`/books/${bookId}/chapter-markers`),
   updateChapterMarkers: (bookId: string, markers: any[]) =>
     request<void>(`/books/${bookId}/chapter-markers`, { method: 'PUT', body: JSON.stringify({ markers }) }),
-  populate: (bookId: string, chapterIds?: string[]) =>
+  populate: (bookId: string, chapterIds?: string[], gapMs?: number, chapterGapMs?: number) =>
     request<{ tracks: any[]; clips_created: number; markers_created: number; total_duration_ms: number }>(
-      `/books/${bookId}/populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }) }),
-  generateAndPopulate: (bookId: string, chapterIds?: string[]) =>
+      `/books/${bookId}/populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds, gap_ms: gapMs, chapter_gap_ms: chapterGapMs }) }),
+  generateAndPopulate: (bookId: string, chapterIds?: string[], gapMs?: number, chapterGapMs?: number) =>
     request<{
       tts: { generated: number; cached: number; skipped: number; failed: number; errors: string[] };
       timeline: { clips_created: number; markers_created: number; total_duration_ms: number };
-    }>(`/books/${bookId}/generate-and-populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }) }),
+    }>(`/books/${bookId}/generate-and-populate`, { method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds, gap_ms: gapMs, chapter_gap_ms: chapterGapMs }) }),
   sendSegment: (bookId: string, segmentId: string) =>
     request<{ clip_id: string; position_ms: number; duration_ms?: number; updated: boolean }>(
       `/books/${bookId}/send-segment-to-timeline`, { method: 'POST', body: JSON.stringify({ segment_id: segmentId }) }),
@@ -224,6 +224,10 @@ export const audioAssets = {
     request<any>(`/audio/${assetId}`, { method: 'PUT', body: JSON.stringify({ name }) }),
   delete: (assetId: string) =>
     request<void>(`/audio/${assetId}`, { method: 'DELETE' }),
+  generateSilence: (bookId: string, durationMs: number) =>
+    request<{ audio_asset_id: string; duration_ms: number; name: string }>('/audio/silence', {
+      method: 'POST', body: JSON.stringify({ book_id: bookId, duration_ms: durationMs }),
+    }),
 };
 
 // ── Settings ──

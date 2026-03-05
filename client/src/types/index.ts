@@ -10,6 +10,11 @@ export interface Book {
   default_model: string;
   project_type: 'audiobook' | 'podcast';
   format: string;
+  default_gap_ms: number;
+  chapter_gap_ms: number;
+  default_speed: number;
+  intro_asset_id: string | null;
+  outro_asset_id: string | null;
   created_at: string;
   updated_at: string;
   chapters?: Chapter[];
@@ -80,6 +85,10 @@ export interface Track {
   solo: number;
   locked: number;
   color: string;
+  duck_amount_db: number;
+  duck_attack_ms: number;
+  duck_release_ms: number;
+  ducking_enabled: number;
   clips: Clip[];
 }
 

@@ -38,7 +38,8 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   });
 
   router.put('/tracks/:trackId', (req: Request, res: Response) => {
-    const fields = ['name', 'gain', 'pan', 'muted', 'solo', 'locked', 'color', 'sort_order'];
+    const fields = ['name', 'gain', 'pan', 'muted', 'solo', 'locked', 'color', 'sort_order',
+                    'duck_amount_db', 'duck_attack_ms', 'duck_release_ms', 'ducking_enabled'];
     const updates: string[] = [];
     const values: any[] = [];
     for (const field of fields) {
@@ -108,7 +109,12 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   router.post('/populate', (req: Request, res: Response) => {
     try {
       const bookId = req.params.bookId;
-      const { chapter_ids } = req.body; // optional: specific chapters, or all if omitted
+      const { chapter_ids, gap_ms, chapter_gap_ms: reqChapterGapMs } = req.body;
+
+      // Get book-level pacing defaults
+      const book = queryOne(db, 'SELECT default_gap_ms, chapter_gap_ms, default_speed FROM books WHERE id = ?', [bookId]);
+      const gapBetweenSegmentsMs = gap_ms ?? book?.default_gap_ms ?? 300;
+      const gapBetweenChaptersMs = reqChapterGapMs ?? book?.chapter_gap_ms ?? 2000;
 
       // Get chapters
       let chapters;
@@ -128,8 +134,6 @@ export function timelineRouter(db: SqlJsDatabase): Router {
       }
 
       let currentPositionMs = 0;
-      const gapBetweenSegmentsMs = 300; // 300ms gap between segments
-      const gapBetweenChaptersMs = 2000; // 2s gap between chapters
       const clipsCreated: any[] = [];
       const markersCreated: any[] = [];
 
@@ -208,7 +212,12 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   router.post('/generate-and-populate', async (req: Request, res: Response) => {
     try {
       const bookId = req.params.bookId;
-      const { chapter_ids } = req.body;
+      const { chapter_ids, gap_ms, chapter_gap_ms: reqChapterGapMs } = req.body;
+
+      // Get book-level pacing defaults
+      const book = queryOne(db, 'SELECT default_gap_ms, chapter_gap_ms, default_speed FROM books WHERE id = ?', [bookId]);
+      const gapBetweenSegmentsMs = gap_ms ?? book?.default_gap_ms ?? 300;
+      const gapBetweenChaptersMs = reqChapterGapMs ?? book?.chapter_gap_ms ?? 2000;
 
       // 1. Get chapters
       let chapters;
@@ -254,8 +263,6 @@ export function timelineRouter(db: SqlJsDatabase): Router {
       }
 
       let currentPositionMs = 0;
-      const gapBetweenSegmentsMs = 300;
-      const gapBetweenChaptersMs = 2000;
       let clipsCreated = 0;
       let markersCreated = 0;
 

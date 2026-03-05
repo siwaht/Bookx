@@ -8,12 +8,13 @@ import {
   timeline as timelineApi,
   aiParse,
   audioUrl,
+  books as booksApi,
 } from '../services/api';
 import type { Chapter, Segment, Character } from '../types';
 import {
   Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen,
   Scissors, Users, Volume2, Wand2, Loader, Edit3, Copy, ChevronUp,
-  ChevronDown, Check, X, Tag, MoreVertical, Send,
+  ChevronDown, Check, X, Tag, MoreVertical, Send, Settings, Gauge,
 } from 'lucide-react';
 
 // V3 audio tags for quick insertion
@@ -22,6 +23,18 @@ const V3_TAGS = [
   { cat: 'Voice', tags: ['whisper','shout','gasp','sigh','laugh','sob','chuckle','growl','murmur'] },
   { cat: 'Style', tags: ['conversational','formal','theatrical','breathy','commanding','gentle','intimate','warm'] },
   { cat: 'Narrative', tags: ['storytelling tone','dramatic pause','suspense build-up','inner monologue','flashback tone'] },
+];
+
+// Emotional/mood presets that combine V3 tags + pacing
+const MOOD_PRESETS = [
+  { name: 'Calm Narration', tags: ['storytelling tone', 'warm', 'gentle'], speed: 0.95, gap: 400, desc: 'Relaxed, warm storytelling' },
+  { name: 'Tense Suspense', tags: ['suspense build-up', 'anxious', 'dramatic pause'], speed: 0.85, gap: 600, desc: 'Slow, tension-building' },
+  { name: 'Excited Action', tags: ['excited', 'fast'], speed: 1.15, gap: 200, desc: 'Fast-paced, energetic' },
+  { name: 'Intimate Whisper', tags: ['whisper', 'intimate', 'gentle'], speed: 0.9, gap: 500, desc: 'Soft, close, personal' },
+  { name: 'Dramatic Reading', tags: ['theatrical', 'dramatic', 'commanding'], speed: 0.9, gap: 500, desc: 'Bold, theatrical delivery' },
+  { name: 'Cheerful Podcast', tags: ['happy', 'conversational', 'confident'], speed: 1.05, gap: 300, desc: 'Upbeat, conversational' },
+  { name: 'Sad & Reflective', tags: ['sad', 'melancholic', 'tender'], speed: 0.85, gap: 600, desc: 'Slow, emotional, reflective' },
+  { name: 'Mystery Noir', tags: ['mysterious', 'inner monologue', 'breathy'], speed: 0.9, gap: 500, desc: 'Dark, moody narration' },
 ];
 
 interface ChapterStats {
@@ -73,6 +86,12 @@ export function ManuscriptPage() {
   // V3 tag panel
   const [showTagPanel, setShowTagPanel] = useState(false);
 
+  // Pacing & mood controls
+  const [showPacingPanel, setShowPacingPanel] = useState(false);
+  const [segmentGapMs, setSegmentGapMs] = useState(300);
+  const [chapterGapMs, setChapterGapMs] = useState(2000);
+  const [showMoodPresets, setShowMoodPresets] = useState(false);
+
   // Split mode
   const [splitMode, setSplitMode] = useState(false);
   const [splitPos, setSplitPos] = useState<number | null>(null);
@@ -113,6 +132,15 @@ export function ManuscriptPage() {
 
   useEffect(() => { loadChapters(); loadCharacters(); }, [loadChapters, loadCharacters]);
   useEffect(() => { if (selectedChapterId) loadSegments(selectedChapterId); }, [selectedChapterId, loadSegments]);
+
+  // Load book pacing settings
+  useEffect(() => {
+    if (!bookId) return;
+    booksApi.get(bookId).then((book) => {
+      if (book.default_gap_ms != null) setSegmentGapMs(book.default_gap_ms);
+      if (book.chapter_gap_ms != null) setChapterGapMs(book.chapter_gap_ms);
+    }).catch(() => {});
+  }, [bookId]);
 
   // ── Audio Playback ──
   const togglePlay = (segId: string, assetId: string) => {
@@ -251,6 +279,20 @@ export function ManuscriptPage() {
     finally { setAiTagging(false); }
   };
 
+  // ── Mood Preset Application ──
+  const applyMoodPreset = (preset: typeof MOOD_PRESETS[0]) => {
+    if (!selectedChapter) return;
+    const text = selectedChapter.cleaned_text || selectedChapter.raw_text;
+    // Prepend mood tags to the beginning of the text
+    const tagStr = preset.tags.map(t => `[${t}]`).join(' ');
+    const alreadyHasTags = text.startsWith('[');
+    const newText = alreadyHasTags ? tagStr + ' ' + text.replace(/^(\[[^\]]+\]\s*)+/, '') : tagStr + ' ' + text;
+    handleChapterTextChange(newText);
+    // Update pacing
+    setSegmentGapMs(preset.gap);
+    alert(`Applied "${preset.name}" mood: ${preset.tags.map(t => `[${t}]`).join(' ')}\nGap: ${preset.gap}ms`);
+  };
+
   // ── Segment Actions ──
 
   const handleAutoSegment = async () => {
@@ -353,7 +395,9 @@ export function ManuscriptPage() {
     if (populateTimerRef.current) clearInterval(populateTimerRef.current);
     populateTimerRef.current = setInterval(() => setPopulateElapsed((e) => e + 1), 1000);
     try {
-      const result = await timelineApi.generateAndPopulate(bookId);
+      // Save pacing settings to book first
+      await booksApi.update(bookId, { default_gap_ms: segmentGapMs, chapter_gap_ms: chapterGapMs });
+      const result = await timelineApi.generateAndPopulate(bookId, undefined, segmentGapMs, chapterGapMs);
       const { tts, timeline: tl } = result;
       let msg = `TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} already had audio`;
       if (tts.failed > 0) msg += `, ${tts.failed} failed`;
@@ -372,7 +416,7 @@ export function ManuscriptPage() {
   const handleSendChapterToTimeline = async (chapterId: string) => {
     if (!bookId) return;
     try {
-      const result = await timelineApi.generateAndPopulate(bookId, [chapterId]);
+      const result = await timelineApi.generateAndPopulate(bookId, [chapterId], segmentGapMs, chapterGapMs);
       const { tts, timeline: tl } = result;
       let msg = `TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} skipped`;
       if (tts.failed > 0) msg += `, ${tts.failed} failed`;
@@ -588,6 +632,16 @@ export function ManuscriptPage() {
                       title="Toggle V3 audio tags panel">
                       <Tag size={12} /> V3 Tags
                     </button>
+                    <button onClick={() => setShowMoodPresets(!showMoodPresets)}
+                      style={{ ...styles.smallBtn, background: showMoodPresets ? '#1a2a3a' : '#333', color: showMoodPresets ? '#4A90D9' : '#aaa' }}
+                      title="Emotional/mood presets">
+                      <Wand2 size={12} /> Moods
+                    </button>
+                    <button onClick={() => setShowPacingPanel(!showPacingPanel)}
+                      style={{ ...styles.smallBtn, background: showPacingPanel ? '#1a2a1a' : '#333', color: showPacingPanel ? '#8f8' : '#aaa' }}
+                      title="Pacing & gap settings">
+                      <Gauge size={12} /> Pacing
+                    </button>
                     <button onClick={handleAiSuggestTags} disabled={aiTagging || !chapterText.trim()}
                       style={{ ...styles.smallBtn, background: '#2a1a3a', color: '#b88ad9' }}
                       title="AI will suggest and insert V3 tags into the text">
@@ -611,6 +665,68 @@ export function ManuscriptPage() {
                     ))}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {/* Mood Presets Panel */}
+            {showMoodPresets && (
+              <div style={{ ...styles.tagPanel, background: '#0f1520' }}>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {MOOD_PRESETS.map((preset) => (
+                    <button key={preset.name} onClick={() => applyMoodPreset(preset)}
+                      style={{ padding: '6px 12px', background: '#1a2a3a', color: '#4A90D9', border: '1px solid #2a3a5a', borderRadius: 8, cursor: 'pointer', fontSize: 11, textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 2, minWidth: 140 }}
+                      title={`${preset.desc}\nTags: ${preset.tags.map(t => `[${t}]`).join(' ')}\nGap: ${preset.gap}ms`}>
+                      <span style={{ fontWeight: 600 }}>{preset.name}</span>
+                      <span style={{ fontSize: 9, color: '#668' }}>{preset.desc}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Pacing Settings Panel */}
+            {showPacingPanel && (
+              <div style={{ ...styles.tagPanel, background: '#0f1a0f', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
+                    <label style={{ fontSize: 10, color: '#8f8', fontWeight: 600 }}>Segment Gap</label>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <input type="range" min={0} max={3000} step={100} value={segmentGapMs}
+                        onChange={(e) => setSegmentGapMs(parseInt(e.target.value))}
+                        style={{ width: 120, accentColor: '#4A90D9' }} aria-label="Segment gap" />
+                      <span style={{ fontSize: 11, color: '#aaa', minWidth: 50 }}>{segmentGapMs}ms</span>
+                    </div>
+                    <span style={{ fontSize: 9, color: '#555' }}>Silence between segments on timeline</span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
+                    <label style={{ fontSize: 10, color: '#8f8', fontWeight: 600 }}>Chapter Gap</label>
+                    <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                      <input type="range" min={500} max={10000} step={500} value={chapterGapMs}
+                        onChange={(e) => setChapterGapMs(parseInt(e.target.value))}
+                        style={{ width: 120, accentColor: '#4A90D9' }} aria-label="Chapter gap" />
+                      <span style={{ fontSize: 11, color: '#aaa', minWidth: 50 }}>{chapterGapMs >= 1000 ? `${(chapterGapMs / 1000).toFixed(1)}s` : `${chapterGapMs}ms`}</span>
+                    </div>
+                    <span style={{ fontSize: 9, color: '#555' }}>Silence between chapters on timeline</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                    <button onClick={() => { setSegmentGapMs(200); setChapterGapMs(1000); }}
+                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      Fast Pace
+                    </button>
+                    <button onClick={() => { setSegmentGapMs(300); setChapterGapMs(2000); }}
+                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      Normal
+                    </button>
+                    <button onClick={() => { setSegmentGapMs(600); setChapterGapMs(3000); }}
+                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      Slow & Dramatic
+                    </button>
+                    <button onClick={() => { setSegmentGapMs(150); setChapterGapMs(1500); }}
+                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      Podcast
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 

@@ -38,6 +38,17 @@ const MUSIC_PRESETS = [
   'Ethereal choir pad, spiritual and vast',
 ];
 
+const INTRO_OUTRO_PRESETS = [
+  { label: 'Audiobook Intro', prompt: 'Gentle orchestral intro, warm strings building slowly, cinematic and inviting, 10 seconds', duration: 10, type: 'intro' as const },
+  { label: 'Audiobook Outro', prompt: 'Soft piano outro, reflective and peaceful, fading gently, 8 seconds', duration: 8, type: 'outro' as const },
+  { label: 'Chapter Intro', prompt: 'Brief musical transition, soft harp and strings, 4 seconds', duration: 4, type: 'intro' as const },
+  { label: 'Chapter Outro', prompt: 'Gentle fade-out transition, ambient pad, 3 seconds', duration: 3, type: 'outro' as const },
+  { label: 'Podcast Intro', prompt: 'Upbeat modern podcast intro, electronic beats with synth melody, energetic and catchy, 8 seconds', duration: 8, type: 'intro' as const },
+  { label: 'Podcast Outro', prompt: 'Chill podcast outro, lo-fi beats fading out, relaxed and smooth, 6 seconds', duration: 6, type: 'outro' as const },
+  { label: 'Dramatic Sting', prompt: 'Short dramatic orchestral sting, tension and impact, 3 seconds', duration: 3, type: 'intro' as const },
+  { label: 'Ambient Bed', prompt: 'Soft ambient background music, gentle pads and subtle texture, loopable, calm and unobtrusive', duration: 60, type: 'intro' as const },
+];
+
 const V3_TAG_CATEGORIES = [
   {
     name: 'Emotions',
@@ -74,7 +85,7 @@ const V3_TAG_CATEGORIES = [
 export function AudioStudioPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const capabilities = useAppStore((s) => s.capabilities);
-  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'v3tags' | 'import' | 'library'>('sfx');
+  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'intro_outro' | 'v3tags' | 'import' | 'library'>('sfx');
 
   // Library state
   const [libraryAssets, setLibraryAssets] = useState<any[]>([]);
@@ -134,6 +145,7 @@ export function AudioStudioPage() {
   // Generated assets
   const [generated, setGenerated] = useState<GeneratedAsset[]>([]);
   const [placingId, setPlacingId] = useState<string | null>(null);
+  const [introOutroGenerating, setIntroOutroGenerating] = useState<string | null>(null);
 
   const handleGenerateSFX = async () => {
     if (!sfxPrompt.trim()) return;
@@ -205,6 +217,60 @@ export function AudioStudioPage() {
     finally { setPlacingId(null); }
   };
 
+  const handleGenerateIntroOutro = async (preset: typeof INTRO_OUTRO_PRESETS[0]) => {
+    if (!bookId) return;
+    setIntroOutroGenerating(preset.label);
+    try {
+      const result = await elevenlabs.music({
+        prompt: preset.prompt,
+        music_length_ms: preset.duration * 1000,
+        force_instrumental: true,
+        book_id: bookId,
+      });
+      setGenerated((prev) => [{
+        id: Date.now().toString(),
+        type: 'music',
+        prompt: `${preset.label}: ${preset.prompt}`,
+        audio_asset_id: result.audio_asset_id,
+        cached: result.cached,
+      }, ...prev]);
+
+      // Auto-place: intro at position 0, outro at end of timeline
+      const tracks = await timelineApi.tracks(bookId);
+      let musicTrack = tracks.find((t: any) => t.type === 'music');
+      if (!musicTrack) {
+        musicTrack = await timelineApi.createTrack(bookId, { name: 'Music', type: 'music' });
+      }
+      if (musicTrack) {
+        if (preset.type === 'intro') {
+          await timelineApi.createClip(bookId, musicTrack.id, {
+            audio_asset_id: result.audio_asset_id,
+            position_ms: 0,
+            notes: preset.label,
+            fade_in_ms: 500,
+            fade_out_ms: 1000,
+          });
+          alert(`${preset.label} placed at the start of the timeline.`);
+        } else {
+          // Find the end of all content
+          const allClips = tracks.flatMap((t: any) => t.clips || []);
+          const endMs = allClips.length > 0
+            ? Math.max(...allClips.map((c: any) => c.position_ms + (c.asset_duration_ms || c.trim_end_ms || 5000)))
+            : 0;
+          await timelineApi.createClip(bookId, musicTrack.id, {
+            audio_asset_id: result.audio_asset_id,
+            position_ms: Math.max(0, endMs - 1000), // overlap slightly
+            notes: preset.label,
+            fade_in_ms: 1000,
+            fade_out_ms: 500,
+          });
+          alert(`${preset.label} placed at the end of the timeline (${(endMs / 1000).toFixed(1)}s).`);
+        }
+      }
+    } catch (err: any) { alert(`Generation failed: ${err.message}`); }
+    finally { setIntroOutroGenerating(null); loadLibrary(); }
+  };
+
   const handleImportAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !bookId) return;
@@ -241,6 +307,10 @@ export function AudioStudioPage() {
           <button onClick={() => setActiveTab('music')}
             style={{ ...styles.tab, ...(activeTab === 'music' ? styles.tabActive : {}) }}>
             <Music size={14} /> Music
+          </button>
+          <button onClick={() => setActiveTab('intro_outro')}
+            style={{ ...styles.tab, ...(activeTab === 'intro_outro' ? styles.tabActive : {}) }}>
+            <Music size={14} /> Intro & Outro
           </button>
           <button onClick={() => setActiveTab('v3tags')}
             style={{ ...styles.tab, ...(activeTab === 'v3tags' ? styles.tabActive : {}) }}>
@@ -347,6 +417,68 @@ export function AudioStudioPage() {
                   <button key={i} onClick={() => setMusicPrompt(p)} style={styles.presetBtn}>{p}</button>
                 ))}
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Intro & Outro Tab ── */}
+        {activeTab === 'intro_outro' && (
+          <div style={styles.genPanel}>
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>Intro & Outro Music</label>
+              <p style={styles.hint}>
+                Generate intro/outro music for your audiobook or podcast. These are auto-placed at the start or end of your timeline.
+                Perfect for book intros, chapter transitions, podcast bumpers, and closing music.
+              </p>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <label style={{ fontSize: 12, color: '#aaa', fontWeight: 600 }}>Audiobook</label>
+              <div style={styles.presetGrid}>
+                {INTRO_OUTRO_PRESETS.filter(p => !p.label.includes('Podcast') && !p.label.includes('Dramatic') && !p.label.includes('Ambient')).map((preset) => (
+                  <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
+                    disabled={introOutroGenerating !== null}
+                    style={{ ...styles.presetBtn, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', minWidth: 180, opacity: introOutroGenerating === preset.label ? 0.6 : 1 }}>
+                    <span style={{ fontWeight: 600, fontSize: 11 }}>
+                      {introOutroGenerating === preset.label ? <Loader size={10} /> : preset.type === 'intro' ? '▶' : '⏹'} {preset.label}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#666' }}>{preset.duration}s · {preset.type}</span>
+                  </button>
+                ))}
+              </div>
+
+              <label style={{ fontSize: 12, color: '#aaa', fontWeight: 600, marginTop: 8 }}>Podcast</label>
+              <div style={styles.presetGrid}>
+                {INTRO_OUTRO_PRESETS.filter(p => p.label.includes('Podcast')).map((preset) => (
+                  <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
+                    disabled={introOutroGenerating !== null}
+                    style={{ ...styles.presetBtn, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', minWidth: 180, opacity: introOutroGenerating === preset.label ? 0.6 : 1 }}>
+                    <span style={{ fontWeight: 600, fontSize: 11 }}>
+                      {introOutroGenerating === preset.label ? <Loader size={10} /> : preset.type === 'intro' ? '▶' : '⏹'} {preset.label}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#666' }}>{preset.duration}s · {preset.type}</span>
+                  </button>
+                ))}
+              </div>
+
+              <label style={{ fontSize: 12, color: '#aaa', fontWeight: 600, marginTop: 8 }}>Special</label>
+              <div style={styles.presetGrid}>
+                {INTRO_OUTRO_PRESETS.filter(p => p.label.includes('Dramatic') || p.label.includes('Ambient')).map((preset) => (
+                  <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
+                    disabled={introOutroGenerating !== null}
+                    style={{ ...styles.presetBtn, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', minWidth: 180, opacity: introOutroGenerating === preset.label ? 0.6 : 1 }}>
+                    <span style={{ fontWeight: 600, fontSize: 11 }}>
+                      {introOutroGenerating === preset.label ? <Loader size={10} /> : '🎵'} {preset.label}
+                    </span>
+                    <span style={{ fontSize: 9, color: '#666' }}>{preset.duration}s</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div style={styles.section}>
+              <label style={styles.sectionLabel}>Custom Intro/Outro</label>
+              <p style={styles.hint}>Use the Music tab to generate custom music, then place it on the timeline manually.</p>
             </div>
           </div>
         )}
