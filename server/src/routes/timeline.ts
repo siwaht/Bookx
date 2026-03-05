@@ -12,97 +12,136 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   const router = Router({ mergeParams: true });
 
   router.get('/tracks', (req: Request, res: Response) => {
-    const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
-    const tracksWithClips = tracks.map((track: any) => {
-      const clips = queryAll(db,
-        `SELECT c.*, s.text as segment_text, ch.name as character_name, a.duration_ms as asset_duration_ms
-         FROM clips c
-         LEFT JOIN segments s ON c.segment_id = s.id
-         LEFT JOIN characters ch ON s.character_id = ch.id
-         LEFT JOIN audio_assets a ON c.audio_asset_id = a.id
-         WHERE c.track_id = ? ORDER BY c.position_ms`,
-        [track.id]);
-      return { ...track, clips };
-    });
-    res.json(tracksWithClips);
+    try {
+      const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
+      const tracksWithClips = tracks.map((track: any) => {
+        const clips = queryAll(db,
+          `SELECT c.*, s.text as segment_text, ch.name as character_name, a.duration_ms as asset_duration_ms
+           FROM clips c
+           LEFT JOIN segments s ON c.segment_id = s.id
+           LEFT JOIN characters ch ON s.character_id = ch.id
+           LEFT JOIN audio_assets a ON c.audio_asset_id = a.id
+           WHERE c.track_id = ? ORDER BY c.position_ms`,
+          [track.id]);
+        return { ...track, clips };
+      });
+      res.json(tracksWithClips);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list tracks' });
+    }
   });
 
   router.post('/tracks', (req: Request, res: Response) => {
-    const id = uuid();
-    const { name, type, color } = req.body;
-    const maxOrder = queryOne(db, 'SELECT MAX(sort_order) as max_order FROM tracks WHERE book_id = ?', [req.params.bookId]);
-    run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, ?, ?, ?, ?)`,
-      [id, req.params.bookId, name, type, (maxOrder?.max_order ?? -1) + 1, color || '#4A90D9']);
-    const track = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [id]);
-    res.status(201).json(track);
+    try {
+      const id = uuid();
+      const { name, type, color } = req.body;
+      if (!name || typeof name !== 'string') { res.status(400).json({ error: 'name is required' }); return; }
+      const maxOrder = queryOne(db, 'SELECT MAX(sort_order) as max_order FROM tracks WHERE book_id = ?', [req.params.bookId]);
+      run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, ?, ?, ?, ?)`,
+        [id, req.params.bookId, name, type, (maxOrder?.max_order ?? -1) + 1, color || '#4A90D9']);
+      const track = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [id]);
+      res.status(201).json(track);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create track' });
+    }
   });
 
   router.put('/tracks/:trackId', (req: Request, res: Response) => {
-    const fields = ['name', 'gain', 'pan', 'muted', 'solo', 'locked', 'color', 'sort_order',
-                    'duck_amount_db', 'duck_attack_ms', 'duck_release_ms', 'ducking_enabled'];
-    const updates: string[] = [];
-    const values: any[] = [];
-    for (const field of fields) {
-      if (req.body[field] !== undefined) { updates.push(`${field} = ?`); values.push(req.body[field]); }
+    try {
+      const fields = ['name', 'gain', 'pan', 'muted', 'solo', 'locked', 'color', 'sort_order',
+                      'duck_amount_db', 'duck_attack_ms', 'duck_release_ms', 'ducking_enabled'];
+      const updates: string[] = [];
+      const values: any[] = [];
+      for (const field of fields) {
+        if (req.body[field] !== undefined) { updates.push(`${field} = ?`); values.push(req.body[field]); }
+      }
+      if (updates.length > 0) {
+        values.push(req.params.trackId);
+        run(db, `UPDATE tracks SET ${updates.join(', ')} WHERE id = ?`, values);
+      }
+      const track = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [req.params.trackId]);
+      res.json(track);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update track' });
     }
-    if (updates.length > 0) {
-      values.push(req.params.trackId);
-      run(db, `UPDATE tracks SET ${updates.join(', ')} WHERE id = ?`, values);
-    }
-    const track = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [req.params.trackId]);
-    res.json(track);
   });
 
   router.delete('/tracks/:trackId', (req: Request, res: Response) => {
-    run(db, 'DELETE FROM tracks WHERE id = ?', [req.params.trackId]);
-    res.status(204).send();
+    try {
+      run(db, 'DELETE FROM tracks WHERE id = ?', [req.params.trackId]);
+      res.status(204).send();
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to delete track' });
+    }
   });
 
   router.post('/tracks/:trackId/clips', (req: Request, res: Response) => {
-    const id = uuid();
-    const { audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, speed, fade_in_ms, fade_out_ms, notes } = req.body;
-    run(db,
-      `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, speed, fade_in_ms, fade_out_ms, notes)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, req.params.trackId, audio_asset_id, segment_id || null, position_ms ?? 0, trim_start_ms ?? 0, trim_end_ms ?? 0, gain ?? 0.0, speed ?? 1.0, fade_in_ms ?? 0, fade_out_ms ?? 0, notes || null]);
-    const clip = queryOne(db, 'SELECT * FROM clips WHERE id = ?', [id]);
-    res.status(201).json(clip);
+    try {
+      const id = uuid();
+      const { audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, speed, fade_in_ms, fade_out_ms, notes } = req.body;
+      if (!audio_asset_id) { res.status(400).json({ error: 'audio_asset_id is required' }); return; }
+      run(db,
+        `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms, trim_start_ms, trim_end_ms, gain, speed, fade_in_ms, fade_out_ms, notes)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, req.params.trackId, audio_asset_id, segment_id || null, position_ms ?? 0, trim_start_ms ?? 0, trim_end_ms ?? 0, gain ?? 0.0, speed ?? 1.0, fade_in_ms ?? 0, fade_out_ms ?? 0, notes || null]);
+      const clip = queryOne(db, 'SELECT * FROM clips WHERE id = ?', [id]);
+      res.status(201).json(clip);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create clip' });
+    }
   });
 
   router.put('/clips/:clipId', (req: Request, res: Response) => {
-    const fields = ['position_ms', 'trim_start_ms', 'trim_end_ms', 'gain', 'speed', 'fade_in_ms', 'fade_out_ms', 'notes', 'audio_asset_id'];
-    const updates: string[] = [];
-    const values: any[] = [];
-    for (const field of fields) {
-      if (req.body[field] !== undefined) { updates.push(`${field} = ?`); values.push(req.body[field]); }
+    try {
+      const fields = ['position_ms', 'trim_start_ms', 'trim_end_ms', 'gain', 'speed', 'fade_in_ms', 'fade_out_ms', 'notes', 'audio_asset_id'];
+      const updates: string[] = [];
+      const values: any[] = [];
+      for (const field of fields) {
+        if (req.body[field] !== undefined) { updates.push(`${field} = ?`); values.push(req.body[field]); }
+      }
+      if (updates.length > 0) {
+        updates.push("updated_at = datetime('now')");
+        values.push(req.params.clipId);
+        run(db, `UPDATE clips SET ${updates.join(', ')} WHERE id = ?`, values);
+      }
+      const clip = queryOne(db, 'SELECT * FROM clips WHERE id = ?', [req.params.clipId]);
+      res.json(clip);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update clip' });
     }
-    if (updates.length > 0) {
-      updates.push("updated_at = datetime('now')");
-      values.push(req.params.clipId);
-      run(db, `UPDATE clips SET ${updates.join(', ')} WHERE id = ?`, values);
-    }
-    const clip = queryOne(db, 'SELECT * FROM clips WHERE id = ?', [req.params.clipId]);
-    res.json(clip);
   });
 
   router.delete('/clips/:clipId', (req: Request, res: Response) => {
-    run(db, 'DELETE FROM clips WHERE id = ?', [req.params.clipId]);
-    res.status(204).send();
+    try {
+      run(db, 'DELETE FROM clips WHERE id = ?', [req.params.clipId]);
+      res.status(204).send();
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to delete clip' });
+    }
   });
 
   router.get('/chapter-markers', (req: Request, res: Response) => {
-    const markers = queryAll(db, 'SELECT * FROM chapter_markers WHERE book_id = ? ORDER BY position_ms', [req.params.bookId]);
-    res.json(markers);
+    try {
+      const markers = queryAll(db, 'SELECT * FROM chapter_markers WHERE book_id = ? ORDER BY position_ms', [req.params.bookId]);
+      res.json(markers);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list chapter markers' });
+    }
   });
 
   router.put('/chapter-markers', (req: Request, res: Response) => {
-    const { markers } = req.body;
-    run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [req.params.bookId]);
-    for (const m of markers) {
-      run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
-        [uuid(), req.params.bookId, m.chapter_id || null, m.position_ms, m.label]);
+    try {
+      const { markers } = req.body;
+      if (!Array.isArray(markers)) { res.status(400).json({ error: 'markers must be an array' }); return; }
+      run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [req.params.bookId]);
+      for (const m of markers) {
+        run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
+          [uuid(), req.params.bookId, m.chapter_id || null, m.position_ms, m.label]);
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update chapter markers' });
     }
-    res.json({ ok: true });
   });
 
   // Auto-populate timeline from generated segments
@@ -194,18 +233,27 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   });
 
   router.get('/tracks/:trackId/automation', (req: Request, res: Response) => {
-    const points = queryAll(db, 'SELECT * FROM automation_points WHERE track_id = ? ORDER BY time_ms', [req.params.trackId]);
-    res.json(points);
+    try {
+      const points = queryAll(db, 'SELECT * FROM automation_points WHERE track_id = ? ORDER BY time_ms', [req.params.trackId]);
+      res.json(points);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list automation points' });
+    }
   });
 
   router.put('/tracks/:trackId/automation', (req: Request, res: Response) => {
-    const { points } = req.body;
-    run(db, 'DELETE FROM automation_points WHERE track_id = ?', [req.params.trackId]);
-    for (const p of points) {
-      run(db, 'INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, ?, ?)',
-        [uuid(), req.params.trackId, p.time_ms, p.value, p.curve || 'linear']);
+    try {
+      const { points } = req.body;
+      if (!Array.isArray(points)) { res.status(400).json({ error: 'points must be an array' }); return; }
+      run(db, 'DELETE FROM automation_points WHERE track_id = ?', [req.params.trackId]);
+      for (const p of points) {
+        run(db, 'INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, ?, ?)',
+          [uuid(), req.params.trackId, p.time_ms, p.value, p.curve || 'linear']);
+      }
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update automation points' });
     }
-    res.json({ ok: true });
   });
 
   // ── Generate TTS + Populate Timeline (combined two-step) ──

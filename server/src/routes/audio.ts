@@ -11,71 +11,95 @@ export function audioRouter(db: SqlJsDatabase): Router {
   const router = Router();
 
   router.get('/:assetId', (req: Request, res: Response) => {
-    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
-    if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+    try {
+      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
+      if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
 
-    const ext = path.extname(asset.file_path).toLowerCase();
-    const mimeTypes: Record<string, string> = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac' };
-    res.setHeader('Content-Type', mimeTypes[ext] || 'audio/mpeg');
-    res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
-    res.setHeader('Accept-Ranges', 'bytes');
-    fs.createReadStream(asset.file_path).pipe(res);
+      const ext = path.extname(asset.file_path).toLowerCase();
+      const mimeTypes: Record<string, string> = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac' };
+      res.setHeader('Content-Type', mimeTypes[ext] || 'audio/mpeg');
+      res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
+      res.setHeader('Accept-Ranges', 'bytes');
+      fs.createReadStream(asset.file_path).pipe(res);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to stream audio' });
+    }
   });
 
   router.get('/book/:bookId', (req: Request, res: Response) => {
-    const assets = queryAll(db, 'SELECT * FROM audio_assets WHERE book_id = ? ORDER BY created_at DESC', [req.params.bookId]);
-    res.json(assets);
+    try {
+      const assets = queryAll(db, 'SELECT * FROM audio_assets WHERE book_id = ? ORDER BY created_at DESC', [req.params.bookId]);
+      res.json(assets);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list audio assets' });
+    }
   });
 
   // List SFX and music assets for a book (for the library)
   router.get('/book/:bookId/library', (req: Request, res: Response) => {
-    const assets = queryAll(db,
-      `SELECT * FROM audio_assets WHERE book_id = ? AND type IN ('sfx', 'music', 'imported') ORDER BY created_at DESC`,
-      [req.params.bookId]);
-    res.json(assets);
+    try {
+      const assets = queryAll(db,
+        `SELECT * FROM audio_assets WHERE book_id = ? AND type IN ('sfx', 'music', 'imported') ORDER BY created_at DESC`,
+        [req.params.bookId]);
+      res.json(assets);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list audio library' });
+    }
   });
 
   // Download an audio asset as a file
   router.get('/:assetId/download', (req: Request, res: Response) => {
-    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
-    if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+    try {
+      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
+      if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
 
-    const ext = path.extname(asset.file_path).toLowerCase();
-    const name = asset.name || asset.id;
-    const safeName = name.replace(/[^a-zA-Z0-9_\-\s]/g, '').slice(0, 60) || 'audio';
-    res.setHeader('Content-Disposition', `attachment; filename="${safeName}${ext}"`);
-    res.setHeader('Content-Type', ext === '.wav' ? 'audio/wav' : 'audio/mpeg');
-    res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
-    fs.createReadStream(asset.file_path).pipe(res);
+      const ext = path.extname(asset.file_path).toLowerCase();
+      const name = asset.name || asset.id;
+      const safeName = name.replace(/[^a-zA-Z0-9_\-\s]/g, '').slice(0, 60) || 'audio';
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}${ext}"`);
+      res.setHeader('Content-Type', ext === '.wav' ? 'audio/wav' : 'audio/mpeg');
+      res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
+      fs.createReadStream(asset.file_path).pipe(res);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to download audio' });
+    }
   });
 
   // Rename an audio asset
   router.put('/:assetId', (req: Request, res: Response) => {
-    const { name } = req.body;
-    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
-    if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
-    if (name !== undefined) {
-      run(db, 'UPDATE audio_assets SET name = ? WHERE id = ?', [name, req.params.assetId]);
+    try {
+      const { name } = req.body;
+      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
+      if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+      if (name !== undefined) {
+        if (typeof name !== 'string' || name.length > 200) {
+          res.status(400).json({ error: 'Name must be a string under 200 characters' });
+          return;
+        }
+        run(db, 'UPDATE audio_assets SET name = ? WHERE id = ?', [name, req.params.assetId]);
+      }
+      const updated = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
+      res.json(updated);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update audio asset' });
     }
-    const updated = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
-    res.json(updated);
   });
 
   // Delete an audio asset
   router.delete('/:assetId', (req: Request, res: Response) => {
-    const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
-    if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
-    // Remove file from disk
-    if (asset.file_path && fs.existsSync(asset.file_path)) {
-      try { fs.unlinkSync(asset.file_path); } catch {}
+    try {
+      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
+      if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+      if (asset.file_path && fs.existsSync(asset.file_path)) {
+        try { fs.unlinkSync(asset.file_path); } catch {}
+      }
+      run(db, 'DELETE FROM clips WHERE audio_asset_id = ?', [req.params.assetId]);
+      run(db, 'UPDATE segments SET audio_asset_id = NULL WHERE audio_asset_id = ?', [req.params.assetId]);
+      run(db, 'DELETE FROM audio_assets WHERE id = ?', [req.params.assetId]);
+      res.status(204).send();
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to delete audio asset' });
     }
-    // Remove any clips referencing this asset
-    run(db, 'DELETE FROM clips WHERE audio_asset_id = ?', [req.params.assetId]);
-    // Clear segment references
-    run(db, 'UPDATE segments SET audio_asset_id = NULL WHERE audio_asset_id = ?', [req.params.assetId]);
-    // Delete the asset record
-    run(db, 'DELETE FROM audio_assets WHERE id = ?', [req.params.assetId]);
-    res.status(204).send();
   });
 
   // Generate a silence audio asset (for pause insertion)

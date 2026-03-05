@@ -1,15 +1,40 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
+client/dist/
+server/dist/
+
+# Data & media
 data/
-.env
+server/data/
 *.sqlite
 *.sqlite3
 *.mp3
 *.wav
-client/dist/
-server/dist/
-server/data/
+*.ogg
+*.m4a
+*.flac
 
-# Local podcast generation test scripts
+# Environment
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+*.swp
+*.swo
+
+# Docker
+docker-compose.override.yml
+
+# Test scripts
 generate-podcast*.mjs
 podcast_*.mp3
+test-*.mjs

@@ -12,6 +12,7 @@
     "@modelcontextprotocol/sdk": "^1.26.0",
     "@types/jszip": "^3.4.0",
     "archiver": "^7.0.1",
+    "compression": "^1.8.1",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.1",
@@ -27,6 +28,7 @@
   },
   "devDependencies": {
     "@types/archiver": "^6.0.3",
+    "@types/compression": "^1.8.1",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/fluent-ffmpeg": "^2.1.27",

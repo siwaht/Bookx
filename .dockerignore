@@ -1,0 +1,11 @@
+node_modules
+client/node_modules
+server/node_modules
+client/dist
+server/dist
+data
+.env
+.git
+*.sqlite
+*.mp3
+*.wav

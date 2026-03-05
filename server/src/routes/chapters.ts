@@ -8,57 +8,76 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
 
   // List chapters with progress stats
   router.get('/', (req: Request, res: Response) => {
-    const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
-    const enriched = chapters.map((ch: any) => {
-      const segs = queryAll(db, 'SELECT id, character_id, audio_asset_id FROM segments WHERE chapter_id = ?', [ch.id]);
-      const totalSegs = segs.length;
-      const assigned = segs.filter((s: any) => s.character_id).length;
-      const withAudio = segs.filter((s: any) => s.audio_asset_id).length;
-      // Check if any clips exist for segments in this chapter
-      const onTimeline = totalSegs > 0 ? queryOne(db,
-        `SELECT COUNT(*) as cnt FROM clips WHERE segment_id IN (SELECT id FROM segments WHERE chapter_id = ?)`, [ch.id])?.cnt || 0 : 0;
-      return { ...ch, stats: { total_segments: totalSegs, assigned, with_audio: withAudio, on_timeline: onTimeline } };
-    });
-    res.json(enriched);
+    try {
+      const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
+      const enriched = chapters.map((ch: any) => {
+        const segs = queryAll(db, 'SELECT id, character_id, audio_asset_id FROM segments WHERE chapter_id = ?', [ch.id]);
+        const totalSegs = segs.length;
+        const assigned = segs.filter((s: any) => s.character_id).length;
+        const withAudio = segs.filter((s: any) => s.audio_asset_id).length;
+        const onTimeline = totalSegs > 0 ? queryOne(db,
+          `SELECT COUNT(*) as cnt FROM clips WHERE segment_id IN (SELECT id FROM segments WHERE chapter_id = ?)`, [ch.id])?.cnt || 0 : 0;
+        return { ...ch, stats: { total_segments: totalSegs, assigned, with_audio: withAudio, on_timeline: onTimeline } };
+      });
+      res.json(enriched);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list chapters' });
+    }
   });
 
   // Create a new chapter
   router.post('/', (req: Request, res: Response) => {
-    const { title, raw_text } = req.body;
-    const maxOrder = queryOne(db, 'SELECT MAX(sort_order) as mx FROM chapters WHERE book_id = ?', [req.params.bookId]);
-    const sortOrder = (maxOrder?.mx ?? -1) + 1;
-    const id = uuid();
-    run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text) VALUES (?, ?, ?, ?, ?)`,
-      [id, req.params.bookId, title || `Chapter ${sortOrder + 1}`, sortOrder, raw_text || '']);
-    const chapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [id]);
-    res.status(201).json(chapter);
+    try {
+      const { title, raw_text } = req.body;
+      if (title && typeof title === 'string' && title.length > 500) {
+        res.status(400).json({ error: 'Title must be under 500 characters' });
+        return;
+      }
+      const maxOrder = queryOne(db, 'SELECT MAX(sort_order) as mx FROM chapters WHERE book_id = ?', [req.params.bookId]);
+      const sortOrder = (maxOrder?.mx ?? -1) + 1;
+      const id = uuid();
+      run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text) VALUES (?, ?, ?, ?, ?)`,
+        [id, req.params.bookId, title || `Chapter ${sortOrder + 1}`, sortOrder, raw_text || '']);
+      const chapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [id]);
+      res.status(201).json(chapter);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create chapter' });
+    }
   });
 
   router.put('/:id', (req: Request, res: Response) => {
-    const { title, raw_text, cleaned_text, sort_order } = req.body;
-    // Handle cleaned_text specially: allow explicit null to clear it
-    const cleanedTextVal = req.body.hasOwnProperty('cleaned_text') ? cleaned_text : undefined;
-    const updates: string[] = [];
-    const values: any[] = [];
-    if (title !== undefined) { updates.push('title = ?'); values.push(title); }
-    if (raw_text !== undefined) { updates.push('raw_text = ?'); values.push(raw_text); }
-    if (req.body.hasOwnProperty('cleaned_text')) { updates.push('cleaned_text = ?'); values.push(cleanedTextVal); }
-    if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
-    if (updates.length > 0) {
-      updates.push("updated_at = datetime('now')");
-      values.push(req.params.id, req.params.bookId);
-      run(db, `UPDATE chapters SET ${updates.join(', ')} WHERE id = ? AND book_id = ?`, values);
+    try {
+      const { title, raw_text, cleaned_text, sort_order } = req.body;
+      const cleanedTextVal = req.body.hasOwnProperty('cleaned_text') ? cleaned_text : undefined;
+      const updates: string[] = [];
+      const values: any[] = [];
+      if (title !== undefined) { updates.push('title = ?'); values.push(title); }
+      if (raw_text !== undefined) { updates.push('raw_text = ?'); values.push(raw_text); }
+      if (req.body.hasOwnProperty('cleaned_text')) { updates.push('cleaned_text = ?'); values.push(cleanedTextVal); }
+      if (sort_order !== undefined) { updates.push('sort_order = ?'); values.push(sort_order); }
+      if (updates.length > 0) {
+        updates.push("updated_at = datetime('now')");
+        values.push(req.params.id, req.params.bookId);
+        run(db, `UPDATE chapters SET ${updates.join(', ')} WHERE id = ? AND book_id = ?`, values);
+      }
+      const chapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [req.params.id]);
+      res.json(chapter);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update chapter' });
     }
-    const chapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [req.params.id]);
-    res.json(chapter);
   });
 
   router.post('/reorder', (req: Request, res: Response) => {
-    const { ids } = req.body as { ids: string[] };
-    ids.forEach((id, index) => {
-      run(db, 'UPDATE chapters SET sort_order = ? WHERE id = ? AND book_id = ?', [index, id, req.params.bookId]);
-    });
-    res.json({ ok: true });
+    try {
+      const { ids } = req.body as { ids: string[] };
+      if (!Array.isArray(ids)) { res.status(400).json({ error: 'ids must be an array' }); return; }
+      ids.forEach((id, index) => {
+        run(db, 'UPDATE chapters SET sort_order = ? WHERE id = ? AND book_id = ?', [index, id, req.params.bookId]);
+      });
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to reorder chapters' });
+    }
   });
 
   // Split a chapter at a given character position
@@ -117,8 +136,12 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
   });
 
   router.delete('/:id', (req: Request, res: Response) => {
-    run(db, 'DELETE FROM chapters WHERE id = ? AND book_id = ?', [req.params.id, req.params.bookId]);
-    res.status(204).send();
+    try {
+      run(db, 'DELETE FROM chapters WHERE id = ? AND book_id = ?', [req.params.id, req.params.bookId]);
+      res.status(204).send();
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to delete chapter' });
+    }
   });
 
   return router;

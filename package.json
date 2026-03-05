@@ -1,5 +1,6 @@
 {
   "name": "audiobook-maker",
+  "version": "1.0.0",
   "private": true,
   "workspaces": [
     "client",
@@ -12,6 +13,8 @@
     "build": "npm run build --workspace=client && npm run build --workspace=server",
     "start": "npm run start --workspace=server",
     "lint": "npm run lint --workspace=client && npm run lint --workspace=server",
+    "typecheck": "npm run lint --workspace=client && npm run lint --workspace=server",
+    "clean": "rimraf client/dist server/dist",
     "mcp": "npx tsx server/src/mcp-server.ts"
   },
   "devDependencies": {

@@ -7,48 +7,87 @@ import { queryAll, queryOne, run } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
+import { z } from 'zod/v4';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
+
+const CreateSegmentSchema = z.object({
+  text: z.string().min(1).max(50000),
+  character_id: z.string().max(100).nullable().optional(),
+  sort_order: z.number().int().min(0).optional(),
+});
+
+const UpdateSegmentSchema = z.object({
+  text: z.string().min(1).max(50000).optional(),
+  character_id: z.string().max(100).nullable().optional(),
+  sort_order: z.number().int().min(0).optional(),
+});
 
 export function segmentsRouter(db: SqlJsDatabase): Router {
   const router = Router({ mergeParams: true });
 
   router.get('/', (req: Request, res: Response) => {
-    const segments = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [req.params.chapterId]);
-    res.json(segments);
+    try {
+      const segments = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [req.params.chapterId]);
+      res.json(segments);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to list segments' });
+    }
   });
 
   router.post('/', (req: Request, res: Response) => {
-    const id = uuid();
-    const { text, character_id, sort_order } = req.body;
-    run(db, `INSERT INTO segments (id, chapter_id, character_id, sort_order, text) VALUES (?, ?, ?, ?, ?)`,
-      [id, req.params.chapterId, character_id || null, sort_order ?? 0, text]);
-    const segment = queryOne(db, 'SELECT * FROM segments WHERE id = ?', [id]);
-    res.status(201).json(segment);
+    try {
+      const parsed = CreateSegmentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
+        return;
+      }
+      const { text, character_id, sort_order } = parsed.data;
+      const id = uuid();
+      run(db, `INSERT INTO segments (id, chapter_id, character_id, sort_order, text) VALUES (?, ?, ?, ?, ?)`,
+        [id, req.params.chapterId, character_id || null, sort_order ?? 0, text]);
+      const segment = queryOne(db, 'SELECT * FROM segments WHERE id = ?', [id]);
+      res.status(201).json(segment);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to create segment' });
+    }
   });
 
   router.put('/:id', (req: Request, res: Response) => {
-    const fields = ['text', 'character_id', 'sort_order'];
-    const updates: string[] = [];
-    const values: any[] = [];
-    for (const field of fields) {
-      if (req.body[field] !== undefined) {
-        updates.push(`${field} = ?`);
-        values.push(req.body[field]);
+    try {
+      const parsed = UpdateSegmentSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
+        return;
       }
+      const fields = ['text', 'character_id', 'sort_order'];
+      const updates: string[] = [];
+      const values: any[] = [];
+      for (const field of fields) {
+        if ((parsed.data as any)[field] !== undefined) {
+          updates.push(`${field} = ?`);
+          values.push((parsed.data as any)[field]);
+        }
+      }
+      if (updates.length > 0) {
+        updates.push("updated_at = datetime('now')");
+        values.push(req.params.id);
+        run(db, `UPDATE segments SET ${updates.join(', ')} WHERE id = ?`, values);
+      }
+      const segment = queryOne(db, 'SELECT * FROM segments WHERE id = ?', [req.params.id]);
+      res.json(segment);
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to update segment' });
     }
-    if (updates.length > 0) {
-      updates.push("updated_at = datetime('now')");
-      values.push(req.params.id);
-      run(db, `UPDATE segments SET ${updates.join(', ')} WHERE id = ?`, values);
-    }
-    const segment = queryOne(db, 'SELECT * FROM segments WHERE id = ?', [req.params.id]);
-    res.json(segment);
   });
 
   router.delete('/:id', (req: Request, res: Response) => {
-    run(db, 'DELETE FROM segments WHERE id = ?', [req.params.id]);
-    res.status(204).send();
+    try {
+      run(db, 'DELETE FROM segments WHERE id = ?', [req.params.id]);
+      res.status(204).send();
+    } catch (err: any) {
+      res.status(500).json({ error: 'Failed to delete segment' });
+    }
   });
 
   // Generate TTS for a single segment
