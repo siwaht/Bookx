@@ -9,7 +9,11 @@ import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, run } from '../db/helpers.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
-const upload = multer({ dest: path.join(DATA_DIR, 'uploads') });
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+const upload = multer({
+  dest: path.join(DATA_DIR, 'uploads'),
+  limits: { fileSize: MAX_FILE_SIZE },
+});
 
 const SUPPORTED_FORMATS = ['.txt', '.md', '.docx', '.epub', '.html', '.htm'];
 

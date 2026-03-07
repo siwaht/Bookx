@@ -7,6 +7,9 @@ import { fileURLToPath } from 'url';
 import { getDb, initializeSchema, saveDb } from './db/schema.js';
 import { queryAll, queryOne } from './db/helpers.js';
 import { authMiddleware, loginHandler } from './middleware/auth.js';
+import { apiRateLimit, ttsRateLimit } from './middleware/rate-limit.js';
+import { createBackup, listBackups, restoreBackup } from './db/backup.js';
+import { runCleanup, getDiskUsage } from './db/cleanup.js';
 import { booksRouter } from './routes/books.js';
 import { chaptersRouter } from './routes/chapters.js';
 import { charactersRouter } from './routes/characters.js';
@@ -65,7 +68,7 @@ async function main() {
   validateEnv();
 
   const DATA_DIR = process.env.DATA_DIR || './data';
-  for (const sub of ['audio', 'renders', 'exports', 'uploads']) {
+  for (const sub of ['audio', 'renders', 'exports', 'uploads', 'backups']) {
     fs.mkdirSync(path.join(DATA_DIR, sub), { recursive: true });
   }
 
@@ -163,12 +166,15 @@ async function main() {
 
   // ── Health check (no auth) ──
   app.get('/api/health', (_req, res) => {
+    const memUsage = process.memoryUsage();
     res.json({
       status: 'ok',
       uptime: Math.floor(process.uptime()),
       env: NODE_ENV,
       version: '1.0.0',
       timestamp: new Date().toISOString(),
+      memory_mb: Math.round(memUsage.heapUsed / 1024 / 1024),
+      disk: getDiskUsage(),
     });
   });
 
@@ -176,6 +182,7 @@ async function main() {
   app.post('/api/auth/login', loginHandler);
   app.get('/api/auth/verify', authMiddleware, (_req, res) => res.json({ ok: true }));
   app.use('/api', authMiddleware);
+  app.use('/api', apiRateLimit);
 
   // ── API Routes ──
   app.use('/api/books', booksRouter(db));
@@ -197,6 +204,35 @@ async function main() {
   app.post('/api/save', (_req, res) => {
     saveDb();
     res.json({ ok: true, saved_at: new Date().toISOString() });
+  });
+
+  // ── Backup & Restore ──
+  app.post('/api/backup', (_req, res) => {
+    const result = createBackup();
+    if (!result) { res.status(500).json({ error: 'Backup failed' }); return; }
+    res.json({ ok: true, ...result });
+  });
+
+  app.get('/api/backups', (_req, res) => {
+    res.json(listBackups());
+  });
+
+  app.post('/api/restore/:filename', (req, res) => {
+    const ok = restoreBackup(req.params.filename);
+    if (!ok) { res.status(404).json({ error: 'Backup not found or restore failed' }); return; }
+    res.json({ ok: true, message: 'Restored. Restart the server to load the restored database.' });
+  });
+
+  // ── Cleanup & Disk Usage ──
+  app.post('/api/cleanup', (req, res) => {
+    const maxAgeDays = parseInt(req.body.max_age_days) || 30;
+    const result = runCleanup(db, maxAgeDays);
+    saveDb();
+    res.json(result);
+  });
+
+  app.get('/api/disk-usage', (_req, res) => {
+    res.json(getDiskUsage());
   });
 
   // ── Download project as zip ──
@@ -281,6 +317,22 @@ async function main() {
   const server = app.listen(PORT, () => {
     log.info(`Server started`, { port: PORT, env: NODE_ENV, pid: process.pid });
   });
+
+  // ── Scheduled tasks ──
+  // Auto-backup every 6 hours
+  setInterval(() => {
+    const result = createBackup();
+    if (result) log.info('Auto-backup created', { size: result.size });
+  }, 6 * 60 * 60 * 1000);
+
+  // Auto-cleanup old exports/renders weekly (every 7 days)
+  setInterval(() => {
+    const result = runCleanup(db, 30);
+    if (result.bytes_freed > 0) {
+      log.info('Auto-cleanup completed', result);
+      saveDb();
+    }
+  }, 7 * 24 * 60 * 60 * 1000);
 
   // ── Graceful shutdown ──
   const shutdown = (signal: string) => {

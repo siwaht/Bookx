@@ -2,13 +2,45 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 
 const SALT = 'audiobook-maker-salt';
+const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 
 function getAppPassword(): string {
   return process.env.APP_PASSWORD || 'changeme';
 }
 
+/**
+ * Generate a time-bound token. Embeds an expiry timestamp so tokens
+ * automatically become invalid after TOKEN_TTL_MS.
+ */
 export function generateToken(password: string): string {
-  return crypto.createHash('sha256').update(password + SALT).digest('hex');
+  const expiresAt = Date.now() + TOKEN_TTL_MS;
+  const payload = `${password}:${expiresAt}`;
+  const hash = crypto.createHash('sha256').update(payload + SALT).digest('hex');
+  // Token format: hash.expiresAt (client stores the whole string)
+  return `${hash}.${expiresAt}`;
+}
+
+function verifyToken(token: string): boolean {
+  const parts = token.split('.');
+  if (parts.length !== 2) {
+    // Legacy token (no expiry) — still accept but validate against password
+    const legacyHash = crypto.createHash('sha256').update(getAppPassword() + SALT).digest('hex');
+    return token === legacyHash;
+  }
+
+  const [hash, expiresAtStr] = parts;
+  const expiresAt = parseInt(expiresAtStr, 10);
+
+  // Check expiry
+  if (isNaN(expiresAt) || Date.now() > expiresAt) return false;
+
+  // Verify hash
+  const payload = `${getAppPassword()}:${expiresAtStr}`;
+  const expected = crypto.createHash('sha256').update(payload + SALT).digest('hex');
+
+  // Timing-safe comparison
+  if (hash.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(expected));
 }
 
 // Rate limiting for login attempts
@@ -58,9 +90,8 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction):
   }
 
   const token = authHeader.slice(7);
-  const validToken = generateToken(getAppPassword());
 
-  if (!token || token !== validToken) {
+  if (!token || !verifyToken(token)) {
     res.status(401).json({ error: 'Invalid or expired token' });
     return;
   }

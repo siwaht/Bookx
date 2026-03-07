@@ -321,3 +321,18 @@ export const ttsProviders = {
   }) => request<{ audio_asset_id: string; provider: string; request_id?: string; duration_ms?: number }>(
     '/tts/generate', { method: 'POST', body: JSON.stringify(data) }),
 };
+
+// ── System Management ──
+export const system = {
+  backup: () => request<{ ok: boolean; path: string; size: number }>('/backup', { method: 'POST' }),
+  listBackups: () => request<Array<{ filename: string; size: number; created: string }>>('/backups'),
+  restore: (filename: string) => request<{ ok: boolean; message: string }>(`/restore/${filename}`, { method: 'POST' }),
+  cleanup: (maxAgeDays = 30) => request<{
+    exports_removed: number; renders_removed: number;
+    orphan_assets_removed: number; bytes_freed: number;
+  }>('/cleanup', { method: 'POST', body: JSON.stringify({ max_age_days: maxAgeDays }) }),
+  diskUsage: () => request<{
+    audio_mb: number; exports_mb: number; renders_mb: number;
+    backups_mb: number; total_mb: number;
+  }>('/disk-usage'),
+};

@@ -29,7 +29,7 @@ COPY --from=build-server /app/server/package.json ./server/
 COPY --from=build-client /app/client/dist ./client/dist
 COPY package.json ./
 
-RUN mkdir -p /app/data/audio /app/data/renders /app/data/exports /app/data/uploads
+RUN mkdir -p /app/data/audio /app/data/renders /app/data/exports /app/data/uploads /app/data/backups
 
 EXPOSE 3001
 VOLUME ["/app/data"]

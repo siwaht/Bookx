@@ -142,6 +142,43 @@ export function segmentsRouter(db: SqlJsDatabase): Router {
 }
 
 
+/**
+ * Apply pronunciation rules from the book to the given text.
+ * Character-specific rules take priority, then global rules.
+ * Longer words are replaced first to avoid partial matches.
+ */
+function applyPronunciationRules(db: SqlJsDatabase, text: string, chapterId: string, characterId: string | null): string {
+  const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [chapterId]);
+  if (!chapter) return text;
+
+  let rules;
+  if (characterId) {
+    rules = queryAll(db,
+      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND (character_id = ? OR character_id IS NULL) ORDER BY length(word) DESC',
+      [chapter.book_id, characterId]);
+  } else {
+    rules = queryAll(db,
+      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND character_id IS NULL ORDER BY length(word) DESC',
+      [chapter.book_id]);
+  }
+
+  if (!rules || rules.length === 0) return text;
+
+  let result = text;
+  for (const rule of rules as any[]) {
+    const escaped = rule.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    if (rule.alias) {
+      result = result.replace(regex, rule.alias);
+    } else if (rule.phoneme) {
+      result = result.replace(regex, `<phoneme alphabet="ipa" ph="${rule.phoneme}">${rule.word}</phoneme>`);
+    }
+  }
+
+  return result;
+}
+
+
 // Shared generation logic
 async function generateSegmentAudio(
   db: SqlJsDatabase,
@@ -173,7 +210,10 @@ async function generateSegmentAudio(
     throw new Error('No voice assigned to character. Assign a voice first.');
   }
 
-  const hashParams = { provider: ttsProvider, text: segment.text, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
+  // Apply pronunciation rules before generating audio
+  const processedText = applyPronunciationRules(db, segment.text, segment.chapter_id, segment.character_id);
+
+  const hashParams = { provider: ttsProvider, text: processedText, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
   const promptHash = computePromptHash(hashParams);
 
   // Check cache
@@ -196,7 +236,7 @@ async function generateSegmentAudio(
       [segment.chapter_id, segment.sort_order]);
 
     const result = await generateTTS({
-      text: segment.text,
+      text: processedText,
       voice_id: voiceId,
       model_id: modelId,
       voice_settings: voiceSettings,
@@ -209,7 +249,7 @@ async function generateSegmentAudio(
   } else {
     // Use the provider abstraction for other providers
     const result = await generateWithProvider(ttsProvider, {
-      text: segment.text,
+      text: processedText,
       voiceId,
       modelId,
       speed,
@@ -240,3 +280,40 @@ async function generateSegmentAudio(
 
   return { audio_asset_id: assetId, request_id: requestId, cached: false, duration_ms: durationMs };
 }
+/**
+ * Apply pronunciation rules from the book to the given text.
+ * Character-specific rules take priority, then global rules.
+ * Longer words are replaced first to avoid partial matches.
+ */
+function applyPronunciationRules(db: SqlJsDatabase, text: string, chapterId: string, characterId: string | null): string {
+  const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [chapterId]);
+  if (!chapter) return text;
+
+  let rules;
+  if (characterId) {
+    rules = queryAll(db,
+      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND (character_id = ? OR character_id IS NULL) ORDER BY length(word) DESC',
+      [chapter.book_id, characterId]);
+  } else {
+    rules = queryAll(db,
+      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND character_id IS NULL ORDER BY length(word) DESC',
+      [chapter.book_id]);
+  }
+
+  if (!rules || rules.length === 0) return text;
+
+  let result = text;
+  for (const rule of rules as any[]) {
+    const escaped = rule.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
+    if (rule.alias) {
+      result = result.replace(regex, rule.alias);
+    } else if (rule.phoneme) {
+      result = result.replace(regex, `<phoneme alphabet="ipa" ph="${rule.phoneme}">${rule.word}</phoneme>`);
+    }
+  }
+
+  return result;
+}
+
+

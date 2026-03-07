@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { settings as settingsApi, elevenlabs } from '../services/api';
-import { Key, Eye, EyeOff, Save, Trash2, Check, ArrowLeft, Wifi, WifiOff, Loader } from 'lucide-react';
+import { settings as settingsApi, elevenlabs, system } from '../services/api';
+import { Key, Eye, EyeOff, Save, Trash2, Check, ArrowLeft, Wifi, WifiOff, Loader, Database, HardDrive, RefreshCw, Shield } from 'lucide-react';
 
 interface ApiKeyConfig {
   key: string;
@@ -41,6 +41,13 @@ export function SettingsPage() {
     result: null | { connected: boolean; error?: string; tier?: string; character_count?: number; character_limit?: number; key_last4?: string };
   }>({ testing: false, result: null });
 
+  // System management state
+  const [diskUsage, setDiskUsage] = useState<{ audio_mb: number; exports_mb: number; renders_mb: number; backups_mb: number; total_mb: number } | null>(null);
+  const [backups, setBackups] = useState<Array<{ filename: string; size: number; created: string }>>([]);
+  const [backingUp, setBackingUp] = useState(false);
+  const [cleaning, setCleaning] = useState(false);
+  const [cleanupResult, setCleanupResult] = useState<{ exports_removed: number; renders_removed: number; orphan_assets_removed: number; bytes_freed: number } | null>(null);
+
   const testElevenLabsConnection = async () => {
     setConnTest({ testing: true, result: null });
     try {
@@ -63,7 +70,35 @@ export function SettingsPage() {
     }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); loadSystemInfo(); }, []);
+
+  const loadSystemInfo = async () => {
+    try {
+      const [usage, bkps] = await Promise.all([system.diskUsage(), system.listBackups()]);
+      setDiskUsage(usage);
+      setBackups(bkps);
+    } catch { /* ignore */ }
+  };
+
+  const handleBackup = async () => {
+    setBackingUp(true);
+    try {
+      await system.backup();
+      await loadSystemInfo();
+    } catch (err: any) { alert(`Backup failed: ${err.message}`); }
+    finally { setBackingUp(false); }
+  };
+
+  const handleCleanup = async () => {
+    if (!confirm('This will remove old export files, render outputs (>30 days), and orphaned audio assets. Continue?')) return;
+    setCleaning(true);
+    try {
+      const result = await system.cleanup(30);
+      setCleanupResult(result);
+      await loadSystemInfo();
+    } catch (err: any) { alert(`Cleanup failed: ${err.message}`); }
+    finally { setCleaning(false); }
+  };
 
   const handleSave = async (key: string) => {
     const value = inputs[key];
@@ -211,6 +246,90 @@ export function SettingsPage() {
               <option key={p.value} value={p.value}>{p.label}</option>
             ))}
           </select>
+        </div>
+
+        {/* System Management */}
+        <div style={S.section}>
+          <h2 style={S.sectionTitle}><Shield size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> System Management</h2>
+
+          {/* Disk Usage */}
+          {diskUsage && (
+            <div style={S.keyRow}>
+              <div style={S.keyHeader}>
+                <HardDrive size={14} style={{ color: '#4A90D9' }} />
+                <span style={S.keyLabel}>Disk Usage</span>
+                <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 'auto' }}>{diskUsage.total_mb} MB total</span>
+              </div>
+              <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginTop: 4 }}>
+                {[
+                  { label: 'Audio', value: diskUsage.audio_mb, color: '#5b8def' },
+                  { label: 'Exports', value: diskUsage.exports_mb, color: '#4ade80' },
+                  { label: 'Renders', value: diskUsage.renders_mb, color: '#f59e0b' },
+                  { label: 'Backups', value: diskUsage.backups_mb, color: '#a78bfa' },
+                ].map(item => (
+                  <div key={item.label} style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                    <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: '50%', background: item.color, marginRight: 6 }} />
+                    {item.label}: {item.value} MB
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Backup */}
+          <div style={S.keyRow}>
+            <div style={S.keyHeader}>
+              <Database size={14} style={{ color: '#4A90D9' }} />
+              <span style={S.keyLabel}>Database Backup</span>
+            </div>
+            <p style={S.keyHint}>Create a snapshot of your database. Auto-backups run every 6 hours. Last 10 backups are kept.</p>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <button onClick={handleBackup} disabled={backingUp} style={S.saveBtn}>
+                {backingUp ? <Loader size={13} /> : <Database size={13} />}
+                {backingUp ? 'Backing up...' : 'Create Backup Now'}
+              </button>
+              {backups.length > 0 && (
+                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                  Latest: {new Date(backups[0].created).toLocaleString()} ({(backups[0].size / 1024 / 1024).toFixed(1)} MB)
+                </span>
+              )}
+            </div>
+            {backups.length > 1 && (
+              <details style={{ marginTop: 4 }}>
+                <summary style={{ fontSize: 11, color: 'var(--accent)', cursor: 'pointer' }}>
+                  View all backups ({backups.length})
+                </summary>
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {backups.map(b => (
+                    <div key={b.filename} style={{ fontSize: 11, color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between' }}>
+                      <span>{b.filename}</span>
+                      <span>{(b.size / 1024 / 1024).toFixed(1)} MB — {new Date(b.created).toLocaleString()}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            )}
+          </div>
+
+          {/* Cleanup */}
+          <div style={S.keyRow}>
+            <div style={S.keyHeader}>
+              <RefreshCw size={14} style={{ color: '#f59e0b' }} />
+              <span style={S.keyLabel}>Storage Cleanup</span>
+            </div>
+            <p style={S.keyHint}>Remove old export ZIPs, render outputs older than 30 days, and orphaned audio files not linked to any segment or clip.</p>
+            <button onClick={handleCleanup} disabled={cleaning}
+              style={{ ...S.saveBtn, background: cleaning ? 'var(--bg-elevated)' : '#3a2a0a', color: '#f59e0b', boxShadow: 'none', border: '1px solid rgba(245,158,11,0.2)' }}>
+              {cleaning ? <Loader size={13} /> : <Trash2 size={13} />}
+              {cleaning ? 'Cleaning...' : 'Run Cleanup'}
+            </button>
+            {cleanupResult && (
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4, lineHeight: 1.6 }}>
+                Removed: {cleanupResult.exports_removed} exports, {cleanupResult.renders_removed} renders, {cleanupResult.orphan_assets_removed} orphan assets.
+                Freed {(cleanupResult.bytes_freed / 1024 / 1024).toFixed(1)} MB.
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </div>
