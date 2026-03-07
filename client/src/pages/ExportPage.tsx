@@ -3,13 +3,13 @@ import { useParams } from 'react-router-dom';
 import { exportBook } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { ValidationResult } from '../types';
-import { Download, CheckCircle, XCircle, Loader, Package, Mic } from 'lucide-react';
+import { Download, CheckCircle, XCircle, Loader, Package, Mic, Headphones } from 'lucide-react';
 
 export function ExportPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const book = useAppStore((s) => s.currentBook);
   const isPodcast = book?.project_type === 'podcast';
-  const [target, setTarget] = useState<'acx' | 'podcast'>(isPodcast ? 'podcast' : 'acx');
+  const [target, setTarget] = useState<'acx' | 'podcast' | 'inaudio'>(isPodcast ? 'podcast' : 'acx');
   const [exporting, setExporting] = useState(false);
   const [result, setResult] = useState<{ export_id: string; status: string; validation: ValidationResult } | null>(null);
 
@@ -40,6 +40,10 @@ export function ExportPage() {
           style={{ ...styles.targetBtn, ...(target === 'podcast' ? styles.targetActive : {}) }}>
           <Mic size={14} /> Podcast
         </button>
+        <button onClick={() => { setTarget('inaudio'); setResult(null); }}
+          style={{ ...styles.targetBtn, ...(target === 'inaudio' ? styles.targetActive : {}) }}>
+          <Headphones size={14} /> InAudio
+        </button>
       </div>
 
       {target === 'acx' ? (
@@ -65,7 +69,7 @@ export function ExportPage() {
             </ul>
           </div>
         </>
-      ) : (
+      ) : target === 'podcast' ? (
         <>
           <div style={styles.prereqBox}>
             <h4 style={{ color: '#D4A843', marginBottom: 8 }}>Before exporting (Podcast)</h4>
@@ -85,11 +89,37 @@ export function ExportPage() {
             </ul>
           </div>
         </>
-      )}
+      ) : target === 'inaudio' ? (
+        <>
+          <div style={styles.prereqBox}>
+            <h4 style={{ color: '#D4A843', marginBottom: 8 }}>Before exporting (InAudio)</h4>
+            <p style={styles.prereqText}>Make sure you've completed these steps:</p>
+            <div style={styles.prereqList}>
+              <span style={styles.prereqItem}>✓ All chapters have generated audio</span>
+              <span style={styles.prereqItem}>✓ Timeline is populated with clips</span>
+              <span style={styles.prereqItem}>✓ Render completed successfully</span>
+            </div>
+          </div>
+          <div style={styles.specCard}>
+            <h4 style={{ color: '#fff', marginBottom: 12 }}>InAudio Package Contents</h4>
+            <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+              <li>MP3 files re-encoded to CBR 192kbps, 44.1kHz</li>
+              <li>InAudio naming convention:</li>
+              <li style={{ marginLeft: 16 }}>Opening - [Name].mp3</li>
+              <li style={{ marginLeft: 16 }}>Chapter [#] - [Title].mp3</li>
+              <li style={{ marginLeft: 16 }}>Closing - End Credits.mp3</li>
+              <li>Filenames cleaned (no colons, HTML entities, or underscores)</li>
+              <li>All files output to a named subfolder</li>
+              <li>Cover art (if set)</li>
+              <li>Everything bundled in a single ZIP</li>
+            </ul>
+          </div>
+        </>
+      ) : null}
 
       <button onClick={handleExport} disabled={exporting} style={styles.exportBtn}>
         {exporting ? <Loader size={18} /> : <Package size={18} />}
-        {exporting ? 'Exporting...' : target === 'acx' ? 'Export ACX Package' : 'Export Podcast Package'}
+        {exporting ? 'Exporting...' : target === 'acx' ? 'Export ACX Package' : target === 'podcast' ? 'Export Podcast Package' : 'Export InAudio Package'}
       </button>
 
       {result && (

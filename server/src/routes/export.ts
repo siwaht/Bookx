@@ -36,6 +36,18 @@ export function exportRouter(db: SqlJsDatabase): Router {
         const outputPath = await buildPodcastPackage(db, bookId, book, exportId);
         run(db, `UPDATE exports SET status = 'completed', output_path = ? WHERE id = ?`, [outputPath, exportId]);
         res.json({ export_id: exportId, status: 'completed', validation });
+      } else if (target === 'inaudio') {
+        // InAudio export: CBR 192kbps MP3 with specific naming convention
+        const validation = validateForInAudio(db, bookId, book);
+        run(db, `INSERT INTO exports (id, book_id, target, status, validation_report) VALUES (?, ?, 'inaudio', ?, ?)`,
+          [exportId, bookId, validation.pass ? 'ready' : 'validation_failed', JSON.stringify(validation)]);
+        if (!validation.pass) {
+          res.json({ export_id: exportId, status: 'validation_failed', validation });
+          return;
+        }
+        const outputPath = await buildInAudioPackage(db, bookId, book, exportId);
+        run(db, `UPDATE exports SET status = 'completed', output_path = ? WHERE id = ?`, [outputPath, exportId]);
+        res.json({ export_id: exportId, status: 'completed', validation });
       } else {
         // ACX export
         const validation = validateForACX(db, bookId, book);
@@ -181,6 +193,112 @@ async function buildPodcastPackage(db: SqlJsDatabase, bookId: string, book: any,
       exported_at: new Date().toISOString(),
     };
     archive.append(JSON.stringify(metadata, null, 2), { name: 'podcast_metadata.json' });
+
+    archive.finalize();
+  });
+}
+
+// ── InAudio helpers ──
+
+/**
+ * Clean a filename for InAudio convention:
+ * - Remove HTML entities (&amp; etc.)
+ * - Replace underscores with spaces
+ * - Remove colons (Windows restriction)
+ * - Collapse whitespace
+ */
+function cleanInAudioFilename(name: string): string {
+  return name
+    .replace(/&[a-zA-Z]+;/g, '')       // strip HTML entities
+    .replace(/&#\d+;/g, '')            // strip numeric HTML entities
+    .replace(/_/g, ' ')                // underscores → spaces
+    .replace(/:/g, '')                 // no colons (Windows)
+    .replace(/[<>"|?*]/g, '')          // strip other illegal chars
+    .replace(/\s+/g, ' ')             // collapse whitespace
+    .trim();
+}
+
+function validateForInAudio(db: SqlJsDatabase, bookId: string, book: any) {
+  const checks: Array<{ name: string; pass: boolean; message: string }> = [];
+
+  const chapterCount = queryOne(db, 'SELECT COUNT(*) as count FROM chapters WHERE book_id = ?', [bookId]);
+  checks.push({ name: 'Chapters exist', pass: chapterCount.count > 0, message: chapterCount.count > 0 ? `${chapterCount.count} chapters` : 'No chapters' });
+
+  const latestRender = queryOne(db, `SELECT * FROM render_jobs WHERE book_id = ? AND status = 'completed' ORDER BY completed_at DESC LIMIT 1`, [bookId]);
+  checks.push({ name: 'Render completed', pass: !!latestRender, message: latestRender ? 'Render available' : 'No completed render' });
+
+  checks.push({ name: 'Title', pass: !!book.title, message: book.title || 'Missing' });
+
+  const pass = checks.every((c) => c.pass);
+  return { pass, checks };
+}
+
+async function buildInAudioPackage(db: SqlJsDatabase, bookId: string, book: any, exportId: string): Promise<string> {
+  const latestRender = queryOne(db, `SELECT * FROM render_jobs WHERE book_id = ? AND status = 'completed' ORDER BY completed_at DESC LIMIT 1`, [bookId]);
+  if (!latestRender?.output_path) throw new Error('No rendered files');
+
+  const renderDir = latestRender.output_path;
+  const outputPath = path.join(DATA_DIR, 'exports', `${exportId}.zip`);
+  const subfolderName = cleanInAudioFilename(book.title);
+
+  return new Promise((resolve, reject) => {
+    const output = fs.createWriteStream(outputPath);
+    const archive = archiver('zip', { zlib: { level: 6 } });
+    output.on('close', () => resolve(outputPath));
+    archive.on('error', reject);
+    archive.pipe(output);
+
+    const files = fs.readdirSync(renderDir).filter((f: string) => f.endsWith('.mp3')).sort();
+    const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
+
+    files.forEach((file: string, index: number) => {
+      let inaudioName: string;
+
+      if (index < chapters.length) {
+        const ch = chapters[index] as any;
+        const title = cleanInAudioFilename(ch.title);
+        const lowerTitle = title.toLowerCase();
+
+        // Detect special chapter types by title keywords
+        if (lowerTitle.includes('intro') || lowerTitle.includes('opening') || lowerTitle.includes('foreword') || lowerTitle.includes('preface') || lowerTitle.includes('note')) {
+          inaudioName = `Opening - ${title}.mp3`;
+        } else if (lowerTitle.includes('end credit') || lowerTitle.includes('closing') || lowerTitle.includes('afterword') || lowerTitle.includes('epilogue')) {
+          inaudioName = `Closing - ${title}.mp3`;
+        } else if (lowerTitle.includes('sample') || lowerTitle.includes('preview') || lowerTitle.includes('excerpt')) {
+          inaudioName = `Sample - ${title}.mp3`;
+        } else {
+          // Standard chapter: "Chapter 1 - Title.mp3"
+          inaudioName = `Chapter ${index + 1} - ${title}.mp3`;
+        }
+      } else {
+        inaudioName = `Chapter ${index + 1} - Untitled.mp3`;
+      }
+
+      // Place inside the named subfolder
+      archive.file(path.join(renderDir, file), { name: `${subfolderName}/${inaudioName}` });
+    });
+
+    if (book.cover_art_path && fs.existsSync(book.cover_art_path)) {
+      archive.file(book.cover_art_path, { name: `${subfolderName}/cover${path.extname(book.cover_art_path)}` });
+    }
+
+    // InAudio metadata
+    const chapterList = chapters.map((ch: any, i: number) => {
+      const title = cleanInAudioFilename(ch.title);
+      return { chapter_number: i + 1, title, original_title: ch.title };
+    });
+    const metadata = {
+      title: book.title,
+      author: book.author,
+      narrator: book.narrator,
+      format: 'mp3',
+      bitrate: '192kbps CBR',
+      sample_rate: 44100,
+      naming_convention: 'inaudio',
+      chapters: chapterList,
+      exported_at: new Date().toISOString(),
+    };
+    archive.append(JSON.stringify(metadata, null, 2), { name: `${subfolderName}/inaudio_metadata.json` });
 
     archive.finalize();
   });
