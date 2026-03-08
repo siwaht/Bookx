@@ -9,6 +9,8 @@ import {
   aiParse,
   audioUrl,
   books as booksApi,
+  uploadAudioToChapter,
+  replaceSegmentAudio,
 } from '../services/api';
 import type { Chapter, Segment, Character } from '../types';
 import {
@@ -95,6 +97,13 @@ export function ManuscriptPage() {
   // Split mode
   const [splitMode, setSplitMode] = useState(false);
   const [splitPos, setSplitPos] = useState<number | null>(null);
+
+  // Audio upload state
+  const [uploadingChapterAudio, setUploadingChapterAudio] = useState(false);
+  const [replacingSegAudio, setReplacingSegAudio] = useState<string | null>(null);
+  const chapterAudioRef = useRef<HTMLInputElement>(null);
+  const segAudioRef = useRef<HTMLInputElement>(null);
+  const [pendingSegReplace, setPendingSegReplace] = useState<string | null>(null);
 
   // Text editor ref
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -464,6 +473,39 @@ export function ManuscriptPage() {
     finally { setNameAssigning(false); }
   };
 
+  // ── Audio Upload Handlers ──
+
+  const handleUploadChapterAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !bookId || !selectedChapterId) return;
+    setUploadingChapterAudio(true);
+    try {
+      await uploadAudioToChapter(bookId, selectedChapterId, file);
+      await loadSegments(selectedChapterId);
+      loadChapters();
+    } catch (err: any) { alert(`Upload failed: ${err.message}`); }
+    finally {
+      setUploadingChapterAudio(false);
+      if (chapterAudioRef.current) chapterAudioRef.current.value = '';
+    }
+  };
+
+  const handleReplaceSegmentAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !bookId || !pendingSegReplace) return;
+    setReplacingSegAudio(pendingSegReplace);
+    try {
+      await replaceSegmentAudio(bookId, pendingSegReplace, file);
+      if (selectedChapterId) await loadSegments(selectedChapterId);
+      loadChapters();
+    } catch (err: any) { alert(`Replace failed: ${err.message}`); }
+    finally {
+      setReplacingSegAudio(null);
+      setPendingSegReplace(null);
+      if (segAudioRef.current) segAudioRef.current.value = '';
+    }
+  };
+
   // ── Computed ──
 
   const segmentsWithAudio = segmentList.filter((s) => s.audio_asset_id);
@@ -782,6 +824,12 @@ export function ManuscriptPage() {
               title="Generate TTS for all segments">
               <Zap size={12} /> {batchGenerating ? `${batchElapsed}s...` : 'Gen All'}
             </button>
+            <button onClick={() => chapterAudioRef.current?.click()}
+              style={{ ...styles.smallBtn, background: '#1a1a2a', color: '#b88ad9' }}
+              disabled={!selectedChapter || uploadingChapterAudio}
+              title="Upload an audio file for this chapter">
+              {uploadingChapterAudio ? <Loader size={12} /> : <Upload size={12} />}
+            </button>
           </div>
         </div>
 
@@ -959,6 +1007,23 @@ export function ManuscriptPage() {
                         {isSending ? 'Sending...' : isSent ? '✓ On Timeline' : '→ Send to Timeline'}
                       </button>
                     )}
+
+                    {/* Upload / Replace audio */}
+                    <button onClick={() => {
+                      setPendingSegReplace(seg.id);
+                      setTimeout(() => segAudioRef.current?.click(), 0);
+                    }}
+                      disabled={replacingSegAudio === seg.id}
+                      style={{
+                        ...styles.sendBtn,
+                        background: '#1a1a2a',
+                        color: '#b88ad9',
+                        borderColor: '#2a2a3a',
+                      }}
+                      title={hasAudio ? 'Replace audio with an uploaded file' : 'Upload audio file for this segment'}>
+                      {replacingSegAudio === seg.id ? <Loader size={12} /> : <Upload size={12} />}
+                      {replacingSegAudio === seg.id ? 'Uploading...' : hasAudio ? 'Replace Audio' : 'Upload Audio'}
+                    </button>
                   </div>
 
                   {/* Workflow hints */}
@@ -994,6 +1059,12 @@ export function ManuscriptPage() {
       {chapterMenuId && (
         <div style={styles.overlay} onClick={() => setChapterMenuId(null)} />
       )}
+
+      {/* Hidden file inputs for audio upload */}
+      <input ref={chapterAudioRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
+        onChange={handleUploadChapterAudio} hidden aria-label="Upload chapter audio" />
+      <input ref={segAudioRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
+        onChange={handleReplaceSegmentAudio} hidden aria-label="Upload segment audio" />
     </div>
   );
 }

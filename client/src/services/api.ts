@@ -275,6 +275,45 @@ export const pronunciation = {
       `/books/${bookId}/pronunciation/apply`, { method: 'POST', body: JSON.stringify({ text, character_id: characterId }) }),
 };
 
+// ── Chapter Audio Upload ──
+export const uploadAudioToChapter = async (bookId: string, chapterId: string, file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('book_id', bookId);
+  formData.append('chapter_id', chapterId);
+
+  const res = await fetch(`${API_BASE}/audio/upload-to-chapter`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+    throw new Error(err.error);
+  }
+  return res.json();
+};
+
+export const replaceSegmentAudio = async (bookId: string, segmentId: string, file: File) => {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('book_id', bookId);
+  formData.append('segment_id', segmentId);
+
+  const res = await fetch(`${API_BASE}/audio/replace-segment-audio`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${authToken}` },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: 'Replace failed' }));
+    throw new Error(err.error);
+  }
+  return res.json();
+};
+
 // ── Audio Upload ──
 export const uploadAudio = async (bookId: string, file: File, name?: string) => {
   const formData = new FormData();

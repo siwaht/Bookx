@@ -1,9 +1,9 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { books } from '../services/api';
+import { books, uploadAudio, chapters as chaptersApi, uploadAudioToChapter } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { Plus, BookOpen, Trash2, LogOut, Settings, Mic, Headphones, ArrowRight } from 'lucide-react';
+import { Plus, BookOpen, Trash2, LogOut, Settings, Mic, Headphones, ArrowRight, Upload, Loader } from 'lucide-react';
 import { clearToken } from '../services/api';
 
 export function Dashboard() {
@@ -13,6 +13,14 @@ export function Dashboard() {
   const [author, setAuthor] = useState('');
   const [projectType, setProjectType] = useState<'audiobook' | 'podcast'>('audiobook');
   const [format, setFormat] = useState('single_narrator');
+  const [showUpload, setShowUpload] = useState(false);
+  const [uploadTitle, setUploadTitle] = useState('');
+  const [uploadAuthor, setUploadAuthor] = useState('');
+  const [uploadProjectType, setUploadProjectType] = useState<'audiobook' | 'podcast'>('audiobook');
+  const [uploadFiles, setUploadFiles] = useState<File[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState('');
+  const uploadFileRef = useRef<HTMLInputElement>(null);
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
   const navigate = useNavigate();
 
@@ -43,6 +51,51 @@ export function Dashboard() {
     }
   };
 
+  const handleUploadExisting = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!uploadTitle.trim() || uploadFiles.length === 0) return;
+    setUploading(true);
+    setUploadProgress('Creating project...');
+    try {
+      const book = await books.create({
+        title: uploadTitle,
+        author: uploadAuthor,
+        project_type: uploadProjectType,
+        format: 'single_narrator',
+      } as any);
+
+      // Create a chapter for each audio file and upload audio to it
+      for (let i = 0; i < uploadFiles.length; i++) {
+        const file = uploadFiles[i];
+        const chapterTitle = uploadFiles.length === 1
+          ? 'Full Audio'
+          : `Chapter ${i + 1} - ${file.name.replace(/\.[^.]+$/, '')}`;
+        setUploadProgress(`Uploading ${i + 1}/${uploadFiles.length}: ${file.name}`);
+
+        // Create chapter
+        const chapter = await chaptersApi.create(book.id, {
+          title: chapterTitle,
+          raw_text: `[Imported audio: ${file.name}]`,
+        });
+
+        // Upload audio to chapter
+        await uploadAudioToChapter(book.id, chapter.id, file);
+      }
+
+      setUploadTitle('');
+      setUploadAuthor('');
+      setUploadFiles([]);
+      setShowUpload(false);
+      setUploadProgress('');
+      navigate(`/book/${book.id}`);
+    } catch (err: any) {
+      alert(`Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+      setUploadProgress('');
+    }
+  };
+
   const handleLogout = () => { clearToken(); setAuthenticated(false); };
 
   return (
@@ -61,6 +114,9 @@ export function Dashboard() {
           </button>
           <button onClick={() => setShowCreate(true)} style={styles.createBtn}>
             <Plus size={16} /> New Project
+          </button>
+          <button onClick={() => setShowUpload(true)} style={{ ...styles.createBtn, background: 'var(--purple, #8b5cf6)' }}>
+            <Upload size={16} /> Upload Existing
           </button>
           <button onClick={handleLogout} style={styles.iconBtn} title="Log out">
             <LogOut size={16} />
@@ -111,6 +167,65 @@ export function Dashboard() {
           <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
             <button type="submit" style={styles.submitBtn}>Create</button>
             <button type="button" onClick={() => setShowCreate(false)} style={styles.cancelBtn}>Cancel</button>
+          </div>
+        </form>
+      )}
+
+      {showUpload && (
+        <form onSubmit={handleUploadExisting} style={styles.createForm} className="animate-in-scale">
+          <h3 style={styles.formTitle}>Upload existing audio project</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-tertiary)', margin: '-4px 0 4px' }}>
+            Upload audio files from an existing audiobook or podcast. Each file becomes a chapter.
+          </p>
+          <div style={styles.typeToggle}>
+            <button type="button" onClick={() => setUploadProjectType('audiobook')}
+              style={{ ...styles.typeBtn, ...(uploadProjectType === 'audiobook' ? styles.typeBtnActive : {}) }}>
+              <BookOpen size={15} /> Audiobook
+            </button>
+            <button type="button" onClick={() => setUploadProjectType('podcast')}
+              style={{ ...styles.typeBtn, ...(uploadProjectType === 'podcast' ? styles.typeBtnActive : {}) }}>
+              <Mic size={15} /> Podcast
+            </button>
+          </div>
+          <input value={uploadTitle} onChange={(e) => setUploadTitle(e.target.value)}
+            placeholder={uploadProjectType === 'podcast' ? 'Episode title' : 'Book title'}
+            style={styles.input} autoFocus aria-label="Project title" />
+          <input value={uploadAuthor} onChange={(e) => setUploadAuthor(e.target.value)}
+            placeholder={uploadProjectType === 'podcast' ? 'Host name (optional)' : 'Author (optional)'}
+            style={styles.input} aria-label="Author or host" />
+          <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 6 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 500 }}>Audio files</label>
+            <button type="button" onClick={() => uploadFileRef.current?.click()}
+              style={{ ...styles.input, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, color: uploadFiles.length > 0 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
+              <Upload size={14} />
+              {uploadFiles.length > 0
+                ? `${uploadFiles.length} file${uploadFiles.length > 1 ? 's' : ''} selected`
+                : 'Choose audio files (MP3, WAV, M4A, FLAC...)'}
+            </button>
+            <input ref={uploadFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
+              multiple onChange={(e) => setUploadFiles(Array.from(e.target.files || []))}
+              hidden aria-label="Select audio files" />
+            {uploadFiles.length > 0 && (
+              <div style={{ fontSize: 11, color: 'var(--text-tertiary)', maxHeight: 100, overflow: 'auto' }}>
+                {uploadFiles.map((f, i) => (
+                  <div key={i} style={{ padding: '2px 0' }}>
+                    {i + 1}. {f.name} ({(f.size / (1024 * 1024)).toFixed(1)} MB)
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          {uploadProgress && (
+            <div style={{ fontSize: 12, color: 'var(--accent)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Loader size={12} style={{ animation: 'spin 1s linear infinite' }} /> {uploadProgress}
+            </div>
+          )}
+          <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+            <button type="submit" disabled={uploading || !uploadTitle.trim() || uploadFiles.length === 0}
+              style={{ ...styles.submitBtn, background: 'var(--purple, #8b5cf6)', opacity: (uploading || !uploadTitle.trim() || uploadFiles.length === 0) ? 0.5 : 1 }}>
+              {uploading ? 'Uploading...' : 'Upload & Create'}
+            </button>
+            <button type="button" onClick={() => { setShowUpload(false); setUploadFiles([]); }} style={styles.cancelBtn} disabled={uploading}>Cancel</button>
           </div>
         </form>
       )}

@@ -154,6 +154,185 @@ export function audioRouter(db: SqlJsDatabase): Router {
     }
   });
 
+  // Upload audio for a specific chapter (creates segment + audio asset)
+  router.post('/upload-to-chapter', async (req: Request, res: Response) => {
+    try {
+      const contentType = req.headers['content-type'] || '';
+      if (!contentType.includes('multipart/form-data')) {
+        res.status(400).json({ error: 'Must be multipart/form-data' });
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) { chunks.push(chunk); }
+      const body = Buffer.concat(chunks);
+
+      const boundaryMatch = contentType.match(/boundary=(.+)/);
+      if (!boundaryMatch) { res.status(400).json({ error: 'No boundary found' }); return; }
+      const boundary = boundaryMatch[1];
+
+      const parts = parseMultipart(body, boundary);
+      const filePart = parts.find(p => p.filename);
+      const chapterIdPart = parts.find(p => p.name === 'chapter_id');
+      const bookIdPart = parts.find(p => p.name === 'book_id');
+
+      if (!filePart || !chapterIdPart || !bookIdPart) {
+        res.status(400).json({ error: 'file, chapter_id, and book_id required' });
+        return;
+      }
+
+      const chapterId = chapterIdPart.data.toString('utf-8').trim();
+      const bookId = bookIdPart.data.toString('utf-8').trim();
+      const originalName = filePart.filename || 'uploaded';
+      const ext = path.extname(filePart.filename || '.mp3').toLowerCase();
+      const allowed = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
+      if (!allowed.includes(ext)) {
+        res.status(400).json({ error: `Unsupported format: ${ext}. Allowed: ${allowed.join(', ')}` });
+        return;
+      }
+
+      // Verify chapter exists
+      const chapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ? AND book_id = ?', [chapterId, bookId]);
+      if (!chapter) {
+        res.status(404).json({ error: 'Chapter not found' });
+        return;
+      }
+
+      // Save audio file
+      const assetId = uuid();
+      const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
+      fs.writeFileSync(filePath, filePart.data);
+
+      const fileSizeBytes = filePart.data.length;
+      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+
+      // Create audio asset
+      run(db,
+        `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
+         VALUES (?, ?, 'imported', ?, ?, ?, ?)`,
+        [assetId, bookId, filePath, estimatedDurationMs, fileSizeBytes, originalName]);
+
+      // Create a segment linked to this audio asset (or update existing if chapter has one segment with no audio)
+      const existingSegments = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [chapterId]);
+      let segmentId: string;
+
+      if (existingSegments.length === 1 && !existingSegments[0].audio_asset_id) {
+        // Update existing single segment with the audio
+        segmentId = existingSegments[0].id;
+        run(db, 'UPDATE segments SET audio_asset_id = ? WHERE id = ?', [assetId, segmentId]);
+      } else if (existingSegments.length === 0) {
+        // Create a new segment for this audio
+        segmentId = uuid();
+        const segText = `[Imported audio: ${originalName}]`;
+        run(db,
+          `INSERT INTO segments (id, chapter_id, sort_order, text, audio_asset_id)
+           VALUES (?, ?, 0, ?, ?)`,
+          [segmentId, chapterId, segText, assetId]);
+      } else {
+        // Append a new segment at the end
+        const maxOrder = existingSegments[existingSegments.length - 1].sort_order;
+        segmentId = uuid();
+        const segText = `[Imported audio: ${originalName}]`;
+        run(db,
+          `INSERT INTO segments (id, chapter_id, sort_order, text, audio_asset_id)
+           VALUES (?, ?, ?, ?, ?)`,
+          [segmentId, chapterId, maxOrder + 1, segText, assetId]);
+      }
+
+      res.status(201).json({
+        audio_asset_id: assetId,
+        segment_id: segmentId,
+        file_path: filePath,
+        name: originalName,
+        duration_ms: estimatedDurationMs,
+        file_size_bytes: fileSizeBytes,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Replace audio for an existing segment
+  router.post('/replace-segment-audio', async (req: Request, res: Response) => {
+    try {
+      const contentType = req.headers['content-type'] || '';
+      if (!contentType.includes('multipart/form-data')) {
+        res.status(400).json({ error: 'Must be multipart/form-data' });
+        return;
+      }
+
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) { chunks.push(chunk); }
+      const body = Buffer.concat(chunks);
+
+      const boundaryMatch = contentType.match(/boundary=(.+)/);
+      if (!boundaryMatch) { res.status(400).json({ error: 'No boundary found' }); return; }
+      const boundary = boundaryMatch[1];
+
+      const parts = parseMultipart(body, boundary);
+      const filePart = parts.find(p => p.filename);
+      const segmentIdPart = parts.find(p => p.name === 'segment_id');
+      const bookIdPart = parts.find(p => p.name === 'book_id');
+
+      if (!filePart || !segmentIdPart || !bookIdPart) {
+        res.status(400).json({ error: 'file, segment_id, and book_id required' });
+        return;
+      }
+
+      const segmentId = segmentIdPart.data.toString('utf-8').trim();
+      const bookId = bookIdPart.data.toString('utf-8').trim();
+      const originalName = filePart.filename || 'uploaded';
+      const ext = path.extname(filePart.filename || '.mp3').toLowerCase();
+      const allowed = ['.mp3', '.wav', '.ogg', '.m4a', '.flac', '.aac'];
+      if (!allowed.includes(ext)) {
+        res.status(400).json({ error: `Unsupported format: ${ext}` });
+        return;
+      }
+
+      // Verify segment exists
+      const segment = queryOne(db, 'SELECT * FROM segments WHERE id = ?', [segmentId]) as any;
+      if (!segment) {
+        res.status(404).json({ error: 'Segment not found' });
+        return;
+      }
+
+      // Delete old audio asset if exists
+      if (segment.audio_asset_id) {
+        const oldAsset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [segment.audio_asset_id]) as any;
+        if (oldAsset?.file_path && fs.existsSync(oldAsset.file_path)) {
+          try { fs.unlinkSync(oldAsset.file_path); } catch {}
+        }
+        run(db, 'DELETE FROM clips WHERE audio_asset_id = ?', [segment.audio_asset_id]);
+        run(db, 'DELETE FROM audio_assets WHERE id = ?', [segment.audio_asset_id]);
+      }
+
+      // Save new audio file
+      const assetId = uuid();
+      const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
+      fs.writeFileSync(filePath, filePart.data);
+
+      const fileSizeBytes = filePart.data.length;
+      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+
+      run(db,
+        `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
+         VALUES (?, ?, 'imported', ?, ?, ?, ?)`,
+        [assetId, bookId, filePath, estimatedDurationMs, fileSizeBytes, originalName]);
+
+      // Link to segment
+      run(db, 'UPDATE segments SET audio_asset_id = ? WHERE id = ?', [assetId, segmentId]);
+
+      res.status(200).json({
+        audio_asset_id: assetId,
+        segment_id: segmentId,
+        name: originalName,
+        duration_ms: estimatedDurationMs,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // Upload audio file
   router.post('/upload', async (req: Request, res: Response) => {
     try {
