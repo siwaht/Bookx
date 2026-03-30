@@ -411,6 +411,7 @@ export const library = {
   },
   coverUrl: (id: string) => `${API_BASE}/library/${id}/cover`,
   readUrl: (id: string) => `${API_BASE}/library/${id}/read`,
+  readHtmlUrl: (id: string) => `${API_BASE}/library/${id}/read-html`,
   downloadUrl: (id: string) => `${API_BASE}/library/${id}/download`,
   uploadFormat: async (id: string, file: File, format?: string) => {
     const formData = new FormData();

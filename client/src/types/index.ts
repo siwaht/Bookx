@@ -15,6 +15,7 @@ export interface Book {
   default_speed: number;
   intro_asset_id: string | null;
   outro_asset_id: string | null;
+  library_book_id: string | null;
   created_at: string;
   updated_at: string;
   chapters?: Chapter[];

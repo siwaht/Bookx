@@ -350,6 +350,12 @@ export function initializeSchema(database: SqlJsDatabase): void {
 
   // Migration: add ducking columns to tracks if missing
   const trackCols = queryAll(database, "PRAGMA table_info(tracks)").map((c: any) => c.name);
+
+  // Migration: add library_book_id to books if missing
+  const bookCols3 = queryAll(database, "PRAGMA table_info(books)").map((c: any) => c.name);
+  if (!bookCols3.includes('library_book_id')) {
+    database.run("ALTER TABLE books ADD COLUMN library_book_id TEXT");
+  }
   if (!trackCols.includes('duck_amount_db')) {
     database.run("ALTER TABLE tracks ADD COLUMN duck_amount_db REAL DEFAULT -12.0");
   }

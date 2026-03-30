@@ -397,33 +397,48 @@ export function libraryRouter(db: SqlJsDatabase): Router {
     }
   });
 
-  // Convert library book to audiobook project
+  // Convert library book to audiobook project (with full EPUB/DOCX/TXT import)
   router.post('/:id/convert-to-audiobook', async (req, res) => {
     try {
       const libBook = queryOne(db, 'SELECT * FROM library_books WHERE id = ?', [req.params.id]) as any;
       if (!libBook) { res.status(404).json({ error: 'Book not found' }); return; }
+      if (!fs.existsSync(libBook.file_path)) { res.status(404).json({ error: 'Source file not found on disk' }); return; }
 
       const bookId = uuid();
       db.run(
-        `INSERT INTO books (id, title, author, isbn, cover_art_path, project_type, format)
-         VALUES (?, ?, ?, ?, ?, 'audiobook', 'single_narrator')`,
-        [bookId, libBook.title, libBook.author, libBook.isbn, libBook.cover_path]
+        `INSERT INTO books (id, title, author, isbn, cover_art_path, project_type, format, library_book_id)
+         VALUES (?, ?, ?, ?, ?, 'audiobook', 'single_narrator', ?)`,
+        [bookId, libBook.title, libBook.author, libBook.isbn, libBook.cover_path, libBook.id]
       );
 
-      // If the book has text content (txt, epub, docx), try to extract and create a chapter
+      // Parse the file based on format
       const ext = path.extname(libBook.file_path).toLowerCase();
-      let chapterCount = 0;
-      if (['.txt'].includes(ext) && fs.existsSync(libBook.file_path)) {
+      let chapters: Array<{ title: string; text: string }> = [];
+
+      if (ext === '.txt') {
         const text = fs.readFileSync(libBook.file_path, 'utf-8');
-        const chId = uuid();
-        db.run(
-          `INSERT INTO chapters (id, book_id, title, sort_order, raw_text) VALUES (?, ?, ?, 0, ?)`,
-          [chId, bookId, 'Full Text', text]
-        );
-        chapterCount = 1;
+        chapters = splitTextIntoChapters(text);
+      } else if (ext === '.docx' || ext === '.doc') {
+        const mammoth = (await import('mammoth')).default;
+        const result = await mammoth.extractRawText({ path: libBook.file_path });
+        chapters = splitTextIntoChapters(result.value);
+      } else if (ext === '.epub') {
+        const JSZip = (await import('jszip')).default;
+        const data = fs.readFileSync(libBook.file_path);
+        const zip = await JSZip.loadAsync(data);
+        chapters = await parseEpubToChapters(zip);
       }
 
-      // Link library book to audiobook project
+      // Insert chapters
+      for (let i = 0; i < chapters.length; i++) {
+        const chId = uuid();
+        const cleaned = chapters[i].text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        db.run(
+          `INSERT INTO chapters (id, book_id, title, sort_order, raw_text, cleaned_text) VALUES (?, ?, ?, ?, ?, ?)`,
+          [chId, bookId, chapters[i].title, i, chapters[i].text, cleaned]
+        );
+      }
+
       db.run("UPDATE library_books SET audiobook_ready = 1, updated_at = datetime('now') WHERE id = ?", [req.params.id]);
       saveDb();
 
@@ -431,15 +446,142 @@ export function libraryRouter(db: SqlJsDatabase): Router {
         ok: true,
         book_id: bookId,
         title: libBook.title,
-        chapters_created: chapterCount,
-        message: chapterCount > 0
-          ? `Audiobook project created with ${chapterCount} chapter(s). Import more text via the Manuscript page.`
-          : 'Audiobook project created. Import your manuscript (EPUB/DOCX/TXT) in the Manuscript page to add chapters.',
+        chapters_created: chapters.length,
+        message: chapters.length > 0
+          ? `Audiobook project created with ${chapters.length} chapter(s) imported from ${ext.replace('.', '').toUpperCase()}.`
+          : 'Audiobook project created. Import your manuscript in the Manuscript page to add chapters.',
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
+  // Read DOCX as HTML (for in-browser viewing)
+  router.get('/:id/read-html', async (req, res) => {
+    try {
+      const book = queryOne(db, 'SELECT * FROM library_books WHERE id = ?', [req.params.id]) as any;
+      if (!book || !fs.existsSync(book.file_path)) { res.status(404).json({ error: 'File not found' }); return; }
+      const ext = path.extname(book.file_path).toLowerCase();
+      if (ext === '.docx' || ext === '.doc') {
+        const mammoth = (await import('mammoth')).default;
+        const result = await mammoth.convertToHtml({ path: book.file_path });
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Georgia,serif;max-width:700px;margin:40px auto;padding:0 20px;line-height:1.8;color:#222}img{max-width:100%}</style></head><body>${result.value}</body></html>`;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+      } else if (ext === '.txt') {
+        const text = fs.readFileSync(book.file_path, 'utf-8');
+        const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>body{font-family:Georgia,serif;max-width:700px;margin:40px auto;padding:0 20px;line-height:1.8;color:#222;white-space:pre-wrap}</style></head><body>${text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}</body></html>`;
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        res.send(html);
+      } else {
+        res.status(400).json({ error: 'HTML conversion only supported for DOCX and TXT files' });
+      }
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   return router;
+}
+
+// ── Helper: split text into chapters ──
+function splitTextIntoChapters(text: string): Array<{ title: string; text: string }> {
+  const patterns = [
+    /^(Chapter\s+\d+[.:\s].*)$/gim,
+    /^(CHAPTER\s+\d+[.:\s].*)$/gm,
+    /^(Chapter\s+[IVXLCDM]+[.:\s].*)$/gim,
+    /^(Part\s+\d+[.:\s].*)$/gim,
+    /^(#{1,3}\s+.+)$/gm,
+    /^(Chapter\s+\d+)$/gim,
+  ];
+  for (const pattern of patterns) {
+    const matches = [...text.matchAll(pattern)];
+    if (matches.length >= 2) {
+      const chapters: Array<{ title: string; text: string }> = [];
+      for (let i = 0; i < matches.length; i++) {
+        const start = matches[i].index!;
+        const end = i + 1 < matches.length ? matches[i + 1].index! : text.length;
+        chapters.push({ title: matches[i][1].replace(/^#+\s*/, '').trim(), text: text.slice(start, end).trim() });
+      }
+      return chapters;
+    }
+  }
+  if (text.length > 10000) {
+    const paras = text.split(/\n\s*\n/);
+    const chapters: Array<{ title: string; text: string }> = [];
+    let cur = '', num = 1;
+    for (const p of paras) {
+      if (cur.length + p.length > 8000 && cur.length > 0) { chapters.push({ title: `Chapter ${num}`, text: cur.trim() }); num++; cur = ''; }
+      cur += p + '\n\n';
+    }
+    if (cur.trim()) chapters.push({ title: `Chapter ${num}`, text: cur.trim() });
+    return chapters;
+  }
+  return [{ title: 'Chapter 1', text: text.trim() }];
+}
+
+// ── Helper: parse EPUB into chapters ──
+async function parseEpubToChapters(zip: any): Promise<Array<{ title: string; text: string }>> {
+  const containerXml = await zip.file('META-INF/container.xml')?.async('string');
+  let opfPath = 'content.opf';
+  if (containerXml) {
+    const m = containerXml.match(/full-path="([^"]+)"/);
+    if (m) opfPath = m[1];
+  }
+  const opfContent = await zip.file(opfPath)?.async('string');
+  if (!opfContent) return fallbackHtmlExtract(zip);
+
+  const opfDir = opfPath.includes('/') ? opfPath.substring(0, opfPath.lastIndexOf('/') + 1) : '';
+  const manifest = new Map<string, string>();
+  let match;
+  const r1 = /<item\s+[^>]*id="([^"]+)"[^>]*href="([^"]+)"[^>]*>/gi;
+  while ((match = r1.exec(opfContent)) !== null) manifest.set(match[1], match[2]);
+  const r2 = /<item\s+[^>]*href="([^"]+)"[^>]*id="([^"]+)"[^>]*>/gi;
+  while ((match = r2.exec(opfContent)) !== null) manifest.set(match[2], match[1]);
+
+  const spineItems: string[] = [];
+  const r3 = /<itemref\s+[^>]*idref="([^"]+)"[^>]*>/gi;
+  while ((match = r3.exec(opfContent)) !== null) spineItems.push(match[1]);
+
+  const chapters: Array<{ title: string; text: string }> = [];
+  for (let i = 0; i < spineItems.length; i++) {
+    const href = manifest.get(spineItems[i]);
+    if (!href) continue;
+    const file = zip.file(opfDir + decodeURIComponent(href));
+    if (!file) continue;
+    const html = await file.async('string');
+    const text = stripHtmlTags(html).trim();
+    if (!text || text.length < 10) continue;
+    const hm = html.match(/<h[1-3][^>]*>([^<]+)<\/h[1-3]>/i);
+    const title = hm ? hm[1].trim() : `Chapter ${chapters.length + 1}`;
+    chapters.push({ title, text });
+  }
+  return chapters.length > 0 ? chapters : fallbackHtmlExtract(zip);
+}
+
+async function fallbackHtmlExtract(zip: any): Promise<Array<{ title: string; text: string }>> {
+  const chapters: Array<{ title: string; text: string }> = [];
+  const files = Object.keys(zip.files).filter((f: string) => /\.(x?html?)$/i.test(f) && !f.includes('META-INF')).sort();
+  for (const fp of files) {
+    const html = await zip.file(fp)!.async('string');
+    const text = stripHtmlTags(html).trim();
+    if (!text || text.length < 10) continue;
+    const hm = html.match(/<h[1-3][^>]*>([^<]+)<\/h[1-3]>/i);
+    chapters.push({ title: hm ? hm[1].trim() : `Chapter ${chapters.length + 1}`, text });
+  }
+  return chapters;
+}
+
+function stripHtmlTags(html: string): string {
+  return html
+    .replace(/<head[\s\S]*?<\/head>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/p>/gi, '\n\n')
+    .replace(/<\/div>/gi, '\n')
+    .replace(/<\/h[1-6]>/gi, '\n\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, ' ')
+    .replace(/[ \t]+/g, ' ').replace(/\n{3,}/g, '\n\n').trim();
 }
