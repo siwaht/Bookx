@@ -185,3 +185,35 @@ export interface TTSVoice {
   description?: string | null;
   labels?: Record<string, string>;
 }
+
+// ── Library ──
+export type LibraryFileFormat = 'pdf' | 'epub' | 'docx' | 'kindle' | 'mobi';
+export type PublishTarget = 'kindle_ebook' | 'kindle_paperback' | 'kindle_hardcover' | 'audiobook' | 'spotify' | 'apple_books' | 'google_play';
+
+export interface LibraryBook {
+  id: string;
+  title: string;
+  author: string | null;
+  description: string | null;
+  isbn: string | null;
+  cover_path: string | null;
+  original_format: LibraryFileFormat;
+  file_path: string;
+  file_size_bytes: number;
+  page_count: number | null;
+  audiobook_ready: boolean;
+  kindle_ready: boolean;
+  tags: string | null;
+  created_at: string;
+  updated_at: string;
+  formats?: LibraryBookFormat[];
+}
+
+export interface LibraryBookFormat {
+  id: string;
+  library_book_id: string;
+  format: string;
+  file_path: string;
+  file_size_bytes: number;
+  created_at: string;
+}

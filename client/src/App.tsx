@@ -16,6 +16,7 @@ import { AudioStudioPage } from './pages/AudioStudioPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { PronunciationPage } from './pages/PronunciationPage';
 import { UsagePage } from './pages/UsagePage';
+import { LibraryPage } from './pages/LibraryPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -58,6 +59,7 @@ export default function App() {
             <ErrorBoundary>
               <Routes>
             <Route path="/" element={<Dashboard />} />
+            <Route path="/library" element={<LibraryPage />} />
             <Route path="/settings" element={<SettingsPage />} />
             <Route path="/book/:bookId" element={<BookEditor />}>
               <Route index element={<ManuscriptPage />} />

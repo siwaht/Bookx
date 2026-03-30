@@ -24,6 +24,7 @@ import { settingsRouter, getSetting } from './routes/settings.js';
 import { aiParseRouter } from './routes/ai-parse.js';
 import { pronunciationRouter } from './routes/pronunciation.js';
 import { ttsProvidersRouter } from './routes/tts-providers.js';
+import { libraryRouter } from './routes/library.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -68,7 +69,7 @@ async function main() {
   validateEnv();
 
   const DATA_DIR = process.env.DATA_DIR || './data';
-  for (const sub of ['audio', 'renders', 'exports', 'uploads', 'backups']) {
+  for (const sub of ['audio', 'renders', 'exports', 'uploads', 'backups', 'library', 'library/covers']) {
     fs.mkdirSync(path.join(DATA_DIR, sub), { recursive: true });
   }
 
@@ -199,6 +200,7 @@ async function main() {
   app.use('/api/books/:bookId/ai-parse', aiParseRouter(db));
   app.use('/api/books/:bookId/pronunciation', pronunciationRouter(db));
   app.use('/api/tts', ttsProvidersRouter(db));
+  app.use('/api/library', libraryRouter(db));
 
   // ── Save DB explicitly ──
   app.post('/api/save', (_req, res) => {

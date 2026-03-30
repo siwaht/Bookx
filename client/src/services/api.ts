@@ -375,3 +375,58 @@ export const system = {
     backups_mb: number; total_mb: number;
   }>('/disk-usage'),
 };
+
+// ── Library ──
+export const library = {
+  list: () => request<any[]>('/library'),
+  get: (id: string) => request<any>(`/library/${id}`),
+  upload: async (file: File, meta?: { title?: string; author?: string; description?: string; isbn?: string; tags?: string }) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (meta?.title) formData.append('title', meta.title);
+    if (meta?.author) formData.append('author', meta.author);
+    if (meta?.description) formData.append('description', meta.description);
+    if (meta?.isbn) formData.append('isbn', meta.isbn);
+    if (meta?.tags) formData.append('tags', meta.tags);
+    const res = await fetch(`${API_BASE}/library`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({ error: 'Upload failed' })); throw new Error(err.error); }
+    return res.json();
+  },
+  update: (id: string, data: any) => request<any>(`/library/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/library/${id}`, { method: 'DELETE' }),
+  uploadCover: async (id: string, file: File) => {
+    const formData = new FormData();
+    formData.append('cover', file);
+    const res = await fetch(`${API_BASE}/library/${id}/cover`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({ error: 'Upload failed' })); throw new Error(err.error); }
+    return res.json();
+  },
+  coverUrl: (id: string) => `${API_BASE}/library/${id}/cover`,
+  readUrl: (id: string) => `${API_BASE}/library/${id}/read`,
+  downloadUrl: (id: string) => `${API_BASE}/library/${id}/download`,
+  uploadFormat: async (id: string, file: File, format?: string) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (format) formData.append('format', format);
+    const res = await fetch(`${API_BASE}/library/${id}/formats`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+    if (!res.ok) { const err = await res.json().catch(() => ({ error: 'Upload failed' })); throw new Error(err.error); }
+    return res.json();
+  },
+  formatDownloadUrl: (id: string, formatId: string) => `${API_BASE}/library/${id}/formats/${formatId}/download`,
+  formatReadUrl: (id: string, formatId: string) => `${API_BASE}/library/${id}/formats/${formatId}/read`,
+  deleteFormat: (id: string, formatId: string) => request<void>(`/library/${id}/formats/${formatId}`, { method: 'DELETE' }),
+  prepareAudiobook: (id: string) => request<{ ok: boolean; message: string }>(`/library/${id}/prepare-audiobook`, { method: 'POST' }),
+  prepareKindle: (id: string) => request<{ ok: boolean; message: string }>(`/library/${id}/prepare-kindle`, { method: 'POST' }),
+};

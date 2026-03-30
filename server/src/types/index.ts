@@ -279,10 +279,11 @@ export interface ACXSpec {
   max_file_size_mb: null;
   cover_min_px: 2400;
   cover_aspect: '1:1';
+}
 
-  // ── InAudio Spec ──
+// ── InAudio Spec ──
 
-  export interface InAudioSpec {
+export interface InAudioSpec {
     format: 'mp3';
     bitrate: 192;
     encoding: 'cbr';
@@ -300,5 +301,4 @@ export interface ACXSpec {
       re_encode_existing_mp3: true;
       output_to_subfolder: true;
     };
-  }
 }

@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { books, uploadAudio, chapters as chaptersApi, uploadAudioToChapter } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { Plus, BookOpen, Trash2, LogOut, Settings, Mic, Headphones, ArrowRight, Upload, Loader } from 'lucide-react';
+import { Plus, BookOpen, Trash2, LogOut, Settings, Mic, Headphones, ArrowRight, Upload, Loader, BookMarked } from 'lucide-react';
 import { clearToken } from '../services/api';
 
 export function Dashboard() {
@@ -109,6 +109,9 @@ export function Dashboard() {
           <p style={styles.subtitle}>Create audiobooks and podcasts with multi-provider AI voices, sound effects, and music</p>
         </div>
         <div style={styles.headerActions}>
+          <button onClick={() => navigate('/library')} style={{ ...styles.createBtn, background: 'var(--purple, #a78bfa)' }}>
+            <BookMarked size={16} /> Library
+          </button>
           <button onClick={() => navigate('/settings')} style={styles.iconBtn} title="Settings">
             <Settings size={16} />
           </button>

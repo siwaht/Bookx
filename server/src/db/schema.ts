@@ -232,6 +232,40 @@ export function initializeSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // ── Library ──
+  database.run(`
+    CREATE TABLE IF NOT EXISTS library_books (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      author TEXT,
+      description TEXT,
+      isbn TEXT,
+      cover_path TEXT,
+      original_format TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size_bytes INTEGER DEFAULT 0,
+      page_count INTEGER,
+      audiobook_ready INTEGER DEFAULT 0,
+      kindle_ready INTEGER DEFAULT 0,
+      tags TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS library_book_formats (
+      id TEXT PRIMARY KEY,
+      library_book_id TEXT NOT NULL REFERENCES library_books(id) ON DELETE CASCADE,
+      format TEXT NOT NULL,
+      file_path TEXT NOT NULL,
+      file_size_bytes INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  database.run('CREATE INDEX IF NOT EXISTS idx_library_formats_book ON library_book_formats(library_book_id)');
+
   // API keys / settings store
   database.run(`
     CREATE TABLE IF NOT EXISTS settings (
