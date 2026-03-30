@@ -1,11 +1,13 @@
 ﻿import React, { useEffect, useState, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { library } from '../services/api';
 import type { LibraryBook } from '../types';
-import { Upload, BookOpen, Trash2, Download, FileText, Eye, Image, Headphones, Plus, X, Check, Loader, Edit3, BookMarked, Smartphone, Globe, Music } from 'lucide-react';
+import { Upload, BookOpen, Trash2, Download, FileText, Eye, Image, Headphones, Plus, X, Check, Loader, Edit3, BookMarked, Smartphone, Globe, Music, ArrowRight, Package } from 'lucide-react';
 
 type DetailTab = 'info' | 'formats' | 'publish' | 'read';
 
 export function LibraryPage() {
+  const navigate = useNavigate();
   const [books, setBooks] = useState<LibraryBook[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedBook, setSelectedBook] = useState<LibraryBook | null>(null);
@@ -21,6 +23,8 @@ export function LibraryPage() {
   const [editAuthor, setEditAuthor] = useState('');
   const [editDesc, setEditDesc] = useState('');
   const [editIsbn, setEditIsbn] = useState('');
+  const [converting, setConverting] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const coverRef = useRef<HTMLInputElement>(null);
   const formatRef = useRef<HTMLInputElement>(null);
@@ -31,6 +35,12 @@ export function LibraryPage() {
   };
   useEffect(() => { loadBooks(); }, []);
 
+  const filteredBooks = books.filter(b => {
+    if (!searchQuery) return true;
+    const q = searchQuery.toLowerCase();
+    return b.title.toLowerCase().includes(q) || (b.author || '').toLowerCase().includes(q) || b.original_format.includes(q);
+  });
+
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault(); if (!uploadFile) return; setUploading(true);
     try {
@@ -39,51 +49,51 @@ export function LibraryPage() {
       loadBooks();
     } catch (err: any) { alert(err.message); } finally { setUploading(false); }
   };
-
   const handleDelete = async (id: string, title: string, e: React.MouseEvent) => {
     e.stopPropagation(); if (!confirm(`Delete "${title}"?`)) return;
     await library.delete(id); if (selectedBook?.id === id) setSelectedBook(null); loadBooks();
   };
-
   const handleCoverUpload = async (file: File) => {
     if (!selectedBook) return;
     try { await library.uploadCover(selectedBook.id, file); const u = await library.get(selectedBook.id); setSelectedBook(u); loadBooks(); }
     catch (err: any) { alert(err.message); }
   };
-
   const handleFormatUpload = async (file: File) => {
     if (!selectedBook) return;
     try { await library.uploadFormat(selectedBook.id, file); const u = await library.get(selectedBook.id); setSelectedBook(u); loadBooks(); }
     catch (err: any) { alert(err.message); }
   };
-
   const handleSaveMeta = async () => {
     if (!selectedBook) return;
     try { const u = await library.update(selectedBook.id, { title: editTitle, author: editAuthor, description: editDesc, isbn: editIsbn }); setSelectedBook(u); setEditingMeta(false); loadBooks(); }
     catch (err: any) { alert(err.message); }
   };
-
   const handlePrepareAudiobook = async () => {
     if (!selectedBook) return;
     try { const r = await library.prepareAudiobook(selectedBook.id); alert(r.message); const u = await library.get(selectedBook.id); setSelectedBook(u); loadBooks(); }
     catch (err: any) { alert(err.message); }
   };
-
   const handlePrepareKindle = async () => {
     if (!selectedBook) return;
     try { const r = await library.prepareKindle(selectedBook.id); alert(r.message); const u = await library.get(selectedBook.id); setSelectedBook(u); loadBooks(); }
     catch (err: any) { alert(err.message); }
   };
-
+  const handleConvertToAudiobook = async () => {
+    if (!selectedBook) return; setConverting(true);
+    try {
+      const r = await library.convertToAudiobook(selectedBook.id);
+      alert(r.message);
+      const u = await library.get(selectedBook.id); setSelectedBook(u); loadBooks();
+      if (r.book_id) navigate(`/book/${r.book_id}`);
+    } catch (err: any) { alert(err.message); } finally { setConverting(false); }
+  };
   const openBook = (b: LibraryBook) => { setSelectedBook(b); setDetailTab('info'); setEditingMeta(false); };
-
   const startEdit = () => {
     if (!selectedBook) return;
     setEditTitle(selectedBook.title); setEditAuthor(selectedBook.author || '');
     setEditDesc(selectedBook.description || ''); setEditIsbn(selectedBook.isbn || '');
     setEditingMeta(true);
   };
-
   const fl = (f: string) => ({ pdf: 'PDF', epub: 'EPUB', docx: 'Word', kindle: 'Kindle', mobi: 'MOBI', txt: 'Text' }[f] || f.toUpperCase());
   const fz = (b: number) => b < 1024 ? `${b} B` : b < 1048576 ? `${(b / 1024).toFixed(1)} KB` : `${(b / 1048576).toFixed(1)} MB`;
   const canRead = (f: string) => ['pdf', 'epub', 'docx', 'txt'].includes(f);
@@ -94,7 +104,7 @@ export function LibraryPage() {
     { key: 'ke', icon: Smartphone, label: 'Amazon Kindle eBook', desc: 'Publish as Kindle eBook', ready: selectedBook?.kindle_ready, color: 'var(--warning)' },
     { key: 'kp', icon: BookOpen, label: 'Amazon Paperback', desc: 'Print-on-demand via KDP', ready: selectedBook?.kindle_ready, color: 'var(--warning)' },
     { key: 'kh', icon: BookMarked, label: 'Amazon Hardcover', desc: 'Hardcover via KDP', ready: selectedBook?.kindle_ready, color: 'var(--warning)' },
-    { key: 'ab', icon: Headphones, label: 'Audiobook (ACX/Audible)', desc: 'Convert to audiobook', ready: selectedBook?.audiobook_ready, color: 'var(--success)' },
+    { key: 'ab', icon: Headphones, label: 'Audiobook (ACX/Audible)', desc: 'Convert to audiobook project', ready: selectedBook?.audiobook_ready, color: 'var(--success)' },
     { key: 'sp', icon: Music, label: 'Spotify Audiobook', desc: 'Distribute on Spotify', ready: selectedBook?.audiobook_ready, color: '#1DB954' },
     { key: 'ap', icon: BookOpen, label: 'Apple Books', desc: 'Publish on Apple Books', ready: !!selectedBook?.formats?.some(f => f.format === 'epub'), color: 'var(--accent)' },
     { key: 'gp', icon: Globe, label: 'Google Play Books', desc: 'Publish on Google Play', ready: !!selectedBook?.formats?.some(f => f.format === 'epub' || f.format === 'pdf'), color: 'var(--accent)' },
@@ -110,7 +120,10 @@ export function LibraryPage() {
           </div>
           <p style={{ fontSize: 13, color: 'var(--text-tertiary)', marginLeft: 46 }}>Store, manage, and prepare your books for publishing</p>
         </div>
-        <button onClick={() => setShowUpload(true)} style={st.primaryBtn}><Upload size={16} /> Add Book</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {books.length > 0 && <a href={library.downloadAllUrl()} style={{ ...st.primaryBtn, background: 'var(--bg-elevated)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)', textDecoration: 'none' }}><Download size={16} /> Download All</a>}
+          <button onClick={() => setShowUpload(true)} style={st.primaryBtn}><Upload size={16} /> Add Book</button>
+        </div>
       </header>
 
       {showUpload && (
@@ -131,11 +144,15 @@ export function LibraryPage() {
         </form>
       )}
 
+      {books.length > 3 && (
+        <input value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder="Search books by title, author, or format..." style={{ ...st.input, marginBottom: 16, maxWidth: 400 }} />
+      )}
+
       <div style={{ display: 'flex', gap: 20, flex: 1, minHeight: 0 }}>
         <div style={{ flex: selectedBook ? '0 0 360px' : 1, overflow: 'auto' }}>
-          {books.length > 0 && <div style={st.sectionLabel}>YOUR BOOKS ({books.length})</div>}
+          {filteredBooks.length > 0 && <div style={st.sectionLabel}>YOUR BOOKS ({filteredBooks.length})</div>}
           <div style={{ display: 'grid', gridTemplateColumns: selectedBook ? '1fr' : 'repeat(auto-fill, minmax(280px, 1fr))', gap: 10 }} className="stagger-children">
-            {books.map(bk => (
+            {filteredBooks.map(bk => (
               <div key={bk.id} onClick={() => openBook(bk)} style={{ ...st.card, ...(selectedBook?.id === bk.id ? { borderColor: 'var(--accent)', background: 'var(--accent-subtle)' } : {}) }} className="card-hover" role="button" tabIndex={0}>
                 <div style={{ width: 48, height: 64, borderRadius: 6, background: 'var(--bg-elevated)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, overflow: 'hidden' }}>
                   {bk.cover_path ? <img src={`${library.coverUrl(bk.id)}?t=${bk.updated_at}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <BookOpen size={20} color="var(--text-muted)" />}
@@ -149,7 +166,10 @@ export function LibraryPage() {
                     {bk.kindle_ready ? <span style={{ ...st.badge, background: 'var(--warning-subtle)', color: 'var(--warning)' }}>Kindle</span> : null}
                   </div>
                 </div>
-                <button onClick={e => handleDelete(bk.id, bk.title, e)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 4 }}><Trash2 size={14} /></button>
+                <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4, alignItems: 'center' }}>
+                  <a href={library.downloadUrl(bk.id)} onClick={e => e.stopPropagation()} style={{ ...st.iconBtn, textDecoration: 'none' }} title="Download"><Download size={14} /></a>
+                  <button onClick={e => handleDelete(bk.id, bk.title, e)} style={{ ...st.iconBtn, color: 'var(--danger)' }} title="Delete"><Trash2 size={14} /></button>
+                </div>
               </div>
             ))}
           </div>
@@ -213,6 +233,12 @@ export function LibraryPage() {
                   {selectedBook.kindle_ready
                     ? <span style={{ ...st.statusBadge, background: 'var(--warning-subtle)', color: 'var(--warning)' }}><Smartphone size={12} /> Kindle Ready</span>
                     : <button onClick={handlePrepareKindle} style={{ ...st.statusBadge, cursor: 'pointer', background: 'var(--bg-elevated)', color: 'var(--text-tertiary)' }}><Smartphone size={12} /> Prepare Kindle</button>}
+                </div>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' as const }}>
+                  <a href={library.downloadUrl(selectedBook.id)} style={{ ...st.smallBtn, textDecoration: 'none' }}><Download size={12} /> Download</a>
+                  <button onClick={handleConvertToAudiobook} disabled={converting} style={{ ...st.smallBtn, background: 'var(--success-subtle)', color: 'var(--success)', borderColor: 'rgba(74,222,128,0.15)' }}>
+                    {converting ? <Loader size={12} className="spinner" /> : <ArrowRight size={12} />} Convert to Audiobook Project
+                  </button>
                 </div>
               </div>
             )}

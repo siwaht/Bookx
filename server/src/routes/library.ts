@@ -75,6 +75,47 @@ export function libraryRouter(db: SqlJsDatabase): Router {
     }
   });
 
+  // Download all library books as ZIP (must be before /:id routes)
+  router.get('/download-all', async (_req, res) => {
+    try {
+      const allBooks = queryAll(db, 'SELECT * FROM library_books ORDER BY title') as any[];
+      if (allBooks.length === 0) { res.status(404).json({ error: 'No books in library' }); return; }
+
+      const archiver = (await import('archiver')).default;
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', 'attachment; filename="library_export.zip"');
+
+      const archive = archiver('zip', { zlib: { level: 6 } });
+      archive.on('error', (err: any) => {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+      });
+      archive.pipe(res);
+
+      for (const book of allBooks) {
+        const safeName = (book.title || 'untitled').replace(/[^a-zA-Z0-9_\- ]/g, '_');
+        if (book.file_path && fs.existsSync(book.file_path)) {
+          const ext = path.extname(book.file_path);
+          archive.file(book.file_path, { name: `${safeName}/${safeName}${ext}` });
+        }
+        if (book.cover_path && fs.existsSync(book.cover_path)) {
+          const coverExt = path.extname(book.cover_path);
+          archive.file(book.cover_path, { name: `${safeName}/cover${coverExt}` });
+        }
+        const formats = queryAll(db, 'SELECT * FROM library_book_formats WHERE library_book_id = ?', [book.id]) as any[];
+        for (const fmt of formats) {
+          if (fmt.file_path && fs.existsSync(fmt.file_path) && fmt.file_path !== book.file_path) {
+            const fmtExt = path.extname(fmt.file_path);
+            archive.file(fmt.file_path, { name: `${safeName}/${safeName}_${fmt.format}${fmtExt}` });
+          }
+        }
+      }
+
+      await archive.finalize();
+    } catch (err: any) {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    }
+  });
+
   // Get single library book
   router.get('/:id', (req, res) => {
     try {
@@ -351,6 +392,50 @@ export function libraryRouter(db: SqlJsDatabase): Router {
       res.setHeader('Content-Type', mimeMap[ext] || 'application/octet-stream');
       res.setHeader('Content-Disposition', 'inline');
       res.sendFile(path.resolve(fmt.file_path));
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Convert library book to audiobook project
+  router.post('/:id/convert-to-audiobook', async (req, res) => {
+    try {
+      const libBook = queryOne(db, 'SELECT * FROM library_books WHERE id = ?', [req.params.id]) as any;
+      if (!libBook) { res.status(404).json({ error: 'Book not found' }); return; }
+
+      const bookId = uuid();
+      db.run(
+        `INSERT INTO books (id, title, author, isbn, cover_art_path, project_type, format)
+         VALUES (?, ?, ?, ?, ?, 'audiobook', 'single_narrator')`,
+        [bookId, libBook.title, libBook.author, libBook.isbn, libBook.cover_path]
+      );
+
+      // If the book has text content (txt, epub, docx), try to extract and create a chapter
+      const ext = path.extname(libBook.file_path).toLowerCase();
+      let chapterCount = 0;
+      if (['.txt'].includes(ext) && fs.existsSync(libBook.file_path)) {
+        const text = fs.readFileSync(libBook.file_path, 'utf-8');
+        const chId = uuid();
+        db.run(
+          `INSERT INTO chapters (id, book_id, title, sort_order, raw_text) VALUES (?, ?, ?, 0, ?)`,
+          [chId, bookId, 'Full Text', text]
+        );
+        chapterCount = 1;
+      }
+
+      // Link library book to audiobook project
+      db.run("UPDATE library_books SET audiobook_ready = 1, updated_at = datetime('now') WHERE id = ?", [req.params.id]);
+      saveDb();
+
+      res.status(201).json({
+        ok: true,
+        book_id: bookId,
+        title: libBook.title,
+        chapters_created: chapterCount,
+        message: chapterCount > 0
+          ? `Audiobook project created with ${chapterCount} chapter(s). Import more text via the Manuscript page.`
+          : 'Audiobook project created. Import your manuscript (EPUB/DOCX/TXT) in the Manuscript page to add chapters.',
+      });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }

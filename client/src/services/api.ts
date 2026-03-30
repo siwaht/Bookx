@@ -429,4 +429,6 @@ export const library = {
   deleteFormat: (id: string, formatId: string) => request<void>(`/library/${id}/formats/${formatId}`, { method: 'DELETE' }),
   prepareAudiobook: (id: string) => request<{ ok: boolean; message: string }>(`/library/${id}/prepare-audiobook`, { method: 'POST' }),
   prepareKindle: (id: string) => request<{ ok: boolean; message: string }>(`/library/${id}/prepare-kindle`, { method: 'POST' }),
+  convertToAudiobook: (id: string) => request<{ ok: boolean; book_id: string; title: string; chapters_created: number; message: string }>(`/library/${id}/convert-to-audiobook`, { method: 'POST' }),
+  downloadAllUrl: () => `${API_BASE}/library/download-all`,
 };
