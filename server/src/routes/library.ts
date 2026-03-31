@@ -429,15 +429,21 @@ export function libraryRouter(db: SqlJsDatabase): Router {
         chapters = await parseEpubToChapters(zip);
       }
 
-      // Insert chapters
-      for (let i = 0; i < chapters.length; i++) {
+      // Insert chapters (skip front/back matter for audiobook)
+      const skipPatterns = /^(table of contents|contents|copyright|dedication|acknowledgments?|about the author|index|bibliography|appendix|foreword|preface|prologue|epilogue|glossary|also by|other books|title page|half title)/i;
+      const filtered = chapters.filter(ch => !skipPatterns.test(ch.title.trim()));
+      const finalChapters = filtered.length > 0 ? filtered : chapters;
+
+      for (let i = 0; i < finalChapters.length; i++) {
         const chId = uuid();
-        const cleaned = chapters[i].text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+        const cleaned = finalChapters[i].text.replace(/\r\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
         db.run(
           `INSERT INTO chapters (id, book_id, title, sort_order, raw_text, cleaned_text) VALUES (?, ?, ?, ?, ?, ?)`,
-          [chId, bookId, chapters[i].title, i, chapters[i].text, cleaned]
+          [chId, bookId, finalChapters[i].title, i, finalChapters[i].text, cleaned]
         );
       }
+
+      const skippedCount = chapters.length - finalChapters.length;
 
       db.run("UPDATE library_books SET audiobook_ready = 1, updated_at = datetime('now') WHERE id = ?", [req.params.id]);
       saveDb();
@@ -446,9 +452,10 @@ export function libraryRouter(db: SqlJsDatabase): Router {
         ok: true,
         book_id: bookId,
         title: libBook.title,
-        chapters_created: chapters.length,
-        message: chapters.length > 0
-          ? `Audiobook project created with ${chapters.length} chapter(s) imported from ${ext.replace('.', '').toUpperCase()}.`
+        chapters_created: finalChapters.length,
+        chapters_skipped: skippedCount,
+        message: finalChapters.length > 0
+          ? `Audiobook project created with ${finalChapters.length} chapter(s) from ${ext.replace('.', '').toUpperCase()}.${skippedCount > 0 ? ` Skipped ${skippedCount} non-audio sections (TOC, copyright, etc.).` : ''}`
           : 'Audiobook project created. Import your manuscript in the Manuscript page to add chapters.',
       });
     } catch (err: any) {

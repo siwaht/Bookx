@@ -3,7 +3,7 @@ import { useParams, useNavigate, NavLink, Outlet } from 'react-router-dom';
 import { books, elevenlabs } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones } from 'lucide-react';
+import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones, BookMarked } from 'lucide-react';
 
 const STEPS = [
   { to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', step: 1, hint: 'Import & split text', podcastHint: 'Import script / text', end: true },
@@ -53,6 +53,11 @@ export function BookEditor() {
           </span>
           <h2 style={styles.bookTitle}>{book.title}</h2>
           {book.author && <p style={styles.bookAuthor}>{book.author}</p>}
+          {book.library_book_id && (
+            <button onClick={() => navigate('/library')} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: 'var(--purple)', cursor: 'pointer', fontSize: 10, padding: '2px 0', fontWeight: 500 }}>
+              <BookMarked size={10} /> From Library
+            </button>
+          )}
         </div>
 
         <div style={styles.stepsLabel}>WORKFLOW</div>
