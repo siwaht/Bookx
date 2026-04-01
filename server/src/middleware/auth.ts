@@ -115,7 +115,9 @@ export function loginHandler(req: Request, res: Response): void {
     return;
   }
 
-  if (password !== getAppPassword()) {
+  const storedPw = getAppPassword();
+  console.log(`[DEBUG-AUTH] received len=${password.length} stored len=${storedPw.length} match=${password === storedPw}`);
+  if (password !== storedPw) {
     recordAttempt(ip);
     res.status(401).json({ error: 'Invalid password' });
     return;
