@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAppStore } from './stores/appStore';
 import { auth } from './services/api';
 import { LoginPage } from './components/LoginPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { TopNav } from './components/TopNav';
 import { Dashboard } from './pages/Dashboard';
 import { BookEditor } from './pages/BookEditor';
 import { ManuscriptPage } from './pages/ManuscriptPage';
@@ -57,6 +58,35 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AppLayout() {
+  const location = useLocation();
+  const isBookEditor = location.pathname.startsWith('/book/');
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+      {!isBookEditor && <TopNav />}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/library" element={<LibraryPage />} />
+          <Route path="/settings" element={<SettingsPage />} />
+          <Route path="/book/:bookId" element={<BookEditor />}>
+            <Route index element={<ManuscriptPage />} />
+            <Route path="voices" element={<VoicesPage />} />
+            <Route path="pronunciation" element={<PronunciationPage />} />
+            <Route path="studio" element={<AudioStudioPage />} />
+            <Route path="timeline" element={<TimelinePage />} />
+            <Route path="qc" element={<QCPage />} />
+            <Route path="export" element={<ExportPage />} />
+            <Route path="usage" element={<UsagePage />} />
+          </Route>
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   return (
     <ErrorBoundary>
@@ -64,26 +94,11 @@ export default function App() {
         <BrowserRouter>
           <AuthGate>
             <ErrorBoundary>
-              <Routes>
-            <Route path="/" element={<Dashboard />} />
-            <Route path="/library" element={<LibraryPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
-            <Route path="/book/:bookId" element={<BookEditor />}>
-              <Route index element={<ManuscriptPage />} />
-              <Route path="voices" element={<VoicesPage />} />
-              <Route path="pronunciation" element={<PronunciationPage />} />
-              <Route path="studio" element={<AudioStudioPage />} />
-              <Route path="timeline" element={<TimelinePage />} />
-              <Route path="qc" element={<QCPage />} />
-              <Route path="export" element={<ExportPage />} />
-              <Route path="usage" element={<UsagePage />} />
-            </Route>
-            <Route path="*" element={<Navigate to="/" replace />} />
-          </Routes>
-          </ErrorBoundary>
-        </AuthGate>
-      </BrowserRouter>
-    </QueryClientProvider>
+              <AppLayout />
+            </ErrorBoundary>
+          </AuthGate>
+        </BrowserRouter>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

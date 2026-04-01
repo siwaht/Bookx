@@ -1,10 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { books, uploadAudio, chapters as chaptersApi, uploadAudioToChapter } from '../services/api';
-import { useAppStore } from '../stores/appStore';
+import { books, chapters as chaptersApi, uploadAudioToChapter } from '../services/api';
 import type { Book } from '../types';
-import { Plus, BookOpen, Trash2, LogOut, Settings, Mic, Headphones, ArrowRight, Upload, Loader, BookMarked } from 'lucide-react';
-import { clearToken } from '../services/api';
+import { Plus, BookOpen, Trash2, Mic, Headphones, ArrowRight, Upload, Loader } from 'lucide-react';
 
 export function Dashboard() {
   const [bookList, setBookList] = useState<Book[]>([]);
@@ -21,7 +19,6 @@ export function Dashboard() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState('');
   const uploadFileRef = useRef<HTMLInputElement>(null);
-  const setAuthenticated = useAppStore((s) => s.setAuthenticated);
   const navigate = useNavigate();
 
   const loadBooks = async () => {
@@ -96,33 +93,19 @@ export function Dashboard() {
     }
   };
 
-  const handleLogout = () => { clearToken(); setAuthenticated(false); };
-
   return (
     <div style={styles.page}>
       <header style={styles.header} className="animate-in">
         <div style={styles.headerLeft}>
-          <div style={styles.logoRow}>
-            <div style={styles.logoCircle}><Headphones size={20} color="#5b8def" /></div>
-            <h1 style={styles.h1}>Audio Producer</h1>
-          </div>
-          <p style={styles.subtitle}>Create audiobooks and podcasts with multi-provider AI voices, sound effects, and music</p>
+          <h2 style={styles.h1}>Your Projects</h2>
+          <p style={styles.subtitle}>Create audiobooks and podcasts with multi-provider AI voices</p>
         </div>
         <div style={styles.headerActions}>
-          <button onClick={() => navigate('/library')} style={{ ...styles.createBtn, background: 'var(--purple, #a78bfa)' }}>
-            <BookMarked size={16} /> Library
-          </button>
-          <button onClick={() => navigate('/settings')} style={styles.iconBtn} title="Settings">
-            <Settings size={16} />
-          </button>
           <button onClick={() => setShowCreate(true)} style={styles.createBtn}>
             <Plus size={16} /> New Project
           </button>
-          <button onClick={() => setShowUpload(true)} style={{ ...styles.createBtn, background: 'var(--purple, #8b5cf6)' }}>
+          <button onClick={() => setShowUpload(true)} style={styles.uploadBtn}>
             <Upload size={16} /> Upload Existing
-          </button>
-          <button onClick={handleLogout} style={styles.iconBtn} title="Log out">
-            <LogOut size={16} />
           </button>
         </div>
       </header>
@@ -306,27 +289,22 @@ export function Dashboard() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { padding: '32px 40px', maxWidth: 960, margin: '0 auto', minHeight: '100vh', overflow: 'auto' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 32 },
+  page: { padding: '28px 40px', maxWidth: 960, margin: '0 auto', overflow: 'auto' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 },
   headerLeft: {},
-  logoRow: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 },
-  logoCircle: {
-    width: 36, height: 36, borderRadius: '50%', background: 'var(--accent-subtle)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-  },
-  h1: { fontSize: 22, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.3px' },
-  subtitle: { fontSize: 13, color: 'var(--text-tertiary)', marginLeft: 46 },
+  h1: { fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.3px' },
+  subtitle: { fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 },
   headerActions: { display: 'flex', gap: 8, alignItems: 'center' },
-  iconBtn: {
-    background: 'var(--bg-surface)', border: '1px solid var(--border-default)',
-    color: 'var(--text-tertiary)', borderRadius: 'var(--radius-md)',
-    padding: '8px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center',
-  },
   createBtn: {
     display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px',
     background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)',
     cursor: 'pointer', fontSize: 13, fontWeight: 500,
     boxShadow: '0 2px 8px rgba(91,141,239,0.2)',
+  },
+  uploadBtn: {
+    display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px',
+    background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)',
+    borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13, fontWeight: 500,
   },
   createForm: {
     display: 'flex', flexDirection: 'column', gap: 12, padding: 24,

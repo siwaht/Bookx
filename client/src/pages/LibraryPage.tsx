@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { library } from '../services/api';
 import type { LibraryBook } from '../types';
-import { Upload, BookOpen, Trash2, Download, FileText, Eye, Search, Plus, X, Settings, Headphones, ArrowLeft } from 'lucide-react';
+import { Upload, BookOpen, Trash2, Download, FileText, Eye, Search, Plus, X, Settings, Headphones } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
 export function LibraryPage() {
@@ -91,10 +91,7 @@ export function LibraryPage() {
   return (
     <div style={st.page}>
       <div style={st.header}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={() => navigate('/')} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><ArrowLeft size={18} /></button>
-          <h1 style={st.title}>📚 Library</h1>
-        </div>
+        <h1 style={st.title}>📚 Library</h1>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
           <div style={st.searchBox}>
             <Search size={14} color="var(--text-muted)" />

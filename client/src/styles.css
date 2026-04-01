@@ -267,7 +267,8 @@ select {
 }
 
 /* Subtle hover on nav links */
-nav a:hover {
+nav a:hover,
+nav button:not([aria-label="Home"]):hover {
   background: var(--bg-hover) !important;
 }
 

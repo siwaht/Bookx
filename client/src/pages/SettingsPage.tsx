@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { settings as settingsApi, elevenlabs, system } from '../services/api';
-import { Key, Eye, EyeOff, Save, Trash2, Check, ArrowLeft, Wifi, WifiOff, Loader, Database, HardDrive, RefreshCw, Shield } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, Trash2, Check, Wifi, WifiOff, Loader, Database, HardDrive, RefreshCw, Shield } from 'lucide-react';
 
 interface ApiKeyConfig {
   key: string;
@@ -29,7 +28,6 @@ const LLM_PROVIDERS = [
 ];
 
 export function SettingsPage() {
-  const navigate = useNavigate();
   const [stored, setStored] = useState<Record<string, { masked: string; updated_at: string }>>({});
   const [inputs, setInputs] = useState<Record<string, string>>({});
   const [showKey, setShowKey] = useState<Record<string, boolean>>({});
@@ -132,10 +130,6 @@ export function SettingsPage() {
   return (
     <div style={S.page}>
       <div style={S.container}>
-        <button onClick={() => navigate('/')} style={S.backBtn}>
-          <ArrowLeft size={16} /> Back to Projects
-        </button>
-
         <h1 style={S.title}>⚙️ Settings</h1>
         <p style={S.subtitle}>Manage your API keys and preferences. Keys are stored locally in your database and never sent to third parties.</p>
 
