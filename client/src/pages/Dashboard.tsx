@@ -1,11 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { books, chapters as chaptersApi, uploadAudioToChapter } from '../services/api';
+import { toast } from '../components/Toast';
 import type { Book } from '../types';
 import { Plus, BookOpen, Trash2, Mic, Headphones, ArrowRight, Upload, Loader } from 'lucide-react';
+import { CardSkeleton } from '../components/ui/Skeleton';
 
 export function Dashboard() {
   const [bookList, setBookList] = useState<Book[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
   const [title, setTitle] = useState('');
   const [author, setAuthor] = useState('');
@@ -26,6 +29,7 @@ export function Dashboard() {
       const data = await books.list();
       setBookList(Array.isArray(data) ? data : []);
     } catch (err: any) { console.error('Failed to load books:', err); }
+    finally { setLoading(false); }
   };
 
   useEffect(() => { loadBooks(); }, []);
@@ -37,7 +41,7 @@ export function Dashboard() {
       const book = await books.create({ title, author, project_type: projectType, format } as any);
       setTitle(''); setAuthor(''); setShowCreate(false);
       navigate(`/book/${book.id}`);
-    } catch (err: any) { alert(`Failed to create project: ${err.message}`); }
+    } catch (err: any) { toast.error(`Failed to create project: ${err.message}`); }
   };
 
   const handleDelete = async (id: string, bookTitle: string, e: React.MouseEvent) => {
@@ -86,7 +90,7 @@ export function Dashboard() {
       setUploadProgress('');
       navigate(`/book/${book.id}`);
     } catch (err: any) {
-      alert(`Upload failed: ${err.message}`);
+      toast.error(`Upload failed: ${err.message}`);
     } finally {
       setUploading(false);
       setUploadProgress('');
@@ -216,9 +220,15 @@ export function Dashboard() {
         </form>
       )}
 
-      {bookList.length > 0 && <div style={styles.sectionLabel}>YOUR PROJECTS</div>}
+      {loading && (
+        <div style={styles.grid}>
+          {[1, 2, 3].map((i) => <CardSkeleton key={i} />)}
+        </div>
+      )}
 
-      <div style={styles.grid} className="stagger-children">
+      {!loading && bookList.length > 0 && <div style={styles.sectionLabel}>YOUR PROJECTS</div>}
+
+      {!loading && <div style={styles.grid} className="stagger-children">
         {bookList.map((book) => (
           <div key={book.id} onClick={() => navigate(`/book/${book.id}`)} style={styles.card}
             className="card-hover" role="button" tabIndex={0}
@@ -252,9 +262,9 @@ export function Dashboard() {
             </div>
           </div>
         ))}
-      </div>
+      </div>}
 
-      {bookList.length === 0 && !showCreate && (
+      {!loading && bookList.length === 0 && !showCreate && (
         <div style={styles.emptyState} className="animate-in">
           <div style={styles.emptyIconWrap}>
             <Headphones size={36} color="var(--accent)" />

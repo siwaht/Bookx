@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { exportBook } from '../services/api';
 import { useAppStore } from '../stores/appStore';
+import { toast } from '../components/Toast';
 import type { ValidationResult } from '../types';
 import { Download, CheckCircle, XCircle, Loader, Package, Mic, Headphones } from 'lucide-react';
 
@@ -19,7 +20,7 @@ export function ExportPage() {
     try {
       const data = await exportBook.start(bookId, target);
       setResult(data);
-    } catch (err: any) { alert(`Export failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Export failed: ${err.message}`); }
     finally { setExporting(false); }
   };
 

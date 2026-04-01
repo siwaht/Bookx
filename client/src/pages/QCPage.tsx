@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { render } from '../services/api';
+import { toast } from '../components/Toast';
 import type { RenderJob, QCChapterReport } from '../types';
 import { Play, CheckCircle, XCircle, Loader, AlertTriangle } from 'lucide-react';
 
@@ -16,7 +17,7 @@ export function QCPage() {
       const { job_id } = await render.start(bookId, { type: 'full' });
       pollJob(job_id);
     } catch (err: any) {
-      alert(`Render failed: ${err.message}`);
+      toast.error(`Render failed: ${err.message}`);
       setRendering(false);
     }
   };

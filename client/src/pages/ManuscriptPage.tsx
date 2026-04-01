@@ -12,6 +12,7 @@ import {
   uploadAudioToChapter,
   replaceSegmentAudio,
 } from '../services/api';
+import { toast } from '../components/Toast';
 import type { Chapter, Segment, Character } from '../types';
 import {
   Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen,
@@ -178,7 +179,7 @@ export function ManuscriptPage() {
     try {
       await importManuscript(bookId, file);
       await loadChapters();
-    } catch (err: any) { alert(`Import failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Import failed: ${err.message}`); }
     finally { setImporting(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
@@ -191,7 +192,7 @@ export function ManuscriptPage() {
       setNewChapterTitle('');
       await loadChapters();
       setSelectedChapterId(ch.id);
-    } catch (err: any) { alert(`Failed to add chapter: ${err.message}`); }
+    } catch (err: any) { toast.error(`Failed to add chapter: ${err.message}`); }
   };
 
   const handleRenameChapter = async (id: string) => {
@@ -216,7 +217,7 @@ export function ManuscriptPage() {
       setChapterMenuId(null);
       await loadChapters();
       setSelectedChapterId(ch.id);
-    } catch (err: any) { alert(`Duplicate failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Duplicate failed: ${err.message}`); }
   };
 
   const handleMoveChapter = async (id: string, direction: 'up' | 'down') => {
@@ -235,14 +236,14 @@ export function ManuscriptPage() {
   const handleSplitChapter = async () => {
     if (!bookId || !selectedChapter || splitPos === null) return;
     const text = selectedChapter.cleaned_text || selectedChapter.raw_text;
-    if (splitPos < 1 || splitPos >= text.length) { alert('Select a valid split position'); return; }
+    if (splitPos < 1 || splitPos >= text.length) { toast.warning('Select a valid split position'); return; }
     try {
       const result = await chaptersApi.split(bookId, selectedChapter.id, splitPos);
       setSplitMode(false);
       setSplitPos(null);
       await loadChapters();
       setSelectedChapterId(result.original.id);
-    } catch (err: any) { alert(`Split failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Split failed: ${err.message}`); }
   };
 
   // ── Text Editing with Auto-Save ──
@@ -280,11 +281,11 @@ export function ManuscriptPage() {
       const result = await aiParse.suggestV3Tags(bookId, text);
       if (result.tagged_text && result.tagged_text !== text) {
         handleChapterTextChange(result.tagged_text);
-        alert(`AI inserted ${result.tags_used.length} tags: ${result.tags_used.join(', ')}`);
+        toast.info(`AI inserted ${result.tags_used.length} tags: ${result.tags_used.join(', ')}`);
       } else {
-        alert('AI found no tags to suggest for this text.');
+        toast.info('AI found no tags to suggest for this text.');
       }
-    } catch (err: any) { alert(`AI tag suggestion failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`AI tag suggestion failed: ${err.message}`); }
     finally { setAiTagging(false); }
   };
 
@@ -299,7 +300,7 @@ export function ManuscriptPage() {
     handleChapterTextChange(newText);
     // Update pacing
     setSegmentGapMs(preset.gap);
-    alert(`Applied "${preset.name}" mood: ${preset.tags.map(t => `[${t}]`).join(' ')}\nGap: ${preset.gap}ms`);
+    toast.info(`Applied "${preset.name}" mood: ${preset.tags.map(t => `[${t}]`).join(' ')}\nGap: ${preset.gap}ms`);
   };
 
   // ── Segment Actions ──
@@ -326,7 +327,7 @@ export function ManuscriptPage() {
       setSentSegments((prev) => { const next = new Set(prev); next.delete(segmentId); return next; });
       await loadSegments(selectedChapter.id);
       loadChapters();
-    } catch (err: any) { alert(`Generation failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Generation failed: ${err.message}`); }
     finally {
       setGeneratingId(null);
       setGenElapsed(0);
@@ -341,7 +342,7 @@ export function ManuscriptPage() {
       await timelineApi.sendSegment(bookId, segmentId);
       setSentSegments((prev) => new Set(prev).add(segmentId));
       loadChapters();
-    } catch (err: any) { alert(`Send to timeline failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Send to timeline failed: ${err.message}`); }
     finally { setSendingId(null); }
   };
 
@@ -412,9 +413,9 @@ export function ManuscriptPage() {
       if (tts.failed > 0) msg += `, ${tts.failed} failed`;
       msg += `\nTimeline: ${tl.clips_created} clips placed, ${tl.markers_created} markers.`;
       if (tts.failed > 0 && tts.errors.length > 0) msg += `\n\nErrors:\n${tts.errors.slice(0, 5).join('\n')}`;
-      alert(msg);
+      toast.info(msg);
       loadChapters();
-    } catch (err: any) { alert(`Generate & populate failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Generate & populate failed: ${err.message}`); }
     finally {
       setPopulating(false);
       setPopulateElapsed(0);
@@ -430,10 +431,10 @@ export function ManuscriptPage() {
       let msg = `TTS: ${tts.generated} generated, ${tts.cached} cached, ${tts.skipped} skipped`;
       if (tts.failed > 0) msg += `, ${tts.failed} failed`;
       msg += ` → ${tl.clips_created} clips placed on timeline.`;
-      alert(msg);
+      toast.info(msg);
       loadChapters();
       if (selectedChapterId === chapterId) loadSegments(chapterId);
-    } catch (err: any) { alert(`Failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Failed: ${err.message}`); }
   };
 
   const handleAiParse = async () => {
@@ -441,16 +442,16 @@ export function ManuscriptPage() {
     setAiParsing(true);
     try {
       const result = await aiParse.parse(bookId);
-      alert(`AI parsed: ${result.characters_created} characters, ${result.segments_created} segments, ${result.sfx_cues} SFX, ${result.music_cues} music cues.\nProvider: ${result.provider}`);
+      toast.info(`AI parsed: ${result.characters_created} characters, ${result.segments_created} segments, ${result.sfx_cues} SFX, ${result.music_cues} music cues.\nProvider: ${result.provider}`);
       await loadChapters();
       await loadCharacters();
       if (selectedChapterId) loadSegments(selectedChapterId);
     } catch (err: any) {
       const msg = err.message || 'Unknown error';
       if (msg.includes('No LLM API key') || msg.includes('No API key')) {
-        alert(`AI Auto-Assign requires an LLM API key.\n\nGo to Settings and add an OpenAI, Mistral, or Gemini API key.\n\nError: ${msg}`);
+        toast.error(`AI Auto-Assign requires an LLM API key.\n\nGo to Settings and add an OpenAI, Mistral, or Gemini API key.\n\nError: ${msg}`);
       } else {
-        alert(`AI parse failed: ${msg}`);
+        toast.error(`AI parse failed: ${msg}`);
       }
     }
     finally { setAiParsing(false); }
@@ -462,14 +463,14 @@ export function ManuscriptPage() {
     try {
       const result = await charsApi.autoAssignByName(bookId);
       if (result.assigned > 0) {
-        alert(`Auto-assigned ${result.assigned} segments by speaker name.\n\nMatches: ${result.matches.map(m => m.character_name).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`);
+        toast.success(`Auto-assigned ${result.assigned} segments by speaker name.\n\nMatches: ${result.matches.map(m => m.character_name).filter((v, i, a) => a.indexOf(v) === i).join(', ')}`);
       } else {
-        alert('No segments matched any character names.\n\nMake sure segment text starts with "NAME:" pattern.');
+        toast.info('No segments matched any character names.\n\nMake sure segment text starts with "NAME:" pattern.');
       }
       await loadChapters();
       await loadCharacters();
       if (selectedChapterId) loadSegments(selectedChapterId);
-    } catch (err: any) { alert(`Auto-assign failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Auto-assign failed: ${err.message}`); }
     finally { setNameAssigning(false); }
   };
 
@@ -483,7 +484,7 @@ export function ManuscriptPage() {
       await uploadAudioToChapter(bookId, selectedChapterId, file);
       await loadSegments(selectedChapterId);
       loadChapters();
-    } catch (err: any) { alert(`Upload failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Upload failed: ${err.message}`); }
     finally {
       setUploadingChapterAudio(false);
       if (chapterAudioRef.current) chapterAudioRef.current.value = '';
@@ -498,7 +499,7 @@ export function ManuscriptPage() {
       await replaceSegmentAudio(bookId, pendingSegReplace, file);
       if (selectedChapterId) await loadSegments(selectedChapterId);
       loadChapters();
-    } catch (err: any) { alert(`Replace failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Replace failed: ${err.message}`); }
     finally {
       setReplacingSegAudio(null);
       setPendingSegReplace(null);
@@ -913,6 +914,22 @@ export function ManuscriptPage() {
                 {/* Header: index + character + actions */}
                 <div style={styles.segmentHeader}>
                   <span style={styles.segNum}>#{idx + 1}</span>
+                  {hasAudio && (
+                    <button
+                      onClick={() => togglePlay(seg.id, seg.audio_asset_id!)}
+                      style={{
+                        ...styles.iconBtn,
+                        color: isPlaying ? 'var(--accent)' : 'var(--success)',
+                        background: isPlaying ? 'var(--accent-subtle)' : 'var(--success-subtle)',
+                        borderRadius: '50%', width: 22, height: 22, padding: 0,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}
+                      title={isPlaying ? 'Pause' : 'Play preview'}
+                      aria-label={isPlaying ? 'Pause audio' : 'Play audio preview'}
+                    >
+                      {isPlaying ? <Volume2 size={11} /> : <Play size={11} style={{ marginLeft: 1 }} />}
+                    </button>
+                  )}
                   <select value={seg.character_id || ''} onChange={(e) => handleAssignCharacter(seg.id, e.target.value || null)}
                     style={{ ...styles.charSelect, borderColor: hasChar ? '#4A90D9' : '#333' }}
                     aria-label="Assign character">

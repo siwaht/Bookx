@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { settings as settingsApi, elevenlabs, system } from '../services/api';
+import { toast } from '../components/Toast';
 import { Key, Eye, EyeOff, Save, Trash2, Check, Wifi, WifiOff, Loader, Database, HardDrive, RefreshCw, Shield } from 'lucide-react';
 
 interface ApiKeyConfig {
@@ -83,7 +84,7 @@ export function SettingsPage() {
     try {
       await system.backup();
       await loadSystemInfo();
-    } catch (err: any) { alert(`Backup failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Backup failed: ${err.message}`); }
     finally { setBackingUp(false); }
   };
 
@@ -94,7 +95,7 @@ export function SettingsPage() {
       const result = await system.cleanup(30);
       setCleanupResult(result);
       await loadSystemInfo();
-    } catch (err: any) { alert(`Cleanup failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Cleanup failed: ${err.message}`); }
     finally { setCleaning(false); }
   };
 
@@ -109,7 +110,7 @@ export function SettingsPage() {
       setTimeout(() => setSaved(null), 2000);
       load();
     } catch (err: any) {
-      alert(`Failed to save: ${err.message}`);
+      toast.error(`Failed to save: ${err.message}`);
     } finally {
       setSaving(null);
     }

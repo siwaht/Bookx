@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { library } from '../services/api';
+import { toast } from '../components/Toast';
 import type { LibraryBook } from '../types';
 import { Upload, BookOpen, Trash2, Download, FileText, Eye, Search, Plus, X, Settings, Headphones } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -33,7 +34,7 @@ export function LibraryPage() {
       await library.upload(file, uploadMeta);
       setUploadMeta({ title: '', author: '', description: '', tags: '' });
       await loadBooks();
-    } catch (err: any) { alert(`Upload failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Upload failed: ${err.message}`); }
     finally { setUploading(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
@@ -43,15 +44,15 @@ export function LibraryPage() {
       await library.delete(id);
       if (selectedBook?.id === id) setSelectedBook(null);
       loadBooks();
-    } catch (err: any) { alert(`Delete failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Delete failed: ${err.message}`); }
   };
 
   const handleConvertToAudiobook = async (id: string) => {
     try {
       const result = await library.convertToAudiobook(id);
-      alert(result.message);
+      toast.info(result.message);
       if (result.book_id) navigate(`/book/${result.book_id}`);
-    } catch (err: any) { alert(`Conversion failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Conversion failed: ${err.message}`); }
   };
 
   const filtered = books.filter(b => 

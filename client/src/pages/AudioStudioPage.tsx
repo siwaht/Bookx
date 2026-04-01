@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { elevenlabs, audioUrl, audioDownloadUrl, audioAssets, timeline as timelineApi, uploadAudio } from '../services/api';
 import { useAppStore } from '../stores/appStore';
+import { toast } from '../components/Toast';
 import { Wand2, Music, Volume2, Loader, Plus, Clock, Repeat, Upload, Download, Trash2, Edit3, Check, X, FolderOpen } from 'lucide-react';
 
 interface GeneratedAsset {
@@ -121,7 +122,7 @@ export function AudioStudioPage() {
     try {
       await audioAssets.delete(assetId);
       setLibraryAssets((prev) => prev.filter((a) => a.id !== assetId));
-    } catch (err: any) { alert(`Delete failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Delete failed: ${err.message}`); }
     finally { setDeletingId(null); }
   };
 
@@ -165,7 +166,7 @@ export function AudioStudioPage() {
         audio_asset_id: result.audio_asset_id,
         cached: result.cached,
       }, ...prev]);
-    } catch (err: any) { alert(`SFX generation failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`SFX generation failed: ${err.message}`); }
     finally { setSfxGenerating(false); loadLibrary(); }
   };
 
@@ -186,7 +187,7 @@ export function AudioStudioPage() {
         audio_asset_id: result.audio_asset_id,
         cached: result.cached,
       }, ...prev]);
-    } catch (err: any) { alert(`Music generation failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Music generation failed: ${err.message}`); }
     finally { setMusicGenerating(false); loadLibrary(); }
   };
 
@@ -212,8 +213,8 @@ export function AudioStudioPage() {
         audio_asset_id: asset.audio_asset_id,
         position_ms: endPos,
       });
-      alert(`Placed "${asset.prompt.slice(0, 40)}..." on ${asset.type} track at ${(endPos / 1000).toFixed(1)}s`);
-    } catch (err: any) { alert(`Failed to place on timeline: ${err.message}`); }
+      toast.info(`Placed "${asset.prompt.slice(0, 40)}..." on ${asset.type} track at ${(endPos / 1000).toFixed(1)}s`);
+    } catch (err: any) { toast.error(`Failed to place on timeline: ${err.message}`); }
     finally { setPlacingId(null); }
   };
 
@@ -250,7 +251,7 @@ export function AudioStudioPage() {
             fade_in_ms: 500,
             fade_out_ms: 1000,
           });
-          alert(`${preset.label} placed at the start of the timeline.`);
+          toast.info(`${preset.label} placed at the start of the timeline.`);
         } else {
           // Find the end of all content
           const allClips = tracks.flatMap((t: any) => t.clips || []);
@@ -264,10 +265,10 @@ export function AudioStudioPage() {
             fade_in_ms: 1000,
             fade_out_ms: 500,
           });
-          alert(`${preset.label} placed at the end of the timeline (${(endMs / 1000).toFixed(1)}s).`);
+          toast.info(`${preset.label} placed at the end of the timeline (${(endMs / 1000).toFixed(1)}s).`);
         }
       }
-    } catch (err: any) { alert(`Generation failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Generation failed: ${err.message}`); }
     finally { setIntroOutroGenerating(null); loadLibrary(); }
   };
 
@@ -284,7 +285,7 @@ export function AudioStudioPage() {
         audio_asset_id: result.audio_asset_id,
         cached: false,
       }, ...prev]);
-    } catch (err: any) { alert(`Upload failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Upload failed: ${err.message}`); }
     finally { setUploading(false); if (importFileRef.current) importFileRef.current.value = ''; }
   };
 

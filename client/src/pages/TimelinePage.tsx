@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import { timeline as timelineApi, elevenlabs, audioUrl, render, saveProject, downloadProjectUrl, uploadAudio, audioAssets } from '../services/api';
+import { toast } from '../components/Toast';
+import { KeyboardShortcutsDialog } from '../components/KeyboardShortcutsDialog';
 import type { Track, Clip, ChapterMarker } from '../types';
 import {
   Play, Pause, SkipBack, ZoomIn, ZoomOut, Plus, Trash2, Volume2, VolumeX,
@@ -757,7 +759,7 @@ export function TimelinePage() {
   // ── Save / Render ──
   const handleSave = async () => {
     setSaving(true);
-    try { await saveProject(); } catch (err: any) { alert(`Save failed: ${err.message}`); }
+    try { await saveProject(); } catch (err: any) { toast.error(`Save failed: ${err.message}`); }
     finally { setSaving(false); }
   };
   const handleRender = async () => {
@@ -765,8 +767,8 @@ export function TimelinePage() {
     setRendering(true);
     try {
       const { job_id } = await render.start(bookId);
-      alert(`Render started (job: ${job_id}). Check QC & Render page for progress.`);
-    } catch (err: any) { alert(`Render failed: ${err.message}`); }
+      toast.info(`Render started (job: ${job_id}). Check QC & Render page for progress.`);
+    } catch (err: any) { toast.error(`Render failed: ${err.message}`); }
     finally { setRendering(false); }
   };
 
@@ -791,7 +793,7 @@ export function TimelinePage() {
       setShowQuickAdd(false);
       skipSnap.current = true;
       loadTracks();
-    } catch (err: any) { alert(`Generation failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Generation failed: ${err.message}`); }
     finally { setQuickGenerating(false); }
   };
 
@@ -818,7 +820,7 @@ export function TimelinePage() {
       setShowSilenceMenu(false);
       skipSnap.current = true;
       loadTracks();
-    } catch (err: any) { alert(`Insert silence failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Insert silence failed: ${err.message}`); }
     finally { setInsertingSilence(false); }
   };
 
@@ -843,7 +845,7 @@ export function TimelinePage() {
       });
       skipSnap.current = true;
       loadTracks();
-    } catch (err: any) { alert(`Import failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Import failed: ${err.message}`); }
     finally {
       setImporting(false);
       if (importFileRef.current) importFileRef.current.value = '';
@@ -1115,28 +1117,7 @@ export function TimelinePage() {
 
       {/* Help Overlay */}
       {showHelp && (
-        <div style={S.helpOverlay}>
-          <div style={S.helpBox}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-              <h3 style={{ color: '#fff' }}>Keyboard Shortcuts</h3>
-              <button onClick={() => setShowHelp(false)} style={S.tinyBtn}><X size={14} /></button>
-            </div>
-            <div style={S.helpGrid}>
-              {[
-                ['Space', 'Play / Pause'], ['Home', 'Go to start'], ['←/→', 'Seek ±1s'],
-                ['Delete', 'Delete clip'], ['S', 'Split at playhead'], ['D', 'Duplicate clip'],
-                ['Ctrl+Z', 'Undo'], ['Ctrl+Y', 'Redo'],
-                ['Ctrl+C', 'Copy clip'], ['Ctrl+X', 'Cut clip'], ['Ctrl+V', 'Paste clip'],
-                ['Ctrl+Scroll', 'Zoom'], ['Scroll', 'Pan'], ['?', 'Toggle help'],
-              ].map(([key, desc]) => (
-                <React.Fragment key={key}>
-                  <span style={S.helpKey}>{key}</span>
-                  <span style={S.helpDesc}>{desc}</span>
-                </React.Fragment>
-              ))}
-            </div>
-          </div>
-        </div>
+        <KeyboardShortcutsDialog onClose={() => setShowHelp(false)} />
       )}
     </div>
   );

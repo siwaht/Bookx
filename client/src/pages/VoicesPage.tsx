@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { characters as charsApi, elevenlabs, ttsProviders } from '../services/api';
 import { useAppStore } from '../stores/appStore';
+import { toast } from '../components/Toast';
 import type { Character, ElevenLabsVoice, TTSProviderName } from '../types';
 import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, X, Zap } from 'lucide-react';
 
@@ -158,7 +159,7 @@ export function VoicesPage() {
     try {
       const result = await elevenlabs.searchLibrary({ q: libraryQuery.trim(), gender: libraryGender, language: libraryLanguage, page_size: 30 });
       setLibraryResults(result.voices || []);
-    } catch (err: any) { alert(`Library search failed: ${err.message}`); }
+    } catch (err: any) { toast.error(`Library search failed: ${err.message}`); }
     finally { setLibrarySearching(false); }
   };
 
@@ -461,7 +462,7 @@ export function VoicesPage() {
                       });
                       new Audio(`/api/audio/${result.audio_asset_id}`).play();
                     }
-                  } catch (err: any) { alert(`Preview failed: ${err.message}`); }
+                  } catch (err: any) { toast.error(`Preview failed: ${err.message}`); }
                 }}
                   style={{ ...styles.submitBtn, opacity: selectedChar.voice_id ? 1 : 0.5 }}
                   disabled={!selectedChar.voice_id}>

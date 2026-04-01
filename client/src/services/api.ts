@@ -4,6 +4,35 @@ const API_BASE = '/api';
 
 let authToken: string | null = localStorage.getItem('auth_token');
 
+// ── Request deduplication for mutations ──
+const inflightMutations = new Map<string, Promise<any>>();
+
+function dedupeKey(path: string, method: string, body?: string): string {
+  return `${method}:${path}:${body || ''}`;
+}
+
+// ── Retry helper for transient failures ──
+async function withRetry<T>(fn: () => Promise<T>, retries = 2, delayMs = 1000): Promise<T> {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      const isRetryable = err.message?.includes('fetch') ||
+        err.message?.includes('network') ||
+        err.message?.includes('timeout') ||
+        err.message?.includes('429') ||
+        err.message?.includes('502') ||
+        err.message?.includes('503');
+      if (attempt < retries && isRetryable) {
+        await new Promise((r) => setTimeout(r, delayMs * (attempt + 1)));
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw new Error('Retry exhausted');
+}
+
 export function setToken(token: string) {
   authToken = token;
   localStorage.setItem('auth_token', token);
@@ -29,7 +58,26 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
     headers['Authorization'] = `Bearer ${authToken}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const method = (options.method || 'GET').toUpperCase();
+  const body = typeof options.body === 'string' ? options.body : undefined;
+
+  // Deduplicate concurrent identical mutation requests
+  if (method !== 'GET') {
+    const key = dedupeKey(path, method, body);
+    const inflight = inflightMutations.get(key);
+    if (inflight) return inflight as Promise<T>;
+
+    const promise = doRequest<T>(path, { ...options, headers });
+    inflightMutations.set(key, promise);
+    promise.finally(() => inflightMutations.delete(key));
+    return promise;
+  }
+
+  return doRequest<T>(path, { ...options, headers });
+}
+
+async function doRequest<T>(path: string, options: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, options);
 
   if (res.status === 401) {
     clearToken();
@@ -108,10 +156,10 @@ export const segments = {
   delete: (chapterId: string, id: string) =>
     request<void>(`/chapters/${chapterId}/segments/${id}`, { method: 'DELETE' }),
   generate: (chapterId: string, id: string) =>
-    request<{ audio_asset_id: string; cached: boolean }>(`/chapters/${chapterId}/segments/${id}/generate`, { method: 'POST' }),
+    withRetry(() => request<{ audio_asset_id: string; cached: boolean }>(`/chapters/${chapterId}/segments/${id}/generate`, { method: 'POST' })),
   batchGenerate: (chapterId: string) =>
-    request<{ results: any[]; summary: { total: number; generated: number; cached: number; failed: number } }>(
-      `/chapters/${chapterId}/segments/batch-generate`, { method: 'POST' }),
+    withRetry(() => request<{ results: any[]; summary: { total: number; generated: number; cached: number; failed: number } }>(
+      `/chapters/${chapterId}/segments/batch-generate`, { method: 'POST' }), 1, 2000),
 };
 
 // ── ElevenLabs ──
@@ -141,11 +189,11 @@ export const elevenlabs = {
     request<{ voice_id: string; name: string; added: boolean }>('/elevenlabs/voices/add-shared', {
       method: 'POST', body: JSON.stringify({ public_owner_id: publicOwnerId, voice_id: voiceId, name }),
     }),
-  tts: (data: any) => request<any>('/elevenlabs/tts', { method: 'POST', body: JSON.stringify(data) }),
+  tts: (data: any) => withRetry(() => request<any>('/elevenlabs/tts', { method: 'POST', body: JSON.stringify(data) })),
   sfx: (data: { prompt: string; duration_seconds?: number; prompt_influence?: number; loop?: boolean; model_id?: string; book_id?: string }) =>
-    request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/sfx', { method: 'POST', body: JSON.stringify(data) }),
+    withRetry(() => request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/sfx', { method: 'POST', body: JSON.stringify(data) })),
   music: (data: { prompt: string; duration_seconds?: number; music_length_ms?: number; force_instrumental?: boolean; model_id?: string; book_id?: string }) =>
-    request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/music', { method: 'POST', body: JSON.stringify(data) }),
+    withRetry(() => request<{ audio_asset_id: string; cached: boolean }>('/elevenlabs/music', { method: 'POST', body: JSON.stringify(data) })),
   usage: () => request<any>('/elevenlabs/usage'),
 };
 
@@ -360,8 +408,8 @@ export const ttsProviders = {
     provider: string; text: string; voice_id: string; model_id?: string;
     speed?: number; stability?: number; similarity_boost?: number;
     style?: number; speaker_boost?: boolean; book_id?: string;
-  }) => request<{ audio_asset_id: string; provider: string; request_id?: string; duration_ms?: number }>(
-    '/tts/generate', { method: 'POST', body: JSON.stringify(data) }),
+  }) => withRetry(() => request<{ audio_asset_id: string; provider: string; request_id?: string; duration_ms?: number }>(
+    '/tts/generate', { method: 'POST', body: JSON.stringify(data) })),
 };
 
 // ── System Management ──

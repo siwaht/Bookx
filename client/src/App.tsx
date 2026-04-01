@@ -6,6 +6,7 @@ import { auth } from './services/api';
 import { LoginPage } from './components/LoginPage';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { TopNav } from './components/TopNav';
+import { ToastContainer } from './components/Toast';
 import { Dashboard } from './pages/Dashboard';
 import { BookEditor } from './pages/BookEditor';
 import { ManuscriptPage } from './pages/ManuscriptPage';
@@ -97,6 +98,7 @@ export default function App() {
               <AppLayout />
             </ErrorBoundary>
           </AuthGate>
+          <ToastContainer />
         </BrowserRouter>
       </QueryClientProvider>
     </ErrorBoundary>

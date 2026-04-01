@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate, NavLink, Outlet, useLocation } from 'react-router-dom';
-import { books, elevenlabs } from '../services/api';
+import { books, elevenlabs, chapters as chaptersApi, characters as charsApi, timeline as timelineApi } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
 import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones, BookMarked, ChevronRight } from 'lucide-react';
@@ -22,12 +22,55 @@ export function BookEditor() {
   const { setCurrentBook, setCapabilities } = useAppStore();
   const [book, setBook] = useState<Book | null>(null);
 
+  // Real workflow progress tracking
+  const [stepsDone, setStepsDone] = useState<boolean[]>(new Array(7).fill(false));
+
+  const checkWorkflowProgress = useCallback(async () => {
+    if (!bookId) return;
+    const done = new Array(7).fill(false);
+    try {
+      const chapterList = await chaptersApi.list(bookId);
+      // Step 1: Has chapters with text
+      done[0] = chapterList.length > 0;
+
+      // Step 2: Has characters with voices assigned
+      const charList = await charsApi.list(bookId);
+      done[1] = charList.some((c: any) => c.voice_id);
+
+      // Step 2 also implies step 3 (pronunciation is optional, mark done if voices exist)
+      done[2] = done[1];
+
+      // Step 4: Audio studio is optional, mark done if voices assigned
+      done[3] = done[1];
+
+      // Step 5: Has tracks with clips on timeline
+      const trackList = await timelineApi.tracks(bookId);
+      const hasClips = trackList.some((t: any) => t.clips && t.clips.length > 0);
+      done[4] = hasClips;
+
+      // Step 6: QC/Render - check if any chapter has audio stats
+      const hasAudio = chapterList.some((ch: any) => ch.stats?.with_audio > 0);
+      done[5] = hasAudio && hasClips;
+
+      // Step 7: Export - we can't easily check, leave false
+    } catch {
+      // Silently fail - progress indicators are non-critical
+    }
+    setStepsDone(done);
+  }, [bookId]);
+
   useEffect(() => {
     if (!bookId) return;
     books.get(bookId).then((b) => { setBook(b); setCurrentBook(b); }).catch(console.error);
     elevenlabs.capabilities().then(setCapabilities).catch(() => {});
+    checkWorkflowProgress();
     return () => setCurrentBook(null);
-  }, [bookId]);
+  }, [bookId, checkWorkflowProgress]);
+
+  // Re-check progress when navigating between steps
+  useEffect(() => {
+    checkWorkflowProgress();
+  }, [location.pathname, checkWorkflowProgress]);
 
   if (!book) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-deep)', color: 'var(--text-tertiary)' }}>
@@ -76,7 +119,7 @@ export function BookEditor() {
         <div style={styles.stepsLabel}>
           <span>WORKFLOW</span>
           <span style={styles.stepProgress}>
-            {currentStepIdx >= 0 ? currentStepIdx + 1 : 1}/{STEPS.length}
+            {stepsDone.filter(Boolean).length}/{STEPS.length} done
           </span>
         </div>
         <div style={styles.navList} className="stagger-children">
@@ -95,9 +138,9 @@ export function BookEditor() {
                   <div style={{
                     ...styles.stepNumber,
                     ...(isActive ? styles.stepNumberActive : {}),
-                    ...(currentStepIdx > idx ? styles.stepNumberDone : {}),
+                    ...(!isActive && stepsDone[idx] ? styles.stepNumberDone : {}),
                   }}>
-                    {currentStepIdx > idx ? '✓' : item.step}
+                    {!isActive && stepsDone[idx] ? '✓' : item.step}
                   </div>
                   <div style={styles.navContent}>
                     <div style={{
