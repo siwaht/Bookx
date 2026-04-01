@@ -64,9 +64,9 @@ function AppLayout() {
   const isBookEditor = location.pathname.startsWith('/book/');
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100vh' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {!isBookEditor && <TopNav />}
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/library" element={<LibraryPage />} />

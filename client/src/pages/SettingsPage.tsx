@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { settings as settingsApi, elevenlabs, system } from '../services/api';
 import { toast } from '../components/Toast';
-import { Key, Eye, EyeOff, Save, Trash2, Check, Wifi, WifiOff, Loader, Database, HardDrive, RefreshCw, Shield } from 'lucide-react';
+import { Key, Eye, EyeOff, Save, Trash2, Check, Wifi, WifiOff, Loader, Database, HardDrive, RefreshCw, Shield, CloudOff, Cloud } from 'lucide-react';
 
 interface ApiKeyConfig {
   key: string;
@@ -47,6 +47,15 @@ export function SettingsPage() {
   const [cleaning, setCleaning] = useState(false);
   const [cleanupResult, setCleanupResult] = useState<{ exports_removed: number; renders_removed: number; orphan_assets_removed: number; bytes_freed: number } | null>(null);
 
+  // External storage state
+  const [storageProvider, setStorageProvider] = useState<'local' | 'mongodb'>('local');
+  const [mongoConnString, setMongoConnString] = useState('');
+  const [mongoDbName, setMongoDbName] = useState('audiobookstudio');
+  const [showConnString, setShowConnString] = useState(false);
+  const [storageStatus, setStorageStatus] = useState<{ provider: string; connected: boolean; error?: string; details?: any } | null>(null);
+  const [storageTesting, setStorageTesting] = useState(false);
+  const [storageActivating, setStorageActivating] = useState(false);
+
   const testElevenLabsConnection = async () => {
     setConnTest({ testing: true, result: null });
     try {
@@ -69,7 +78,79 @@ export function SettingsPage() {
     }
   };
 
-  useEffect(() => { load(); loadSystemInfo(); }, []);
+  useEffect(() => { load(); loadSystemInfo(); loadStorageStatus(); }, []);
+
+  const loadStorageStatus = async () => {
+    try {
+      const status = await settingsApi.storageStatus();
+      setStorageStatus(status);
+      setStorageProvider(status.provider === 'mongodb' ? 'mongodb' : 'local');
+      if (status.database_name) setMongoDbName(status.database_name);
+    } catch { /* ignore */ }
+  };
+
+  const handleTestStorage = async () => {
+    setStorageTesting(true);
+    try {
+      const result = await settingsApi.testStorage({
+        provider: storageProvider,
+        connection_string: mongoConnString || undefined,
+        database_name: mongoDbName,
+      });
+      setStorageStatus({ provider: storageProvider, ...result });
+      if (result.connected) {
+        toast.success('Connection successful');
+      } else {
+        toast.error(`Connection failed: ${result.error}`);
+      }
+    } catch (err: any) {
+      toast.error(`Test failed: ${err.message}`);
+    } finally {
+      setStorageTesting(false);
+    }
+  };
+
+  const handleActivateStorage = async () => {
+    if (storageProvider === 'mongodb' && !mongoConnString) {
+      toast.error('Please enter a MongoDB connection string');
+      return;
+    }
+    if (storageProvider === 'mongodb' && !confirm('Switch file storage to MongoDB? New uploads will be stored in MongoDB GridFS. Existing local files will remain accessible.')) return;
+    setStorageActivating(true);
+    try {
+      const result = await settingsApi.activateStorage({
+        provider: storageProvider,
+        connection_string: mongoConnString || undefined,
+        database_name: mongoDbName,
+      });
+      if (result.connected) {
+        toast.success(`Storage switched to ${storageProvider}`);
+        setMongoConnString('');
+        loadStorageStatus();
+      } else {
+        toast.error(`Failed to activate: ${result.error}`);
+      }
+    } catch (err: any) {
+      toast.error(`Activation failed: ${err.message}`);
+    } finally {
+      setStorageActivating(false);
+    }
+  };
+
+  const handleSwitchToLocal = async () => {
+    if (!confirm('Switch back to local file storage?')) return;
+    setStorageActivating(true);
+    try {
+      await settingsApi.activateStorage({ provider: 'local' });
+      toast.success('Switched to local storage');
+      setStorageProvider('local');
+      loadStorageStatus();
+    } catch (err: any) {
+      toast.error(`Failed: ${err.message}`);
+    } finally {
+      setStorageActivating(false);
+    }
+  };
 
   const loadSystemInfo = async () => {
     try {
@@ -243,6 +324,118 @@ export function SettingsPage() {
           </select>
         </div>
 
+        {/* External Storage */}
+        <div style={S.section}>
+          <h2 style={S.sectionTitle}><Database size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> External Storage</h2>
+          <p style={S.sectionHint}>
+            Connect an external database to store uploaded files (audio, manuscripts, etc.) instead of the local filesystem.
+            Metadata stays in the local SQLite database for fast queries. Only file blobs are stored externally.
+          </p>
+
+          {/* Current status */}
+          {storageStatus && (
+            <div style={{
+              padding: 12, borderRadius: 10,
+              background: storageStatus.connected ? 'rgba(74,222,128,0.05)' : 'rgba(248,113,113,0.05)',
+              border: `1px solid ${storageStatus.connected ? 'rgba(74,222,128,0.15)' : 'rgba(248,113,113,0.15)'}`,
+              display: 'flex', alignItems: 'center', gap: 10,
+            }}>
+              {storageStatus.connected
+                ? <Cloud size={16} color="#4ade80" />
+                : <CloudOff size={16} color="#f87171" />}
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>
+                  Active: {storageStatus.provider === 'mongodb' ? 'MongoDB GridFS' : 'Local Filesystem'}
+                </div>
+                {storageStatus.provider === 'mongodb' && storageStatus.details && (
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                    MongoDB v{storageStatus.details.version} · {storageStatus.details.databases} databases
+                  </div>
+                )}
+                {storageStatus.error && (
+                  <div style={{ fontSize: 11, color: '#f87171', marginTop: 2 }}>{storageStatus.error}</div>
+                )}
+              </div>
+              {storageStatus.provider === 'mongodb' && (
+                <button onClick={handleSwitchToLocal} disabled={storageActivating}
+                  style={{ ...S.deleteBtn, fontSize: 11, padding: '5px 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
+                  Switch to Local
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Provider selector */}
+          <div style={S.keyRow}>
+            <div style={S.keyHeader}>
+              <Database size={14} style={{ color: '#4A90D9' }} />
+              <span style={S.keyLabel}>Storage Provider</span>
+            </div>
+            <select value={storageProvider} onChange={(e) => setStorageProvider(e.target.value as any)}
+              style={S.select} aria-label="Storage provider">
+              <option value="local">Local Filesystem (default)</option>
+              <option value="mongodb">MongoDB (GridFS)</option>
+            </select>
+
+            {storageProvider === 'mongodb' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 8 }}>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Connection String</label>
+                  <div style={S.inputWrapper}>
+                    <input
+                      type={showConnString ? 'text' : 'password'}
+                      value={mongoConnString}
+                      onChange={(e) => setMongoConnString(e.target.value)}
+                      placeholder="mongodb://localhost:27017 or mongodb+srv://user:pass@cluster..."
+                      style={S.input}
+                      aria-label="MongoDB connection string"
+                    />
+                    <button onClick={() => setShowConnString(!showConnString)}
+                      style={S.eyeBtn} aria-label="Toggle visibility">
+                      {showConnString ? <EyeOff size={14} /> : <Eye size={14} />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: 11, color: 'var(--text-muted)', display: 'block', marginBottom: 4 }}>Database Name</label>
+                  <input
+                    type="text"
+                    value={mongoDbName}
+                    onChange={(e) => setMongoDbName(e.target.value)}
+                    placeholder="audiobookstudio"
+                    style={{ ...S.input, maxWidth: 320 }}
+                    aria-label="MongoDB database name"
+                  />
+                </div>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={handleTestStorage} disabled={storageTesting || !mongoConnString}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
+                      background: '#1a2a3a', color: '#4A90D9', border: '1px solid #2a3a5a',
+                      borderRadius: 8, cursor: 'pointer', fontSize: 12, fontWeight: 500,
+                      opacity: !mongoConnString ? 0.5 : 1,
+                    }}>
+                    {storageTesting ? <Loader size={13} /> : <Wifi size={13} />}
+                    {storageTesting ? 'Testing...' : 'Test Connection'}
+                  </button>
+                  <button onClick={handleActivateStorage} disabled={storageActivating || !mongoConnString}
+                    style={{
+                      ...S.saveBtn,
+                      opacity: !mongoConnString ? 0.5 : 1,
+                    }}>
+                    {storageActivating ? <Loader size={13} /> : <Save size={13} />}
+                    {storageActivating ? 'Activating...' : 'Activate MongoDB Storage'}
+                  </button>
+                </div>
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, margin: 0 }}>
+                  Files will be stored in MongoDB GridFS. Your connection string is encrypted at rest in the local database.
+                  Existing local files remain accessible — only new uploads go to MongoDB.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* System Management */}
         <div style={S.section}>
           <h2 style={S.sectionTitle}><Shield size={14} style={{ display: 'inline', verticalAlign: 'middle' }} /> System Management</h2>
@@ -332,7 +525,7 @@ export function SettingsPage() {
 }
 
 const S: Record<string, React.CSSProperties> = {
-  page: { padding: '32px 40px', maxWidth: 800, margin: '0 auto', minHeight: '100vh', overflow: 'auto' },
+  page: { padding: '32px 40px 64px', maxWidth: 800, margin: '0 auto' },
   container: { display: 'flex', flexDirection: 'column', gap: 32 },
   backBtn: {
     display: 'flex', alignItems: 'center', gap: 6, background: 'none',

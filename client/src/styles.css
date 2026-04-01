@@ -68,10 +68,19 @@ body {
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.5;
   overflow: hidden;
+  height: 100vh;
 }
 
 #root {
-  min-height: 100vh;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+#root {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ── Scrollbar ── */
