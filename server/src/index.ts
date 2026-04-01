@@ -25,6 +25,7 @@ import { aiParseRouter } from './routes/ai-parse.js';
 import { pronunciationRouter } from './routes/pronunciation.js';
 import { ttsProvidersRouter } from './routes/tts-providers.js';
 import { libraryRouter } from './routes/library.js';
+import { initStorageFromSettings } from './storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = parseInt(process.env.PORT || '3001', 10);
@@ -101,6 +102,10 @@ async function main() {
   }
   const awsRegion = getSetting(db, 'aws_region');
   if (awsRegion) process.env.AWS_REGION = awsRegion;
+
+  // Initialize storage provider (local or external)
+  const storageResult = await initStorageFromSettings((key) => getSetting(db, key));
+  log.info('Storage initialized', storageResult);
 
   const app = express();
 

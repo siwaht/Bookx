@@ -4,23 +4,40 @@ import path from 'path';
 import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
+import { getStorageProvider } from '../storage/index.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
 export function audioRouter(db: SqlJsDatabase): Router {
   const router = Router();
 
-  router.get('/:assetId', (req: Request, res: Response) => {
+  router.get('/:assetId', async (req: Request, res: Response) => {
     try {
-      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
-      if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+      const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
+      if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
 
-      const ext = path.extname(asset.file_path).toLowerCase();
+      const storage = getStorageProvider();
+      const filePath = asset.file_path;
+      const ext = path.extname(filePath).toLowerCase();
       const mimeTypes: Record<string, string> = { '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.m4a': 'audio/mp4', '.flac': 'audio/flac' };
-      res.setHeader('Content-Type', mimeTypes[ext] || 'audio/mpeg');
-      res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
-      res.setHeader('Accept-Ranges', 'bytes');
-      fs.createReadStream(asset.file_path).pipe(res);
+
+      if (filePath.startsWith('gridfs://')) {
+        // External storage — stream from provider
+        const key = filePath.replace('gridfs://', '');
+        const fileSize = await storage.size(key);
+        res.setHeader('Content-Type', mimeTypes[ext] || 'audio/mpeg');
+        res.setHeader('Content-Length', fileSize);
+        res.setHeader('Accept-Ranges', 'bytes');
+        const stream = await storage.createReadStream(key);
+        (stream as any).pipe(res);
+      } else {
+        // Local file
+        if (!fs.existsSync(filePath)) { res.status(404).json({ error: 'Audio file not found on disk' }); return; }
+        res.setHeader('Content-Type', mimeTypes[ext] || 'audio/mpeg');
+        res.setHeader('Content-Length', fs.statSync(filePath).size);
+        res.setHeader('Accept-Ranges', 'bytes');
+        fs.createReadStream(filePath).pipe(res);
+      }
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to stream audio' });
     }
@@ -48,18 +65,29 @@ export function audioRouter(db: SqlJsDatabase): Router {
   });
 
   // Download an audio asset as a file
-  router.get('/:assetId/download', (req: Request, res: Response) => {
+  router.get('/:assetId/download', async (req: Request, res: Response) => {
     try {
       const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
-      if (!asset || !fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio asset not found' }); return; }
+      if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
 
       const ext = path.extname(asset.file_path).toLowerCase();
       const name = asset.name || asset.id;
       const safeName = name.replace(/[^a-zA-Z0-9_\-\s]/g, '').slice(0, 60) || 'audio';
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}${ext}"`);
       res.setHeader('Content-Type', ext === '.wav' ? 'audio/wav' : 'audio/mpeg');
-      res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
-      fs.createReadStream(asset.file_path).pipe(res);
+
+      if (asset.file_path.startsWith('gridfs://')) {
+        const storage = getStorageProvider();
+        const key = asset.file_path.replace('gridfs://', '');
+        const fileSize = await storage.size(key);
+        res.setHeader('Content-Length', fileSize);
+        const stream = await storage.createReadStream(key);
+        (stream as any).pipe(res);
+      } else {
+        if (!fs.existsSync(asset.file_path)) { res.status(404).json({ error: 'Audio file not found on disk' }); return; }
+        res.setHeader('Content-Length', fs.statSync(asset.file_path).size);
+        fs.createReadStream(asset.file_path).pipe(res);
+      }
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to download audio' });
     }
@@ -86,12 +114,17 @@ export function audioRouter(db: SqlJsDatabase): Router {
   });
 
   // Delete an audio asset
-  router.delete('/:assetId', (req: Request, res: Response) => {
+  router.delete('/:assetId', async (req: Request, res: Response) => {
     try {
       const asset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]) as any;
       if (!asset) { res.status(404).json({ error: 'Audio asset not found' }); return; }
-      if (asset.file_path && fs.existsSync(asset.file_path)) {
-        try { fs.unlinkSync(asset.file_path); } catch {}
+      if (asset.file_path) {
+        const storage = getStorageProvider();
+        if (asset.file_path.startsWith('gridfs://')) {
+          try { await storage.delete(asset.file_path.replace('gridfs://', '')); } catch {}
+        } else if (fs.existsSync(asset.file_path)) {
+          try { fs.unlinkSync(asset.file_path); } catch {}
+        }
       }
       run(db, 'DELETE FROM clips WHERE audio_asset_id = ?', [req.params.assetId]);
       run(db, 'UPDATE segments SET audio_asset_id = NULL WHERE audio_asset_id = ?', [req.params.assetId]);
@@ -200,8 +233,9 @@ export function audioRouter(db: SqlJsDatabase): Router {
 
       // Save audio file
       const assetId = uuid();
-      const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
-      fs.writeFileSync(filePath, filePart.data);
+      const storage = getStorageProvider();
+      const storageKey = `audio/${assetId}${ext}`;
+      const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId, chapterId });
 
       const fileSizeBytes = filePart.data.length;
       const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
@@ -210,7 +244,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
          VALUES (?, ?, 'imported', ?, ?, ?, ?)`,
-        [assetId, bookId, filePath, estimatedDurationMs, fileSizeBytes, originalName]);
+        [assetId, bookId, storedPath, estimatedDurationMs, fileSizeBytes, originalName]);
 
       // Create a segment linked to this audio asset (or update existing if chapter has one segment with no audio)
       const existingSegments = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [chapterId]);
@@ -242,7 +276,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       res.status(201).json({
         audio_asset_id: assetId,
         segment_id: segmentId,
-        file_path: filePath,
+        file_path: storedPath,
         name: originalName,
         duration_ms: estimatedDurationMs,
         file_size_bytes: fileSizeBytes,
@@ -299,8 +333,13 @@ export function audioRouter(db: SqlJsDatabase): Router {
       // Delete old audio asset if exists
       if (segment.audio_asset_id) {
         const oldAsset = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [segment.audio_asset_id]) as any;
-        if (oldAsset?.file_path && fs.existsSync(oldAsset.file_path)) {
-          try { fs.unlinkSync(oldAsset.file_path); } catch {}
+        if (oldAsset?.file_path) {
+          const storage = getStorageProvider();
+          if (oldAsset.file_path.startsWith('gridfs://')) {
+            try { await storage.delete(oldAsset.file_path.replace('gridfs://', '')); } catch {}
+          } else if (fs.existsSync(oldAsset.file_path)) {
+            try { fs.unlinkSync(oldAsset.file_path); } catch {}
+          }
         }
         run(db, 'DELETE FROM clips WHERE audio_asset_id = ?', [segment.audio_asset_id]);
         run(db, 'DELETE FROM audio_assets WHERE id = ?', [segment.audio_asset_id]);
@@ -308,8 +347,9 @@ export function audioRouter(db: SqlJsDatabase): Router {
 
       // Save new audio file
       const assetId = uuid();
-      const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
-      fs.writeFileSync(filePath, filePart.data);
+      const storage = getStorageProvider();
+      const storageKey = `audio/${assetId}${ext}`;
+      const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId, segmentId });
 
       const fileSizeBytes = filePart.data.length;
       const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
@@ -317,7 +357,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
          VALUES (?, ?, 'imported', ?, ?, ?, ?)`,
-        [assetId, bookId, filePath, estimatedDurationMs, fileSizeBytes, originalName]);
+        [assetId, bookId, storedPath, estimatedDurationMs, fileSizeBytes, originalName]);
 
       // Link to segment
       run(db, 'UPDATE segments SET audio_asset_id = ? WHERE id = ?', [assetId, segmentId]);
@@ -372,7 +412,11 @@ export function audioRouter(db: SqlJsDatabase): Router {
 
       const assetId = uuid();
       const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
-      fs.writeFileSync(filePath, filePart.data);
+
+      // Use storage provider
+      const storage = getStorageProvider();
+      const storageKey = `audio/${assetId}${ext}`;
+      const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId });
 
       // Estimate duration from file size (rough: 192kbps mp3 = 24000 bytes/sec)
       const fileSizeBytes = filePart.data.length;
@@ -380,11 +424,11 @@ export function audioRouter(db: SqlJsDatabase): Router {
 
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes) VALUES (?, ?, 'imported', ?, ?, ?)`,
-        [assetId, bookId, filePath, estimatedDurationMs, fileSizeBytes]);
+        [assetId, bookId, storedPath, estimatedDurationMs, fileSizeBytes]);
 
       res.status(201).json({
         audio_asset_id: assetId,
-        file_path: filePath,
+        file_path: storedPath,
         name: originalName,
         duration_ms: estimatedDurationMs,
         file_size_bytes: fileSizeBytes,

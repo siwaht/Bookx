@@ -287,6 +287,12 @@ export const settings = {
   set: (key: string, value: string) =>
     request<{ ok: boolean }>(`/settings/${key}`, { method: 'PUT', body: JSON.stringify({ value }) }),
   delete: (key: string) => request<void>(`/settings/${key}`, { method: 'DELETE' }),
+  // External storage
+  storageStatus: () => request<{ provider: string; connected: boolean; error?: string; details?: any; database_name?: string }>('/settings/storage/status'),
+  testStorage: (data: { provider: string; connection_string?: string; database_name?: string }) =>
+    request<{ connected: boolean; error?: string; details?: any }>('/settings/storage/test', { method: 'POST', body: JSON.stringify(data) }),
+  activateStorage: (data: { provider: string; connection_string?: string; database_name?: string }) =>
+    request<{ ok: boolean; provider: string; connected: boolean; error?: string }>('/settings/storage/activate', { method: 'POST', body: JSON.stringify(data) }),
 };
 
 // ── Save ──
