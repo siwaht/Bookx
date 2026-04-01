@@ -14,7 +14,10 @@ export const useAppStore = create<AppState>((set) => ({
   authenticated: !!localStorage.getItem('auth_token'),
   currentBook: null,
   capabilities: null,
-  setAuthenticated: (v) => set({ authenticated: v }),
+  setAuthenticated: (v) => {
+    if (!v) localStorage.removeItem('auth_token');
+    set({ authenticated: v });
+  },
   setCurrentBook: (book) => set({ currentBook: book }),
   setCapabilities: (caps) => set({ capabilities: caps }),
 }));

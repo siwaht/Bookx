@@ -21,12 +21,12 @@ export function queryOne(db: SqlJsDatabase, sql: string, params: any[] = []): an
 
 export function run(db: SqlJsDatabase, sql: string, params: any[] = []): void {
   db.run(sql, params);
-  saveDb();
+  // Note: Don't call saveDb() here - the server has an auto-save interval
 }
 
 export function runMany(db: SqlJsDatabase, sql: string, paramSets: any[][]): void {
   for (const params of paramSets) {
     db.run(sql, params);
   }
-  saveDb();
+  // Note: Don't call saveDb() here - the server has an auto-save interval
 }

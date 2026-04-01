@@ -7,6 +7,7 @@ const DATA_DIR = process.env.DATA_DIR || './data';
 
 let db: SqlJsDatabase | null = null;
 let dbPath: string;
+let autoSaveInterval: ReturnType<typeof setInterval> | null = null;
 
 export async function getDb(): Promise<SqlJsDatabase> {
   if (db) return db;
@@ -39,7 +40,17 @@ export function saveDb(): void {
 }
 
 // Auto-save every 5 seconds
-setInterval(() => saveDb(), 5000);
+export function startAutoSave(): void {
+  if (autoSaveInterval) return;
+  autoSaveInterval = setInterval(() => saveDb(), 5000);
+}
+
+export function stopAutoSave(): void {
+  if (autoSaveInterval) {
+    clearInterval(autoSaveInterval);
+    autoSaveInterval = null;
+  }
+}
 
 export function initializeSchema(database: SqlJsDatabase): void {
   database.run(`

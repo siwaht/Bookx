@@ -28,15 +28,22 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    if (!authenticated) { setChecking(false); return; }
-    auth.verify().then(() => {
-      setAuthenticated(true);
-      setChecking(false);
-    }).catch(() => {
-      setAuthenticated(false);
-      setChecking(false);
-    });
-  }, []);
+    const verifyAuth = async () => {
+      if (!authenticated) {
+        setChecking(false);
+        return;
+      }
+      try {
+        await auth.verify();
+        setAuthenticated(true);
+      } catch {
+        setAuthenticated(false);
+      } finally {
+        setChecking(false);
+      }
+    };
+    verifyAuth();
+  }, [authenticated, setAuthenticated]);
 
   if (checking) {
     return (

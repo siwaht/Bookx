@@ -281,24 +281,3 @@ export interface ACXSpec {
   cover_aspect: '1:1';
 }
 
-// ── InAudio Spec ──
-
-export interface InAudioSpec {
-    format: 'mp3';
-    bitrate: 192;
-    encoding: 'cbr';
-    sample_rate: 44100;
-    naming: {
-      opening: 'Opening - [Name].mp3';
-      chapter: 'Chapter [#] - [Title].mp3';
-      closing: 'Closing - End Credits.mp3';
-      sample: 'Sample - [Name].mp3';
-    };
-    rules: {
-      no_colons_in_filenames: true;
-      clean_html_entities: true;
-      remove_underscores: true;
-      re_encode_existing_mp3: true;
-      output_to_subfolder: true;
-    };
-}

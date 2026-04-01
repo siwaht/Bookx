@@ -188,7 +188,7 @@ export interface TTSVoice {
 }
 
 // ── Library ──
-export type LibraryFileFormat = 'pdf' | 'epub' | 'docx' | 'kindle' | 'mobi';
+export type LibraryFileFormat = 'pdf' | 'epub' | 'docx' | 'kindle' | 'mobi' | 'txt';
 export type PublishTarget = 'kindle_ebook' | 'kindle_paperback' | 'kindle_hardcover' | 'audiobook' | 'spotify' | 'apple_books' | 'google_play';
 
 export interface LibraryBook {

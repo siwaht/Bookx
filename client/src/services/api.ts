@@ -1,3 +1,5 @@
+import { useAppStore } from '../stores/appStore';
+
 const API_BASE = '/api';
 
 let authToken: string | null = localStorage.getItem('auth_token');
@@ -10,6 +12,7 @@ export function setToken(token: string) {
 export function clearToken() {
   authToken = null;
   localStorage.removeItem('auth_token');
+  useAppStore.getState().setAuthenticated(false);
 }
 
 export function getToken(): string | null {

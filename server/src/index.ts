@@ -4,7 +4,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { getDb, initializeSchema, saveDb } from './db/schema.js';
+import { getDb, initializeSchema, saveDb, startAutoSave, stopAutoSave } from './db/schema.js';
 import { queryAll, queryOne } from './db/helpers.js';
 import { authMiddleware, loginHandler } from './middleware/auth.js';
 import { apiRateLimit, ttsRateLimit } from './middleware/rate-limit.js';
@@ -320,6 +320,9 @@ async function main() {
     log.info(`Server started`, { port: PORT, env: NODE_ENV, pid: process.pid });
   });
 
+  // Start auto-save
+  startAutoSave();
+
   // ── Scheduled tasks ──
   // Auto-backup every 6 hours
   setInterval(() => {
@@ -339,6 +342,7 @@ async function main() {
   // ── Graceful shutdown ──
   const shutdown = (signal: string) => {
     log.info(`${signal} received, shutting down gracefully...`);
+    stopAutoSave();
     saveDb();
     server.close(() => {
       log.info('Server closed');
@@ -354,6 +358,7 @@ async function main() {
 
   process.on('uncaughtException', (err) => {
     log.error('Uncaught exception', { error: err.message, stack: err.stack });
+    stopAutoSave();
     saveDb();
   });
   process.on('unhandledRejection', (reason) => {
