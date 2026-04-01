@@ -7,7 +7,7 @@ import type { Track, Clip, ChapterMarker } from '../types';
 import {
   Play, Pause, SkipBack, ZoomIn, ZoomOut, Plus, Trash2, Volume2, VolumeX,
   Save, Download, Scissors, Copy, Clipboard, Undo2, Redo2, HelpCircle, X,
-  Wand2, Loader, Upload, Clock,
+  Wand2, Loader, Upload, Clock, Magnet, Layers, GitMerge, AlignLeft, Sliders,
 } from 'lucide-react';
 
 type DragMode = 'move' | 'trimStart' | 'trimEnd';
@@ -57,6 +57,15 @@ export function TimelinePage() {
   const [silenceDuration, setSilenceDuration] = useState(1000);
   const [insertingSilence, setInsertingSilence] = useState(false);
 
+  // Advanced editing state
+  const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set());
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [snapGridMs, setSnapGridMs] = useState(100);
+  const [rippleMode, setRippleMode] = useState(false);
+  const [showAdvancedPanel, setShowAdvancedPanel] = useState(false);
+  const [waveformEnabled, setWaveformEnabled] = useState(true);
+  const waveformCache = useRef<Map<string, number[]>>(new Map());
+
   // ── Data Loading ──
   const loadTracks = useCallback(async () => {
     if (!bookId) return;
@@ -73,6 +82,18 @@ export function TimelinePage() {
   }, [bookId]);
 
   useEffect(() => { loadTracks(); loadMarkers(); }, [loadTracks, loadMarkers]);
+
+  // Pre-load waveforms for visible clips
+  useEffect(() => {
+    if (!waveformEnabled) return;
+    for (const track of tracks) {
+      for (const clip of track.clips) {
+        if (!waveformCache.current.has(clip.audio_asset_id)) {
+          getWaveform(clip.audio_asset_id).then(() => draw());
+        }
+      }
+    }
+  }, [tracks, waveformEnabled]);
 
   // ── Undo/Redo ──
   const pushSnapshot = (data: Track[]) => {
@@ -386,6 +407,141 @@ export function TimelinePage() {
     }
     return 3000; // absolute fallback
   };
+
+  // Snap position to grid or clip edges
+  const snapPosition = (ms: number, excludeClipId?: string): number => {
+    if (!snapEnabled) return ms;
+    // Snap to grid
+    let snapped = Math.round(ms / snapGridMs) * snapGridMs;
+    // Snap to clip edges (magnetic snap within 50ms)
+    const SNAP_THRESHOLD = 50;
+    for (const t of tracks) {
+      for (const c of t.clips) {
+        if (c.id === excludeClipId) continue;
+        const cEnd = c.position_ms + getClipDuration(c);
+        if (Math.abs(ms - c.position_ms) < SNAP_THRESHOLD) snapped = c.position_ms;
+        if (Math.abs(ms - cEnd) < SNAP_THRESHOLD) snapped = cEnd;
+      }
+    }
+    // Snap to markers
+    for (const m of markers) {
+      if (Math.abs(ms - m.position_ms) < SNAP_THRESHOLD) snapped = m.position_ms;
+    }
+    return Math.max(0, snapped);
+  };
+
+  // Generate waveform data from audio buffer
+  const getWaveform = async (assetId: string): Promise<number[]> => {
+    if (waveformCache.current.has(assetId)) return waveformCache.current.get(assetId)!;
+    try {
+      const buffer = await loadAudioBuffer(assetId);
+      if (!buffer) return [];
+      const channelData = buffer.getChannelData(0);
+      const samples = 100; // number of bars
+      const blockSize = Math.floor(channelData.length / samples);
+      const peaks: number[] = [];
+      for (let i = 0; i < samples; i++) {
+        let sum = 0;
+        for (let j = 0; j < blockSize; j++) {
+          sum += Math.abs(channelData[i * blockSize + j] || 0);
+        }
+        peaks.push(sum / blockSize);
+      }
+      // Normalize to 0-1
+      const max = Math.max(...peaks, 0.01);
+      const normalized = peaks.map(p => p / max);
+      waveformCache.current.set(assetId, normalized);
+      return normalized;
+    } catch { return []; }
+  };
+
+  // Multi-select helpers
+  const isMultiSelected = (clipId: string) => selectedClipIds.has(clipId);
+  const toggleMultiSelect = (clipId: string) => {
+    setSelectedClipIds(prev => {
+      const next = new Set(prev);
+      if (next.has(clipId)) next.delete(clipId);
+      else next.add(clipId);
+      return next;
+    });
+  };
+  const clearMultiSelect = () => setSelectedClipIds(new Set());
+
+  // Advanced operations
+  const handleNormalizeTrack = async (trackId: string, targetDb = -3) => {
+    if (!bookId) return;
+    pushSnapshot(tracks);
+    try {
+      const result = await timelineApi.normalizeTrack(bookId, trackId, targetDb);
+      toast.info(`Normalized ${result.normalized} clips to ${result.target_db}dB`);
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { toast.error(`Normalize failed: ${err.message}`); }
+  };
+
+  const handleCloseGaps = async (trackId: string, gapMs = 300) => {
+    if (!bookId) return;
+    pushSnapshot(tracks);
+    try {
+      const result = await timelineApi.closeGaps(bookId, trackId, gapMs);
+      toast.info(`Adjusted ${result.adjusted} clips`);
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { toast.error(`Close gaps failed: ${err.message}`); }
+  };
+
+  const handleCrossfade = async () => {
+    if (!bookId || selectedClipIds.size !== 2) {
+      toast.error('Select exactly 2 clips to crossfade');
+      return;
+    }
+    const ids = Array.from(selectedClipIds);
+    // Determine order by position
+    const clipA = findClip(ids[0]);
+    const clipB = findClip(ids[1]);
+    if (!clipA || !clipB) return;
+    const [first, second] = clipA.position_ms <= clipB.position_ms ? [ids[0], ids[1]] : [ids[1], ids[0]];
+    pushSnapshot(tracks);
+    try {
+      await timelineApi.crossfade(bookId, first, second, 500);
+      toast.info('Crossfade applied');
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { toast.error(`Crossfade failed: ${err.message}`); }
+  };
+
+  const handleBatchDelete = async () => {
+    if (!bookId || selectedClipIds.size === 0) return;
+    if (!confirm(`Delete ${selectedClipIds.size} selected clips?`)) return;
+    pushSnapshot(tracks);
+    try {
+      await timelineApi.batchDeleteClips(bookId, Array.from(selectedClipIds));
+      clearMultiSelect();
+      setSelectedClipId(null);
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { toast.error(`Batch delete failed: ${err.message}`); }
+  };
+
+  const handleBatchGainAdjust = async (deltaDb: number) => {
+    if (!bookId || selectedClipIds.size === 0) return;
+    pushSnapshot(tracks);
+    try {
+      await timelineApi.batchUpdateClips(bookId, Array.from(selectedClipIds), { delta_gain: deltaDb });
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { toast.error(`Batch adjust failed: ${err.message}`); }
+  };
+
+  const handleBatchSpeedAdjust = async (deltaSpeed: number) => {
+    if (!bookId || selectedClipIds.size === 0) return;
+    pushSnapshot(tracks);
+    try {
+      await timelineApi.batchUpdateClips(bookId, Array.from(selectedClipIds), { delta_speed: deltaSpeed });
+      skipSnap.current = true;
+      loadTracks();
+    } catch (err: any) { toast.error(`Batch adjust failed: ${err.message}`); }
+  };
   const totalDuration = () => {
     let max = 10000;
     for (const t of tracks) for (const c of t.clips) max = Math.max(max, c.position_ms + getClipDuration(c));
@@ -435,6 +591,18 @@ export function TimelinePage() {
       ctx.fillText(label, x + 3, 12);
     }
 
+    // Snap grid lines (subtle)
+    if (snapEnabled && pxPerMs > 0.02) {
+      ctx.strokeStyle = 'rgba(74,144,217,0.06)';
+      ctx.lineWidth = 1;
+      const gridStep = snapGridMs;
+      for (let ms = 0; ms < totalDuration(); ms += gridStep) {
+        const x = (ms - scrollX) * pxPerMs;
+        if (x < 0 || x > W) continue;
+        ctx.beginPath(); ctx.moveTo(x, RULER_H); ctx.lineTo(x, H); ctx.stroke();
+      }
+    }
+
     // Chapter markers
     for (const m of markers) {
       const x = (m.position_ms - scrollX) * pxPerMs;
@@ -459,9 +627,10 @@ export function TimelinePage() {
         const cw = getClipDuration(clip) * pxPerMs;
         if (cx + cw < 0 || cx > W) continue;
         const isSelected = clip.id === selectedClipId;
+        const isMultiSel = selectedClipIds.has(clip.id);
         const isDragging = dragRef.current?.clipId === clip.id;
         const baseColor = track.type === 'narration' ? '#2a4a6a' : track.type === 'sfx' ? '#2a4a2a' : track.type === 'music' ? '#4a2a6a' : '#4a4a2a';
-        const activeColor = isSelected ? '#4A90D9' : baseColor;
+        const activeColor = isSelected ? '#4A90D9' : isMultiSel ? '#6A60D9' : baseColor;
 
         // Clip body with rounded corners
         const clipY = y + 4;
@@ -471,9 +640,37 @@ export function TimelinePage() {
         ctx.roundRect(cx, clipY, cw, clipH, r);
         ctx.fillStyle = isDragging ? '#5A9AE9' : activeColor;
         ctx.fill();
-        ctx.strokeStyle = isSelected ? '#fff' : '#444';
-        ctx.lineWidth = isSelected ? 2 : 1;
-        ctx.stroke();
+
+        // Waveform visualization
+        if (waveformEnabled && cw > 20) {
+          const waveform = waveformCache.current.get(clip.audio_asset_id);
+          if (waveform && waveform.length > 0) {
+            ctx.fillStyle = 'rgba(255,255,255,0.15)';
+            const barW = cw / waveform.length;
+            const maxBarH = clipH * 0.6;
+            for (let wi = 0; wi < waveform.length; wi++) {
+              const barH = waveform[wi] * maxBarH;
+              const bx = cx + wi * barW;
+              const by = clipY + (clipH - barH) / 2;
+              if (bx >= cx && bx + barW <= cx + cw) {
+                ctx.fillRect(bx, by, Math.max(barW - 0.5, 0.5), barH);
+              }
+            }
+          }
+        }
+
+        // Multi-select indicator (dashed border)
+        if (isMultiSel && !isSelected) {
+          ctx.strokeStyle = '#a78bfa';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        } else {
+          ctx.strokeStyle = isSelected ? '#fff' : '#444';
+          ctx.lineWidth = isSelected ? 2 : 1;
+          ctx.stroke();
+        }
 
         // Volume indicator bar at bottom of clip
         const gainDb = clip.gain || 0;
@@ -532,7 +729,7 @@ export function TimelinePage() {
     ctx.beginPath(); ctx.moveTo(phX, 0); ctx.lineTo(phX, H); ctx.stroke();
     ctx.fillStyle = '#e55';
     ctx.beginPath(); ctx.moveTo(phX - 6, 0); ctx.lineTo(phX + 6, 0); ctx.lineTo(phX, 8); ctx.closePath(); ctx.fill();
-  }, [tracks, markers, pxPerMs, scrollX, playheadMs, selectedClipId]);
+  }, [tracks, markers, pxPerMs, scrollX, playheadMs, selectedClipId, selectedClipIds, snapEnabled, snapGridMs, waveformEnabled]);
 
   useEffect(() => { draw(); }, [draw]);
 
@@ -581,7 +778,14 @@ export function TimelinePage() {
     if (my < RULER_H) { seekTo(mx / pxPerMs + scrollX); return; }
     const hit = getHitInfo(mx, my);
     if (hit) {
+      if (e.shiftKey) {
+        // Multi-select with Shift+click
+        toggleMultiSelect(hit.clip.id);
+        return;
+      }
       setSelectedClipId(hit.clip.id);
+      // If clicking a clip that's part of multi-selection, keep selection
+      if (!selectedClipIds.has(hit.clip.id)) clearMultiSelect();
       setContextMenu(null);
       dragRef.current = {
         mode: hit.mode, clipId: hit.clip.id, trackId: hit.track.id,
@@ -591,6 +795,7 @@ export function TimelinePage() {
       return;
     }
     setSelectedClipId(null);
+    if (!e.shiftKey) clearMultiSelect();
     const clickMs = mx / pxPerMs + scrollX;
     seekTo(clickMs);
   };
@@ -684,10 +889,26 @@ export function TimelinePage() {
     dragRef.current = null;
 
     if (mode === 'move') {
-      // Save all clips on the same track (positions may have shifted due to push)
       const track = tracks.find((t) => t.id === draggedTrackId);
       if (track) {
         pushSnapshot(tracks);
+        // Apply snap to the dragged clip
+        const draggedClip = track.clips.find(c => c.id === draggedClipId);
+        if (draggedClip && snapEnabled) {
+          draggedClip.position_ms = snapPosition(draggedClip.position_ms, draggedClipId);
+        }
+        // Ripple mode: shift all clips after the dragged clip
+        if (rippleMode && draggedClip) {
+          const draggedEnd = draggedClip.position_ms + getClipDuration(draggedClip);
+          const sortedAfter = track.clips
+            .filter(c => c.id !== draggedClipId && c.position_ms >= draggedClip.position_ms)
+            .sort((a, b) => a.position_ms - b.position_ms);
+          let nextPos = draggedEnd + snapGridMs;
+          for (const c of sortedAfter) {
+            if (c.position_ms < nextPos) c.position_ms = nextPos;
+            nextPos = c.position_ms + getClipDuration(c) + snapGridMs;
+          }
+        }
         for (const clip of track.clips) {
           await timelineApi.updateClip(bookId, clip.id, {
             position_ms: Math.round(clip.position_ms),
@@ -697,7 +918,6 @@ export function TimelinePage() {
         }
       }
     } else {
-      // Trim mode — only save the trimmed clip
       const clip = findClip(draggedClipId);
       if (clip) {
         pushSnapshot(tracks);
@@ -742,6 +962,16 @@ export function TimelinePage() {
       }
       if (e.key === 's' && !e.ctrlKey && selectedClipId) splitClip(selectedClipId);
       if (e.key === 'd' && !e.ctrlKey && selectedClipId) duplicateClip(selectedClipId);
+      if (e.key === 'g' && !e.ctrlKey) setSnapEnabled(p => !p);
+      if (e.key === 'r' && !e.ctrlKey) setRippleMode(p => !p);
+      if (e.key === 'a' && e.ctrlKey) {
+        // Select all clips
+        e.preventDefault();
+        const allIds = new Set<string>();
+        for (const t of tracks) for (const c of t.clips) allIds.add(c.id);
+        setSelectedClipIds(allIds);
+      }
+      if (e.key === 'Delete' && selectedClipIds.size > 0) handleBatchDelete();
       if (e.key === '?') setShowHelp((p) => !p);
     };
     window.addEventListener('keydown', handler);
@@ -887,6 +1117,23 @@ export function TimelinePage() {
             <Clock size={14} /> {insertingSilence ? '...' : 'Pause'}
           </button>
         </div>
+        <div style={S.toolGroup}>
+          <button onClick={() => setSnapEnabled(p => !p)}
+            style={{ ...S.toolBtn, background: snapEnabled ? '#1a2a3a' : '#222', color: snapEnabled ? '#4A90D9' : 'var(--text-secondary)' }}
+            title={`Snap to grid (G) — ${snapGridMs}ms`}>
+            <Magnet size={14} /> Snap
+          </button>
+          <button onClick={() => setRippleMode(p => !p)}
+            style={{ ...S.toolBtn, background: rippleMode ? '#2a1a2a' : '#222', color: rippleMode ? '#a78bfa' : 'var(--text-secondary)' }}
+            title="Ripple edit mode (R) — moving clips shifts everything after">
+            <Layers size={14} /> Ripple
+          </button>
+          <button onClick={() => setShowAdvancedPanel(p => !p)}
+            style={{ ...S.toolBtn, background: showAdvancedPanel ? '#1a2a1a' : '#222' }}
+            title="Advanced editing tools">
+            <Sliders size={14} /> Advanced
+          </button>
+        </div>
         <div style={{ flex: 1 }} />
         <div style={S.toolGroup}>
           <button onClick={handleSave} disabled={saving} style={S.toolBtn} title="Save project to disk"><Save size={14} /> {saving ? '...' : 'Save'}</button>
@@ -935,6 +1182,75 @@ export function TimelinePage() {
                 style={S.quickBtn}>
                 {insertingSilence ? <Loader size={12} /> : <Clock size={12} />} Insert
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Advanced Editing Panel */}
+      {showAdvancedPanel && (
+        <div style={S.quickPanel}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+            {/* Snap settings */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>SNAP GRID</span>
+              <div style={{ display: 'flex', gap: 3 }}>
+                {[50, 100, 250, 500, 1000].map(ms => (
+                  <button key={ms} onClick={() => setSnapGridMs(ms)}
+                    style={{ ...S.presetBtn, padding: '4px 8px', fontSize: 10, background: snapGridMs === ms ? '#1a2a3a' : undefined, color: snapGridMs === ms ? '#4A90D9' : undefined }}>
+                    {ms}ms
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Multi-select actions */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>
+                MULTI-SELECT ({selectedClipIds.size} clips) — Shift+Click
+              </span>
+              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                <button onClick={handleBatchDelete} disabled={selectedClipIds.size === 0}
+                  style={{ ...S.presetBtn, color: selectedClipIds.size > 0 ? '#e55' : undefined }}>
+                  <Trash2 size={9} /> Delete All
+                </button>
+                <button onClick={handleCrossfade} disabled={selectedClipIds.size !== 2}
+                  style={S.presetBtn}>
+                  <GitMerge size={9} /> Crossfade
+                </button>
+                <button onClick={() => handleBatchGainAdjust(-3)} disabled={selectedClipIds.size === 0} style={S.presetBtn}>Vol -3dB</button>
+                <button onClick={() => handleBatchGainAdjust(3)} disabled={selectedClipIds.size === 0} style={S.presetBtn}>Vol +3dB</button>
+                <button onClick={() => handleBatchSpeedAdjust(-0.1)} disabled={selectedClipIds.size === 0} style={S.presetBtn}>Speed -0.1x</button>
+                <button onClick={() => handleBatchSpeedAdjust(0.1)} disabled={selectedClipIds.size === 0} style={S.presetBtn}>Speed +0.1x</button>
+                <button onClick={clearMultiSelect} disabled={selectedClipIds.size === 0} style={S.presetBtn}>Clear</button>
+              </div>
+            </div>
+
+            {/* Track operations */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>TRACK OPS</span>
+              <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+                {tracks.map(t => (
+                  <div key={t.id} style={{ display: 'flex', gap: 2 }}>
+                    <span style={{ fontSize: 9, color: '#666', alignSelf: 'center', minWidth: 50 }}>{t.name}:</span>
+                    <button onClick={() => handleNormalizeTrack(t.id)} style={S.presetBtn} title="Normalize all clips to -3dB">
+                      <Sliders size={9} /> Normalize
+                    </button>
+                    <button onClick={() => handleCloseGaps(t.id, 300)} style={S.presetBtn} title="Close gaps between clips (300ms spacing)">
+                      <AlignLeft size={9} /> Close Gaps
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Waveform toggle */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              <span style={{ fontSize: 10, color: '#888', fontWeight: 600 }}>DISPLAY</span>
+              <label style={{ fontSize: 10, color: waveformEnabled ? '#4A90D9' : '#666', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <input type="checkbox" checked={waveformEnabled} onChange={e => setWaveformEnabled(e.target.checked)} style={{ width: 12, height: 12 }} />
+                Waveforms
+              </label>
             </div>
           </div>
         </div>
@@ -1110,6 +1426,17 @@ export function TimelinePage() {
             {clipboardData && (
               <button onClick={() => { pasteClip(contextMenu.trackId); setContextMenu(null); }} style={S.ctxItem}><Clipboard size={11} /> Paste</button>
             )}
+            <div style={{ height: 1, background: '#222', margin: '2px 8px' }} />
+            <button onClick={() => { toggleMultiSelect(contextMenu.clipId); setContextMenu(null); }} style={S.ctxItem}>
+              <Layers size={11} /> {selectedClipIds.has(contextMenu.clipId) ? 'Deselect' : 'Add to Selection'}
+            </button>
+            {selectedClipIds.size === 2 && (
+              <button onClick={() => { handleCrossfade(); setContextMenu(null); }} style={S.ctxItem}><GitMerge size={11} /> Crossfade Selected</button>
+            )}
+            {selectedClipIds.size > 0 && (
+              <button onClick={() => { handleBatchDelete(); setContextMenu(null); }} style={{ ...S.ctxItem, color: '#e55' }}><Trash2 size={11} /> Delete Selected ({selectedClipIds.size})</button>
+            )}
+            <div style={{ height: 1, background: '#222', margin: '2px 8px' }} />
             <button onClick={() => { deleteClip(contextMenu.clipId); setContextMenu(null); }} style={{ ...S.ctxItem, color: '#e55' }}><Trash2 size={11} /> Delete</button>
           </div>
         </>

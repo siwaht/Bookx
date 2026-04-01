@@ -27,7 +27,23 @@ const TIMELINE_SHORTCUTS: ShortcutGroup[] = [
       { keys: ['Ctrl', 'X'], description: 'Cut clip' },
       { keys: ['Ctrl', 'C'], description: 'Copy clip' },
       { keys: ['Ctrl', 'V'], description: 'Paste clip' },
-      { keys: ['Delete'], description: 'Delete selected clip' },
+      { keys: ['Delete'], description: 'Delete selected clip(s)' },
+      { keys: ['S'], description: 'Split clip at playhead' },
+      { keys: ['D'], description: 'Duplicate clip' },
+    ],
+  },
+  {
+    title: 'Selection',
+    shortcuts: [
+      { keys: ['Shift', 'Click'], description: 'Multi-select clips' },
+      { keys: ['Ctrl', 'A'], description: 'Select all clips' },
+    ],
+  },
+  {
+    title: 'Advanced',
+    shortcuts: [
+      { keys: ['G'], description: 'Toggle snap to grid' },
+      { keys: ['R'], description: 'Toggle ripple edit mode' },
     ],
   },
   {

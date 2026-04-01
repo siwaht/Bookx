@@ -226,6 +226,25 @@ export const timeline = {
   sendSegment: (bookId: string, segmentId: string) =>
     request<{ clip_id: string; position_ms: number; duration_ms?: number; updated: boolean }>(
       `/books/${bookId}/send-segment-to-timeline`, { method: 'POST', body: JSON.stringify({ segment_id: segmentId }) }),
+  // Advanced editing
+  batchUpdateClips: (bookId: string, clipIds: string[], updates: Record<string, any>) =>
+    request<{ ok: boolean; updated: number }>(
+      `/books/${bookId}/clips/batch-update`, { method: 'POST', body: JSON.stringify({ clip_ids: clipIds, updates }) }),
+  batchDeleteClips: (bookId: string, clipIds: string[]) =>
+    request<{ ok: boolean; deleted: number }>(
+      `/books/${bookId}/clips/batch-delete`, { method: 'POST', body: JSON.stringify({ clip_ids: clipIds }) }),
+  normalizeTrack: (bookId: string, trackId: string, targetDb?: number) =>
+    request<{ ok: boolean; normalized: number; target_db: number }>(
+      `/books/${bookId}/tracks/${trackId}/normalize`, { method: 'POST', body: JSON.stringify({ target_db: targetDb }) }),
+  rippleEdit: (bookId: string, trackId: string, afterMs: number, deltaMs: number) =>
+    request<{ ok: boolean }>(
+      `/books/${bookId}/tracks/${trackId}/ripple`, { method: 'POST', body: JSON.stringify({ after_ms: afterMs, delta_ms: deltaMs }) }),
+  crossfade: (bookId: string, clipAId: string, clipBId: string, crossfadeMs?: number) =>
+    request<{ ok: boolean }>(
+      `/books/${bookId}/clips/crossfade`, { method: 'POST', body: JSON.stringify({ clip_a_id: clipAId, clip_b_id: clipBId, crossfade_ms: crossfadeMs }) }),
+  closeGaps: (bookId: string, trackId: string, gapMs?: number) =>
+    request<{ ok: boolean; adjusted: number }>(
+      `/books/${bookId}/tracks/${trackId}/close-gaps`, { method: 'POST', body: JSON.stringify({ gap_ms: gapMs }) }),
 };
 
 // ── Import ──

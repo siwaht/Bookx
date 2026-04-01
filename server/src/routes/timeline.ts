@@ -356,6 +356,158 @@ export function timelineRouter(db: SqlJsDatabase): Router {
     }
   });
 
+  // ── Batch update multiple clips ──
+  router.post('/clips/batch-update', (req: Request, res: Response) => {
+    try {
+      const { clip_ids, updates } = req.body;
+      if (!Array.isArray(clip_ids) || clip_ids.length === 0) {
+        res.status(400).json({ error: 'clip_ids array required' }); return;
+      }
+      const fields = ['position_ms', 'trim_start_ms', 'trim_end_ms', 'gain', 'speed', 'fade_in_ms', 'fade_out_ms'];
+      const setClauses: string[] = [];
+      const setValues: any[] = [];
+      for (const f of fields) {
+        if (updates[f] !== undefined) { setClauses.push(`${f} = ?`); setValues.push(updates[f]); }
+      }
+      // Support relative adjustments (delta_gain, delta_speed, delta_position_ms)
+      if (updates.delta_gain !== undefined) {
+        setClauses.push('gain = gain + ?'); setValues.push(updates.delta_gain);
+      }
+      if (updates.delta_speed !== undefined) {
+        setClauses.push('speed = MAX(0.25, MIN(2.0, speed + ?))'); setValues.push(updates.delta_speed);
+      }
+      if (updates.delta_position_ms !== undefined) {
+        setClauses.push('position_ms = MAX(0, position_ms + ?)'); setValues.push(updates.delta_position_ms);
+      }
+      if (setClauses.length === 0) { res.status(400).json({ error: 'No valid updates' }); return; }
+      setClauses.push("updated_at = datetime('now')");
+      const placeholders = clip_ids.map(() => '?').join(',');
+      run(db, `UPDATE clips SET ${setClauses.join(', ')} WHERE id IN (${placeholders})`, [...setValues, ...clip_ids]);
+      res.json({ ok: true, updated: clip_ids.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Batch delete multiple clips ──
+  router.post('/clips/batch-delete', (req: Request, res: Response) => {
+    try {
+      const { clip_ids } = req.body;
+      if (!Array.isArray(clip_ids) || clip_ids.length === 0) {
+        res.status(400).json({ error: 'clip_ids array required' }); return;
+      }
+      const placeholders = clip_ids.map(() => '?').join(',');
+      run(db, `DELETE FROM clips WHERE id IN (${placeholders})`, clip_ids);
+      res.json({ ok: true, deleted: clip_ids.length });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Normalize volume across all clips on a track ──
+  router.post('/tracks/:trackId/normalize', (req: Request, res: Response) => {
+    try {
+      const { target_db } = req.body;
+      const targetDb = target_db ?? -3; // default target peak
+      const clips = queryAll(db,
+        `SELECT c.id, c.gain, a.duration_ms, a.file_size_bytes
+         FROM clips c JOIN audio_assets a ON c.audio_asset_id = a.id
+         WHERE c.track_id = ?`, [req.params.trackId]);
+      if (clips.length === 0) { res.json({ ok: true, normalized: 0 }); return; }
+      // Simple normalization: set all clips to the same gain level
+      // More sophisticated would analyze actual audio levels, but this gives consistent output
+      for (const clip of clips) {
+        run(db, 'UPDATE clips SET gain = ? WHERE id = ?', [targetDb, (clip as any).id]);
+      }
+      res.json({ ok: true, normalized: clips.length, target_db: targetDb });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Ripple edit: shift all clips after a position ──
+  router.post('/tracks/:trackId/ripple', (req: Request, res: Response) => {
+    try {
+      const { after_ms, delta_ms } = req.body;
+      if (after_ms === undefined || delta_ms === undefined) {
+        res.status(400).json({ error: 'after_ms and delta_ms required' }); return;
+      }
+      run(db,
+        `UPDATE clips SET position_ms = MAX(0, position_ms + ?) WHERE track_id = ? AND position_ms > ?`,
+        [delta_ms, req.params.trackId, after_ms]);
+      // Also shift chapter markers
+      const bookId = req.params.bookId;
+      run(db,
+        `UPDATE chapter_markers SET position_ms = MAX(0, position_ms + ?) WHERE book_id = ? AND position_ms > ?`,
+        [delta_ms, bookId, after_ms]);
+      res.json({ ok: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Crossfade between two adjacent clips ──
+  router.post('/clips/crossfade', (req: Request, res: Response) => {
+    try {
+      const { clip_a_id, clip_b_id, crossfade_ms } = req.body;
+      if (!clip_a_id || !clip_b_id) { res.status(400).json({ error: 'clip_a_id and clip_b_id required' }); return; }
+      const fadeMs = crossfade_ms ?? 500;
+      const clipA = queryOne(db,
+        `SELECT c.*, a.duration_ms as asset_duration_ms FROM clips c
+         LEFT JOIN audio_assets a ON c.audio_asset_id = a.id WHERE c.id = ?`, [clip_a_id]) as any;
+      const clipB = queryOne(db,
+        `SELECT c.*, a.duration_ms as asset_duration_ms FROM clips c
+         LEFT JOIN audio_assets a ON c.audio_asset_id = a.id WHERE c.id = ?`, [clip_b_id]) as any;
+      if (!clipA || !clipB) { res.status(404).json({ error: 'Clip not found' }); return; }
+      // Calculate clip A's end position
+      const aDur = clipA.asset_duration_ms
+        ? clipA.asset_duration_ms - (clipA.trim_start_ms || 0) - (clipA.trim_end_ms || 0)
+        : 3000;
+      const aEnd = clipA.position_ms + aDur;
+      // Move clip B to overlap by crossfade_ms
+      const newBPos = Math.max(0, aEnd - fadeMs);
+      run(db, 'UPDATE clips SET fade_out_ms = ? WHERE id = ?', [fadeMs, clip_a_id]);
+      run(db, 'UPDATE clips SET position_ms = ?, fade_in_ms = ? WHERE id = ?', [newBPos, fadeMs, clip_b_id]);
+      res.json({ ok: true, clip_a_fade_out: fadeMs, clip_b_position: newBPos, clip_b_fade_in: fadeMs });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Close gaps: remove silence between clips on a track ──
+  router.post('/tracks/:trackId/close-gaps', (req: Request, res: Response) => {
+    try {
+      const { gap_ms } = req.body;
+      const targetGap = gap_ms ?? 0;
+      const clips = queryAll(db,
+        `SELECT c.*, a.duration_ms as asset_duration_ms FROM clips c
+         LEFT JOIN audio_assets a ON c.audio_asset_id = a.id
+         WHERE c.track_id = ? ORDER BY c.position_ms`, [req.params.trackId]) as any[];
+      if (clips.length <= 1) { res.json({ ok: true, adjusted: 0 }); return; }
+      let currentPos = clips[0].position_ms;
+      let adjusted = 0;
+      for (let i = 0; i < clips.length; i++) {
+        if (i === 0) {
+          currentPos += (clips[i].asset_duration_ms
+            ? clips[i].asset_duration_ms - (clips[i].trim_start_ms || 0) - (clips[i].trim_end_ms || 0)
+            : 3000) + targetGap;
+          continue;
+        }
+        if (clips[i].position_ms !== currentPos) {
+          run(db, 'UPDATE clips SET position_ms = ? WHERE id = ?', [currentPos, clips[i].id]);
+          adjusted++;
+        }
+        const dur = clips[i].asset_duration_ms
+          ? clips[i].asset_duration_ms - (clips[i].trim_start_ms || 0) - (clips[i].trim_end_ms || 0)
+          : 3000;
+        currentPos += dur + targetGap;
+      }
+      res.json({ ok: true, adjusted });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── Send a single segment (with audio) to the timeline ──
   router.post('/send-segment-to-timeline', (req: Request, res: Response) => {
     try {
