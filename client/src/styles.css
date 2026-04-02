@@ -53,6 +53,44 @@
   --duration-slow: 400ms;
 }
 
+/* ── Light Theme ── */
+[data-theme="light"] {
+  --bg-deep: #f5f6f8;
+  --bg-base: #ffffff;
+  --bg-surface: #f9fafb;
+  --bg-elevated: #f0f1f3;
+  --bg-hover: #e8e9ec;
+  --bg-active: #dddee2;
+
+  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border-default: rgba(0, 0, 0, 0.10);
+  --border-strong: rgba(0, 0, 0, 0.16);
+
+  --text-primary: #1a1b1e;
+  --text-secondary: #52535a;
+  --text-tertiary: #7c7d85;
+  --text-muted: #a0a1a8;
+
+  --accent: #3b6fd4;
+  --accent-hover: #4a7de0;
+  --accent-subtle: rgba(59, 111, 212, 0.10);
+  --accent-glow: rgba(59, 111, 212, 0.18);
+
+  --success: #16a34a;
+  --success-subtle: rgba(22, 163, 74, 0.08);
+  --warning: #ca8a04;
+  --warning-subtle: rgba(202, 138, 4, 0.08);
+  --danger: #dc2626;
+  --danger-subtle: rgba(220, 38, 38, 0.08);
+  --purple: #7c3aed;
+  --purple-subtle: rgba(124, 58, 237, 0.08);
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,0.05), 0 1px 3px rgba(0,0,0,0.04);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.08), 0 2px 4px rgba(0,0,0,0.04);
+  --shadow-lg: 0 8px 30px rgba(0,0,0,0.10), 0 4px 8px rgba(0,0,0,0.05);
+  --shadow-glow: 0 0 20px var(--accent-glow);
+}
+
 /* ── Base Reset ── */
 *, *::before, *::after {
   box-sizing: border-box;
@@ -101,6 +139,22 @@ body {
   background: rgba(255, 255, 255, 0.28);
 }
 
+[data-theme="light"] ::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.02);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
+}
+[data-theme="light"] {
+  scrollbar-color: rgba(0,0,0,0.15) rgba(0,0,0,0.02);
+}
+[data-theme="light"] body {
+  scrollbar-color: rgba(0,0,0,0.15) rgba(0,0,0,0.02);
+}
+
 /* ── Focus styles ── */
 :focus-visible {
   outline: 2px solid var(--accent);
@@ -118,6 +172,9 @@ audio {
   border-radius: var(--radius-sm);
   height: 32px;
   filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
+}
+[data-theme="light"] audio {
+  filter: none;
 }
 audio::-webkit-media-controls-panel {
   background: transparent;
@@ -232,6 +289,9 @@ input:focus, textarea:focus, select:focus {
   background: rgba(20, 21, 25, 0.8);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+}
+[data-theme="light"] .glass {
+  background: rgba(255, 255, 255, 0.8);
 }
 
 /* ── Gradient text ── */
@@ -385,6 +445,9 @@ input[type="range"] {
   background: rgba(255,255,255,0.08);
   border-radius: 4px;
   outline: none;
+}
+[data-theme="light"] input[type="range"] {
+  background: rgba(0,0,0,0.10);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;

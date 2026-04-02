@@ -520,12 +520,12 @@ export function ManuscriptPage() {
 
   const getChapterProgress = (ch: Chapter & { stats?: ChapterStats }) => {
     const s = ch.stats;
-    if (!s || s.total_segments === 0) return { step: 0, label: 'No segments', color: '#555' };
-    if (s.on_timeline > 0 && s.on_timeline >= s.total_segments) return { step: 4, label: 'On timeline', color: '#2d5a27' };
-    if (s.with_audio >= s.total_segments) return { step: 3, label: 'Audio ready', color: '#4A90D9' };
+    if (!s || s.total_segments === 0) return { step: 0, label: 'No segments', color: 'var(--text-muted)' };
+    if (s.on_timeline > 0 && s.on_timeline >= s.total_segments) return { step: 4, label: 'On timeline', color: 'var(--success)' };
+    if (s.with_audio >= s.total_segments) return { step: 3, label: 'Audio ready', color: 'var(--accent)' };
     if (s.assigned >= s.total_segments) return { step: 2, label: 'Assigned', color: '#D97A4A' };
-    if (s.total_segments > 0) return { step: 1, label: `${s.total_segments} segs`, color: '#666' };
-    return { step: 0, label: 'Empty', color: '#555' };
+    if (s.total_segments > 0) return { step: 1, label: `${s.total_segments} segs`, color: 'var(--text-tertiary)' };
+    return { step: 0, label: 'Empty', color: 'var(--text-muted)' };
   };
 
   return (
@@ -539,7 +539,7 @@ export function ManuscriptPage() {
               title="Import manuscript file">
               <Upload size={13} /> {importing ? '...' : 'Import'}
             </button>
-            <button onClick={() => setAddingChapter(true)} style={{ ...styles.smallBtn, background: '#2d5a27', color: '#8f8' }}
+            <button onClick={() => setAddingChapter(true)} style={{ ...styles.smallBtn, background: 'var(--success-subtle)', color: 'var(--success)' }}
               title="Add empty chapter">
               <Plus size={13} />
             </button>
@@ -565,7 +565,7 @@ export function ManuscriptPage() {
               {aiParsing ? 'Parsing...' : 'AI Auto-Assign'}
             </button>
             <button onClick={handleAutoAssignByName} disabled={nameAssigning}
-              style={{ ...styles.aiParseBtn, background: '#1a2a1a', color: '#8f8', borderColor: '#2a3a2a', marginTop: 4 }}>
+              style={{ ...styles.aiParseBtn, background: 'var(--success-subtle)', color: 'var(--success)', borderColor: 'var(--border-subtle)', marginTop: 4 }}>
               {nameAssigning ? <Loader size={13} /> : <Users size={13} />}
               {nameAssigning ? 'Matching...' : 'Match by Name'}
             </button>
@@ -615,10 +615,10 @@ export function ManuscriptPage() {
                           disabled={idx === chapterList.length - 1}><ChevronDown size={11} /> Move Down</button>
                         {ch.stats && ch.stats.total_segments > 0 && (
                           <button onClick={() => { handleSendChapterToTimeline(ch.id); setChapterMenuId(null); }}
-                            style={{ ...styles.menuItem, color: '#4A90D9' }}><Send size={11} /> Generate & Send</button>
+                            style={{ ...styles.menuItem, color: 'var(--accent)' }}><Send size={11} /> Generate & Send</button>
                         )}
                         <button onClick={() => handleDeleteChapter(ch.id)}
-                          style={{ ...styles.menuItem, color: '#e55' }}><Trash2 size={11} /> Delete</button>
+                          style={{ ...styles.menuItem, color: 'var(--danger)' }}><Trash2 size={11} /> Delete</button>
                       </div>
                     )}
                   </>
@@ -630,9 +630,9 @@ export function ManuscriptPage() {
           {!hasChapters && (
             <div style={styles.emptyState}>
               <BookOpen size={24} color="#444" />
-              <p style={{ fontSize: 13, color: '#888' }}>No chapters yet</p>
-              <p style={{ fontSize: 11, color: '#555' }}>Import a manuscript or add chapters manually.</p>
-              <p style={{ fontSize: 10, color: '#444' }}>Supports: EPUB, DOCX, TXT, MD, HTML</p>
+              <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No chapters yet</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Import a manuscript or add chapters manually.</p>
+              <p style={{ fontSize: 10, color: 'var(--text-muted)' }}>Supports: EPUB, DOCX, TXT, MD, HTML</p>
             </div>
           )}
         </div>
@@ -671,22 +671,22 @@ export function ManuscriptPage() {
                       <Scissors size={12} /> Split
                     </button>
                     <button onClick={() => setShowTagPanel(!showTagPanel)}
-                      style={{ ...styles.smallBtn, background: showTagPanel ? '#2a1a3a' : '#333', color: showTagPanel ? '#b88ad9' : '#aaa' }}
+                      style={{ ...styles.smallBtn, background: showTagPanel ? 'var(--purple-subtle)' : 'var(--bg-elevated)', color: showTagPanel ? 'var(--purple)' : 'var(--text-secondary)' }}
                       title="Toggle V3 audio tags panel">
                       <Tag size={12} /> V3 Tags
                     </button>
                     <button onClick={() => setShowMoodPresets(!showMoodPresets)}
-                      style={{ ...styles.smallBtn, background: showMoodPresets ? '#1a2a3a' : '#333', color: showMoodPresets ? '#4A90D9' : '#aaa' }}
+                      style={{ ...styles.smallBtn, background: showMoodPresets ? 'var(--accent-subtle)' : 'var(--bg-elevated)', color: showMoodPresets ? 'var(--accent)' : 'var(--text-secondary)' }}
                       title="Emotional/mood presets">
                       <Wand2 size={12} /> Moods
                     </button>
                     <button onClick={() => setShowPacingPanel(!showPacingPanel)}
-                      style={{ ...styles.smallBtn, background: showPacingPanel ? '#1a2a1a' : '#333', color: showPacingPanel ? '#8f8' : '#aaa' }}
+                      style={{ ...styles.smallBtn, background: showPacingPanel ? 'var(--success-subtle)' : 'var(--bg-elevated)', color: showPacingPanel ? 'var(--success)' : 'var(--text-secondary)' }}
                       title="Pacing & gap settings">
                       <Gauge size={12} /> Pacing
                     </button>
                     <button onClick={handleAiSuggestTags} disabled={aiTagging || !chapterText.trim()}
-                      style={{ ...styles.smallBtn, background: '#2a1a3a', color: '#b88ad9' }}
+                      style={{ ...styles.smallBtn, background: 'var(--purple-subtle)', color: 'var(--purple)' }}
                       title="AI will suggest and insert V3 tags into the text">
                       {aiTagging ? <Loader size={12} /> : <Wand2 size={12} />}
                       {aiTagging ? 'Tagging...' : 'AI Tags'}
@@ -717,10 +717,10 @@ export function ManuscriptPage() {
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {MOOD_PRESETS.map((preset) => (
                     <button key={preset.name} onClick={() => applyMoodPreset(preset)}
-                      style={{ padding: '6px 12px', background: '#1a2a3a', color: '#4A90D9', border: '1px solid #2a3a5a', borderRadius: 8, cursor: 'pointer', fontSize: 11, textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 2, minWidth: 140 }}
+                      style={{ padding: '6px 12px', background: 'var(--accent-subtle)', color: 'var(--accent)', border: '1px solid var(--border-subtle)', borderRadius: 8, cursor: 'pointer', fontSize: 11, textAlign: 'left' as const, display: 'flex', flexDirection: 'column' as const, gap: 2, minWidth: 140 }}
                       title={`${preset.desc}\nTags: ${preset.tags.map(t => `[${t}]`).join(' ')}\nGap: ${preset.gap}ms`}>
                       <span style={{ fontWeight: 600 }}>{preset.name}</span>
-                      <span style={{ fontSize: 9, color: '#668' }}>{preset.desc}</span>
+                      <span style={{ fontSize: 9, color: 'var(--text-tertiary)' }}>{preset.desc}</span>
                     </button>
                   ))}
                 </div>
@@ -732,40 +732,40 @@ export function ManuscriptPage() {
               <div style={{ ...styles.tagPanel, background: '#0f1a0f', gap: 8 }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
-                    <label style={{ fontSize: 10, color: '#8f8', fontWeight: 600 }}>Segment Gap</label>
+                    <label style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600 }}>Segment Gap</label>
                     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                       <input type="range" min={0} max={3000} step={100} value={segmentGapMs}
                         onChange={(e) => setSegmentGapMs(parseInt(e.target.value))}
-                        style={{ width: 120, accentColor: '#4A90D9' }} aria-label="Segment gap" />
-                      <span style={{ fontSize: 11, color: '#aaa', minWidth: 50 }}>{segmentGapMs}ms</span>
+                        style={{ width: 120, accentColor: 'var(--accent)' }} aria-label="Segment gap" />
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 50 }}>{segmentGapMs}ms</span>
                     </div>
-                    <span style={{ fontSize: 9, color: '#555' }}>Silence between segments on timeline</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Silence between segments on timeline</span>
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
-                    <label style={{ fontSize: 10, color: '#8f8', fontWeight: 600 }}>Chapter Gap</label>
+                    <label style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600 }}>Chapter Gap</label>
                     <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
                       <input type="range" min={500} max={10000} step={500} value={chapterGapMs}
                         onChange={(e) => setChapterGapMs(parseInt(e.target.value))}
-                        style={{ width: 120, accentColor: '#4A90D9' }} aria-label="Chapter gap" />
-                      <span style={{ fontSize: 11, color: '#aaa', minWidth: 50 }}>{chapterGapMs >= 1000 ? `${(chapterGapMs / 1000).toFixed(1)}s` : `${chapterGapMs}ms`}</span>
+                        style={{ width: 120, accentColor: 'var(--accent)' }} aria-label="Chapter gap" />
+                      <span style={{ fontSize: 11, color: 'var(--text-secondary)', minWidth: 50 }}>{chapterGapMs >= 1000 ? `${(chapterGapMs / 1000).toFixed(1)}s` : `${chapterGapMs}ms`}</span>
                     </div>
-                    <span style={{ fontSize: 9, color: '#555' }}>Silence between chapters on timeline</span>
+                    <span style={{ fontSize: 9, color: 'var(--text-muted)' }}>Silence between chapters on timeline</span>
                   </div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                     <button onClick={() => { setSegmentGapMs(200); setChapterGapMs(1000); }}
-                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      style={{ padding: '4px 10px', background: 'var(--success-subtle)', color: 'var(--success)', border: '1px solid var(--border-subtle)', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
                       Fast Pace
                     </button>
                     <button onClick={() => { setSegmentGapMs(300); setChapterGapMs(2000); }}
-                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      style={{ padding: '4px 10px', background: 'var(--success-subtle)', color: 'var(--success)', border: '1px solid var(--border-subtle)', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
                       Normal
                     </button>
                     <button onClick={() => { setSegmentGapMs(600); setChapterGapMs(3000); }}
-                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      style={{ padding: '4px 10px', background: 'var(--success-subtle)', color: 'var(--success)', border: '1px solid var(--border-subtle)', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
                       Slow & Dramatic
                     </button>
                     <button onClick={() => { setSegmentGapMs(150); setChapterGapMs(1500); }}
-                      style={{ padding: '4px 10px', background: '#1a2a1a', color: '#8f8', border: '1px solid #2a3a2a', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
+                      style={{ padding: '4px 10px', background: 'var(--success-subtle)', color: 'var(--success)', border: '1px solid var(--border-subtle)', borderRadius: 6, cursor: 'pointer', fontSize: 10 }}>
                       Podcast
                     </button>
                   </div>

@@ -89,9 +89,9 @@ export function QCPage() {
                   <td style={{ ...styles.td, color: ch.rms_db >= -23 && ch.rms_db <= -18 ? '#8f8' : '#f88' }}>{ch.rms_db.toFixed(1)}</td>
                   <td style={{ ...styles.td, color: ch.true_peak_db <= -3 ? '#8f8' : '#f88' }}>{ch.true_peak_db.toFixed(1)}</td>
                   <td style={styles.td}>{ch.lufs.toFixed(1)}</td>
-                  <td style={{ ...styles.td, color: ch.noise_floor_db <= -60 ? '#8f8' : '#f88' }}>{ch.noise_floor_db.toFixed(1)}</td>
+                  <td style={{ ...styles.td, color: ch.noise_floor_db <= -60 ? 'var(--success)' : 'var(--danger)' }}>{ch.noise_floor_db.toFixed(1)}</td>
                   <td style={styles.td}>
-                    {ch.acx_pass ? <span style={{ color: '#8f8' }}>✓ Pass</span> : <span style={{ color: '#f88' }}>✗ Fail</span>}
+                    {ch.acx_pass ? <span style={{ color: 'var(--success)' }}>✓ Pass</span> : <span style={{ color: 'var(--danger)' }}>✗ Fail</span>}
                   </td>
                 </tr>
               ))}
@@ -100,14 +100,14 @@ export function QCPage() {
 
           {qcReport.chapters.some((ch: QCChapterReport) => ch.issues.length > 0) && (
             <div style={styles.issuesSection}>
-              <h4 style={{ color: '#f88', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <h4 style={{ color: 'var(--danger)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                 <AlertTriangle size={14} /> Issues to Fix
               </h4>
               {qcReport.chapters.filter((ch: QCChapterReport) => ch.issues.length > 0).map((ch: QCChapterReport) => (
                 <div key={ch.chapter_id} style={styles.issueGroup}>
-                  <strong style={{ color: '#ddd' }}>{ch.chapter_title}:</strong>
+                  <strong style={{ color: 'var(--text-primary)' }}>{ch.chapter_title}:</strong>
                   <ul style={{ margin: '4px 0', paddingLeft: 20 }}>
-                    {ch.issues.map((issue, i) => <li key={i} style={{ color: '#f88', fontSize: 13 }}>{issue}</li>)}
+                    {ch.issues.map((issue, i) => <li key={i} style={{ color: 'var(--danger)', fontSize: 13 }}>{issue}</li>)}
                   </ul>
                 </div>
               ))}
@@ -119,22 +119,22 @@ export function QCPage() {
       {!qcReport && !rendering && (
         <div style={styles.emptyState}>
           <div style={{ fontSize: 36, marginBottom: 12 }}>🎛️</div>
-          <h3 style={{ color: '#ccc', fontSize: 16, marginBottom: 8 }}>Ready to render</h3>
+          <h3 style={{ color: 'var(--text-primary)', fontSize: 16, marginBottom: 8 }}>Ready to render</h3>
           <p style={styles.emptyText}>
             Rendering combines all your timeline audio into per-chapter files and runs quality checks against ACX specs.
           </p>
           <p style={styles.emptyText}>
             Make sure you've completed the previous steps: import manuscript, assign voices, generate audio, and populate the timeline.
           </p>
-          <p style={{ color: '#555', fontSize: 12, marginTop: 12 }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 12 }}>
             Click "Render Full Book" above to start.
           </p>
         </div>
       )}
 
       <div style={styles.specBox}>
-        <h4 style={{ color: '#888', marginBottom: 8 }}>📋 ACX/Audible Technical Requirements</h4>
-        <ul style={{ color: '#666', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+        <h4 style={{ color: 'var(--text-tertiary)', marginBottom: 8 }}>📋 ACX/Audible Technical Requirements</h4>
+        <ul style={{ color: 'var(--text-tertiary)', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
           <li>MP3, 192kbps CBR, 44.1kHz</li>
           <li>RMS level: -23 dB to -18 dB</li>
           <li>True peak: ≤ -3 dB</li>
@@ -142,7 +142,7 @@ export function QCPage() {
           <li>Each chapter as a separate file</li>
           <li>Opening and closing credits required</li>
         </ul>
-        <p style={{ color: '#555', fontSize: 11, marginTop: 8 }}>
+        <p style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 8 }}>
           Values outside these ranges will be flagged in the QC report above.
         </p>
         <p style={{ color: '#D4A843', fontSize: 11, marginTop: 6 }}>

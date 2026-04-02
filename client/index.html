@@ -12,6 +12,16 @@
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
       body { background: #08090a; color: #e8e9ed; }
     </style>
+    <script>
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (t === 'light') {
+          document.documentElement.setAttribute('data-theme', 'light');
+          document.body.style.background = '#f5f6f8';
+          document.body.style.color = '#1a1b1e';
+        }
+      })();
+    </script>
   </head>
   <body>
     <noscript>JavaScript is required to run this application.</noscript>

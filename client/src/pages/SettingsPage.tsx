@@ -253,7 +253,7 @@ export function SettingsPage() {
                   </div>
                   <button onClick={() => handleSave(cfg.key)}
                     disabled={!inputs[cfg.key]?.trim() || saving === cfg.key}
-                    style={{ ...S.saveBtn, ...(saved === cfg.key ? { background: '#2d5a27', color: '#8f8' } : {}) }}>
+                    style={{ ...S.saveBtn, ...(saved === cfg.key ? { background: 'var(--success-subtle)', color: 'var(--success)' } : {}) }}>
                     {saving === cfg.key ? 'Saving...' : saved === cfg.key ? 'Saved' : <><Save size={13} /> Save</>}
                   </button>
                   {isStored && (
@@ -285,25 +285,25 @@ export function SettingsPage() {
                           {connTest.result.connected ? (
                             <>
                               <Wifi size={16} color="#4a4" />
-                              <span style={{ color: '#8f8', fontSize: 13, fontWeight: 600 }}>Connected</span>
+                              <span style={{ color: 'var(--success)', fontSize: 13, fontWeight: 600 }}>Connected</span>
                             </>
                           ) : (
                             <>
                               <WifiOff size={16} color="#a44" />
-                              <span style={{ color: '#f88', fontSize: 13, fontWeight: 600 }}>Connection Failed</span>
+                              <span style={{ color: 'var(--danger)', fontSize: 13, fontWeight: 600 }}>Connection Failed</span>
                             </>
                           )}
                         </div>
                         {connTest.result.connected ? (
-                          <div style={{ fontSize: 11, color: '#888', lineHeight: 1.6 }}>
-                            <div>Tier: <span style={{ color: '#aaa' }}>{connTest.result.tier}</span></div>
-                            <div>Characters: <span style={{ color: '#aaa' }}>{connTest.result.character_count?.toLocaleString()} / {connTest.result.character_limit?.toLocaleString()}</span></div>
-                            <div>Key: <span style={{ color: '#aaa' }}>{connTest.result.key_last4}</span></div>
+                          <div style={{ fontSize: 11, color: 'var(--text-tertiary)', lineHeight: 1.6 }}>
+                            <div>Tier: <span style={{ color: 'var(--text-secondary)' }}>{connTest.result.tier}</span></div>
+                            <div>Characters: <span style={{ color: 'var(--text-secondary)' }}>{connTest.result.character_count?.toLocaleString()} / {connTest.result.character_limit?.toLocaleString()}</span></div>
+                            <div>Key: <span style={{ color: 'var(--text-secondary)' }}>{connTest.result.key_last4}</span></div>
                           </div>
                         ) : (
-                          <div style={{ fontSize: 11, color: '#f88', lineHeight: 1.6 }}>
+                          <div style={{ fontSize: 11, color: 'var(--danger)', lineHeight: 1.6 }}>
                             {connTest.result.error}
-                            {connTest.result.key_last4 && <div style={{ color: '#888', marginTop: 4 }}>Key used: {connTest.result.key_last4}</div>}
+                            {connTest.result.key_last4 && <div style={{ color: 'var(--text-tertiary)', marginTop: 4 }}>Key used: {connTest.result.key_last4}</div>}
                           </div>
                         )}
                       </div>

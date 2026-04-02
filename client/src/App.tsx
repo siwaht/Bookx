@@ -93,6 +93,12 @@ function AppLayout() {
 }
 
 export default function App() {
+  // Apply saved theme on mount
+  const theme = useAppStore((s) => s.theme);
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+  }, [theme]);
+
   return (
     <ErrorBoundary>
       <QueryClientProvider client={queryClient}>

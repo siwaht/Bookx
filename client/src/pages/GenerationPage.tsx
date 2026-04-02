@@ -134,6 +134,8 @@ export function GenerationPage() {
   };
 
   const toggleChapter = (id: string) => {
+    const ch = chapters.find(c => c.chapter_id === id);
+    if (ch && ch.total_segments === 0) return; // can't select unparsed chapters
     setSelectedChapters(prev => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
@@ -141,10 +143,10 @@ export function GenerationPage() {
     });
   };
 
-  const selectAll = () => setSelectedChapters(new Set(chapters.map(c => c.chapter_id)));
+  const selectAll = () => setSelectedChapters(new Set(chapters.filter(c => c.total_segments > 0).map(c => c.chapter_id)));
   const selectNone = () => setSelectedChapters(new Set());
   const selectMissing = () => {
-    const missing = chapters.filter(c => c.missing_audio > 0).map(c => c.chapter_id);
+    const missing = chapters.filter(c => c.missing_audio > 0 && c.total_segments > 0).map(c => c.chapter_id);
     if (missing.length === 0) {
       toast.info('All chapters already have audio');
       return;
@@ -330,18 +332,21 @@ export function GenerationPage() {
             const pct = ch.total_segments > 0 ? Math.round((ch.with_audio / ch.total_segments) * 100) : 0;
             const isComplete = ch.with_audio === ch.total_segments && ch.total_segments > 0;
             const selected = selectedChapters.has(ch.chapter_id);
+            const unparsed = ch.total_segments === 0;
 
             return (
               <div
                 key={ch.chapter_id}
-                style={{ ...S.chapterRow, ...(selected ? S.chapterRowSelected : {}) }}
+                style={{ ...S.chapterRow, ...(selected ? S.chapterRowSelected : {}), ...(unparsed ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
                 onClick={() => toggleChapter(ch.chapter_id)}
+                title={unparsed ? 'This chapter has no segments. Parse it first in the Manuscript tab.' : undefined}
               >
                 <input
                   type="checkbox"
                   checked={selected}
+                  disabled={unparsed}
                   onChange={() => {}}
-                  style={{ cursor: 'pointer', flexShrink: 0, width: 16, height: 16 }}
+                  style={{ cursor: unparsed ? 'not-allowed' : 'pointer', flexShrink: 0, width: 16, height: 16 }}
                 />
                 <div style={S.chapterInfo}>
                   <div style={S.chapterTitle}>
@@ -349,8 +354,13 @@ export function GenerationPage() {
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{ch.title}</span>
                   </div>
                   <div style={S.chapterMeta}>
-                    {ch.with_audio}/{ch.total_segments} segments · {ch.ready_to_generate} ready
-                    {ch.missing_audio > 0 && <span style={{ color: '#fbbf24' }}> · {ch.missing_audio} missing</span>}
+                    {unparsed
+                      ? <span style={{ color: '#ef4444' }}>Not parsed — go to Manuscript tab</span>
+                      : <>
+                          {ch.with_audio}/{ch.total_segments} segments · {ch.ready_to_generate} ready
+                          {ch.missing_audio > 0 && <span style={{ color: '#fbbf24' }}> · {ch.missing_audio} missing</span>}
+                        </>
+                    }
                   </div>
                 </div>
                 <div style={S.chapterProgress}>
@@ -401,27 +411,27 @@ const S: Record<string, any> = {
   // Stats cards
   cards: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 },
   card: { background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '14px 16px' },
-  cardLabel: { fontSize: 10, color: '#888', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 4 },
-  cardValue: { fontSize: 24, fontWeight: 700, color: '#eee' },
+  cardLabel: { fontSize: 10, color: 'var(--text-tertiary)', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 4 },
+  cardValue: { fontSize: 24, fontWeight: 700, color: 'var(--text-primary)' },
 
   // Progress
   overallProgress: { marginBottom: 24 },
-  progressLabel: { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 6 },
-  progressTrack: { height: 6, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden' },
-  progressFill: { height: '100%', background: '#4ade80', borderRadius: 3, transition: 'width 0.3s ease' },
+  progressLabel: { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'var(--text-tertiary)', marginBottom: 6 },
+  progressTrack: { height: 6, background: 'var(--bg-elevated)', borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: '100%', background: 'var(--success)', borderRadius: 3, transition: 'width 0.3s ease' },
 
   // Job panel
   jobPanel: { background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: 16, marginBottom: 24 },
   jobHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, gap: 12 },
-  jobTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#ddd', flexWrap: 'wrap' as const },
+  jobTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', flexWrap: 'wrap' as const },
   statusBadge: { fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, textTransform: 'uppercase' as const },
-  jobStats: { display: 'flex', gap: 16, fontSize: 12, color: '#aaa', marginTop: 10, flexWrap: 'wrap' as const },
-  currentWork: { fontSize: 11, color: '#888', marginTop: 8, padding: '6px 10px', background: '#111', borderRadius: 6 },
+  jobStats: { display: 'flex', gap: 16, fontSize: 12, color: 'var(--text-secondary)', marginTop: 10, flexWrap: 'wrap' as const },
+  currentWork: { fontSize: 11, color: 'var(--text-tertiary)', marginTop: 8, padding: '6px 10px', background: 'var(--bg-deep)', borderRadius: 6 },
   cancelBtn: { display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '5px 12px', fontSize: 11, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap' as const },
   errorsSection: { marginTop: 10 },
-  errorsToggle: { display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', padding: 0 },
-  errorsList: { marginTop: 6, maxHeight: 150, overflowY: 'auto' as const, background: '#111', borderRadius: 6, padding: 8 },
-  errorItem: { fontSize: 10, color: '#f87171', padding: '2px 0', borderBottom: '1px solid #1a1a1a' },
+  errorsToggle: { display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: 'var(--danger)', fontSize: 11, cursor: 'pointer', padding: 0 },
+  errorsList: { marginTop: 6, maxHeight: 150, overflowY: 'auto' as const, background: 'var(--bg-deep)', borderRadius: 6, padding: 8 },
+  errorItem: { fontSize: 10, color: 'var(--danger)', padding: '2px 0', borderBottom: '1px solid var(--border-subtle)' },
 
   // Actions panel
   actionsPanel: {
@@ -479,8 +489,8 @@ const S: Record<string, any> = {
   },
   ghostBtn: {
     background: 'none',
-    border: '1px solid #333',
-    color: '#888',
+    border: '1px solid var(--border-strong)',
+    color: 'var(--text-tertiary)',
     borderRadius: 6,
     padding: '4px 10px',
     fontSize: 11,
@@ -492,7 +502,7 @@ const S: Record<string, any> = {
     alignItems: 'center',
     gap: 6,
     fontSize: 12,
-    color: '#aaa',
+    color: 'var(--text-secondary)',
     cursor: 'pointer',
   },
   selectionInfo: {
@@ -513,9 +523,9 @@ const S: Record<string, any> = {
     alignItems: 'center',
     marginBottom: 10,
   },
-  sectionTitle: { fontSize: 14, fontWeight: 600, color: '#ddd', display: 'flex', alignItems: 'center', gap: 6, margin: 0 },
+  sectionTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 6, margin: 0 },
   selectBtns: { display: 'flex', gap: 12 },
-  linkBtn: { background: 'none', border: 'none', color: '#5b8def', fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
+  linkBtn: { background: 'none', border: 'none', color: 'var(--accent)', fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
   chapterList: { display: 'flex', flexDirection: 'column' as const, gap: 4 },
   chapterRow: {
     display: 'flex',
@@ -536,13 +546,13 @@ const S: Record<string, any> = {
   chapterTitle: {
     fontSize: 13,
     fontWeight: 500,
-    color: '#ddd',
+    color: 'var(--text-primary)',
     display: 'flex',
     alignItems: 'center',
     gap: 6,
     overflow: 'hidden',
   },
-  chapterMeta: { fontSize: 11, color: '#666', marginTop: 2 },
+  chapterMeta: { fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 },
   chapterProgress: {
     display: 'flex',
     alignItems: 'center',
@@ -551,11 +561,11 @@ const S: Record<string, any> = {
     minWidth: 120,
     justifyContent: 'flex-end',
   },
-  miniTrack: { width: 80, height: 4, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden' },
+  miniTrack: { width: 80, height: 4, background: 'var(--bg-elevated)', borderRadius: 2, overflow: 'hidden' },
   miniFill: { height: '100%', borderRadius: 2, transition: 'width 0.3s ease' },
   pctLabel: (isComplete: boolean): React.CSSProperties => ({
     fontSize: 11,
-    color: isComplete ? '#4ade80' : '#888',
+    color: isComplete ? 'var(--success)' : 'var(--text-tertiary)',
     minWidth: 32,
     textAlign: 'right',
   }),

@@ -119,7 +119,7 @@ export function generationRouter(db: SqlJsDatabase): Router {
       }
 
       if (segments.length === 0) {
-        res.status(400).json({ error: 'No segments found for the given scope' });
+        res.status(400).json({ error: 'No segments found for the selected chapters. Please parse your manuscript into segments first (Manuscript → Parse Chapters).' });
         return;
       }
 

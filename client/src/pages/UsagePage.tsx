@@ -55,7 +55,7 @@ export function UsagePage() {
       <div style={S.section}>
         <h3 style={S.sectionTitle}>ElevenLabs Subscription</h3>
         {elError ? (
-          <p style={{ color: '#a66', fontSize: 12 }}>Could not fetch ElevenLabs usage: {elError}</p>
+          <p style={{ color: 'var(--danger)', fontSize: 12 }}>Could not fetch ElevenLabs usage: {elError}</p>
         ) : elUsage ? (
           <div style={S.cards}>
             <div style={S.card}>
@@ -85,7 +85,7 @@ export function UsagePage() {
             )}
           </div>
         ) : (
-          <p style={{ color: '#555', fontSize: 12 }}>Loading...</p>
+          <p style={{ color: 'var(--text-muted)', fontSize: 12 }}>Loading...</p>
         )}
       </div>
 
@@ -127,11 +127,11 @@ export function UsagePage() {
                 </div>
                 {local.per_book.map((b) => (
                   <div key={b.id} style={S.tableRow}>
-                    <span style={{ flex: 2, color: '#ddd' }}>{b.title}</span>
+                    <span style={{ flex: 2, color: 'var(--text-primary)' }}>{b.title}</span>
                     <span style={{ flex: 1, textAlign: 'right', color: '#D97A4A' }}>{formatNum(b.characters_used)}</span>
-                    <span style={{ flex: 1, textAlign: 'right', color: '#4A90D9' }}>{b.generations}</span>
-                    <span style={{ flex: 1, textAlign: 'right', color: '#8f8' }}>{b.assets}</span>
-                    <span style={{ flex: 1, textAlign: 'right', color: '#888' }}>{formatBytes(b.size_bytes)}</span>
+                    <span style={{ flex: 1, textAlign: 'right', color: 'var(--accent)' }}>{b.generations}</span>
+                    <span style={{ flex: 1, textAlign: 'right', color: 'var(--success)' }}>{b.assets}</span>
+                    <span style={{ flex: 1, textAlign: 'right', color: 'var(--text-tertiary)' }}>{formatBytes(b.size_bytes)}</span>
                   </div>
                 ))}
               </div>

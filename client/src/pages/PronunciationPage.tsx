@@ -197,8 +197,8 @@ export function PronunciationPage() {
           {rules.length === 0 && !adding && (
             <div style={S.empty}>
               <BookOpen size={24} color="#444" />
-              <p style={{ color: '#888', fontSize: 13 }}>No pronunciation rules yet</p>
-              <p style={{ color: '#555', fontSize: 11 }}>Add rules for character names, place names, or any words the TTS mispronounces.</p>
+              <p style={{ color: 'var(--text-tertiary)', fontSize: 13 }}>No pronunciation rules yet</p>
+              <p style={{ color: 'var(--text-muted)', fontSize: 11 }}>Add rules for character names, place names, or any words the TTS mispronounces.</p>
             </div>
           )}
         </div>

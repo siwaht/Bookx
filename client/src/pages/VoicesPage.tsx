@@ -222,10 +222,10 @@ export function VoicesPage() {
         </div>
         {characterList.length > 0 && (
           <div style={styles.progressBar}>
-            <span style={{ fontSize: 11, color: charsWithoutVoice.length === 0 ? '#8f8' : '#888' }}>
+            <span style={{ fontSize: 11, color: charsWithoutVoice.length === 0 ? 'var(--success)' : 'var(--text-tertiary)' }}>
               {charsWithVoice.length}/{characterList.length} voices assigned
             </span>
-            {charsWithoutVoice.length === 0 && <CheckCircle size={12} color="#8f8" />}
+            {charsWithoutVoice.length === 0 && <CheckCircle size={12} color="var(--success)" />}
           </div>
         )}
         {characterList.length > 0 && charsWithoutVoice.length > 0 && (
@@ -253,15 +253,15 @@ export function VoicesPage() {
         )}
         {characterList.map((char) => (
           <div key={char.id} onClick={() => setSelectedChar(char)}
-            style={{ ...styles.charItem, background: selectedChar?.id === char.id ? '#2a2a2a' : 'transparent', borderLeft: `3px solid ${selectedChar?.id === char.id ? '#4A90D9' : 'transparent'}` }}>
+            style={{ ...styles.charItem, background: selectedChar?.id === char.id ? 'var(--bg-hover)' : 'transparent', borderLeft: `3px solid ${selectedChar?.id === char.id ? 'var(--accent)' : 'transparent'}` }}>
             <div style={styles.charItemTop}>
-              <span style={{ color: '#ddd', fontSize: 14 }}>{char.name}</span>
-              {char.voice_id ? <CheckCircle size={12} color="#8f8" /> : <Mic size={12} color="#555" />}
+              <span style={{ color: 'var(--text-primary)', fontSize: 14 }}>{char.name}</span>
+              {char.voice_id ? <CheckCircle size={12} color="var(--success)" /> : <Mic size={12} color="var(--text-muted)" />}
             </div>
-            <span style={{ color: '#666', fontSize: 11 }}>
+            <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>
               {char.role}{char.voice_name ? ` · ${char.voice_name}` : ' · no voice yet'}
               {char.voice_id && char.tts_provider && char.tts_provider !== 'elevenlabs' && (
-                <span style={{ color: PROVIDER_COLORS[char.tts_provider], marginLeft: 4, fontSize: 9, background: '#1a1a2a', padding: '1px 5px', borderRadius: 3 }}>
+                <span style={{ color: PROVIDER_COLORS[char.tts_provider], marginLeft: 4, fontSize: 9, background: 'var(--bg-elevated)', padding: '1px 5px', borderRadius: 3 }}>
                   {PROVIDER_LABELS[char.tts_provider]}
                 </span>
               )}
@@ -340,7 +340,7 @@ export function VoicesPage() {
                   {voiceIdResult && (
                     <div style={styles.voiceIdResult}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ color: '#ddd', fontSize: 13 }}>{voiceIdResult.name}</span>
+                        <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{voiceIdResult.name}</span>
                         <div style={{ display: 'flex', gap: 6 }}>
                           {voiceIdResult.preview_url && (
                             <button onClick={() => new Audio(voiceIdResult.preview_url).play()} style={styles.previewBtn} title="Preview"><Play size={12} /></button>
@@ -354,14 +354,14 @@ export function VoicesPage() {
                       </div>
                     </div>
                   )}
-                  {voiceIdError && <p style={{ color: '#e55', fontSize: 11 }}>{voiceIdError}</p>}
+                  {voiceIdError && <p style={{ color: 'var(--danger)', fontSize: 11 }}>{voiceIdError}</p>}
 
                   {/* My Voices / Library toggle */}
                   <div style={styles.voiceSearch}>
-                    <Search size={14} color="#666" />
+                    <Search size={14} color="var(--text-muted)" />
                     <input value={voiceSearch} onChange={(e) => setVoiceSearch(e.target.value)}
                       placeholder="Search voices..." style={styles.searchInput} aria-label="Search voices" />
-                    <button onClick={handleLibrarySearch} style={{ ...styles.lookupBtn, background: '#9B59B6', fontSize: 10 }}>
+                    <button onClick={handleLibrarySearch} style={{ ...styles.lookupBtn, background: 'var(--purple)', fontSize: 10 }}>
                       <Globe size={10} /> Library
                     </button>
                   </div>
@@ -370,12 +370,12 @@ export function VoicesPage() {
                     {/* Library results first if any */}
                     {libraryResults.length > 0 && (
                       <>
-                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#9B59B6', fontWeight: 600 }}>LIBRARY RESULTS</div>
+                        <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--purple)', fontWeight: 600 }}>LIBRARY RESULTS</div>
                         {libraryResults.map((v) => (
                           <div key={v.voice_id} style={{ ...styles.voiceItem }}>
                             <div style={{ flex: 1, minWidth: 0 }}>
-                              <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
-                              <span style={{ color: '#9B59B6', fontSize: 9, marginLeft: 6, background: '#2a1a3a', padding: '1px 5px', borderRadius: 3 }}>shared</span>
+                              <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{v.name}</span>
+                              <span style={{ color: 'var(--purple)', fontSize: 9, marginLeft: 6, background: 'var(--purple-subtle)', padding: '1px 5px', borderRadius: 3 }}>shared</span>
                             </div>
                             <div style={{ display: 'flex', gap: 4 }}>
                               {v.preview_url && <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url).play(); }} style={styles.previewBtn}><Play size={12} /></button>}
@@ -383,23 +383,23 @@ export function VoicesPage() {
                             </div>
                           </div>
                         ))}
-                        <div style={{ padding: '4px 12px', fontSize: 10, color: '#666', fontWeight: 600, marginTop: 8 }}>MY VOICES</div>
+                        <div style={{ padding: '4px 12px', fontSize: 10, color: 'var(--text-tertiary)', fontWeight: 600, marginTop: 8 }}>MY VOICES</div>
                       </>
                     )}
                     {filteredVoices.map((v) => (
                       <div key={v.voice_id} onClick={() => assignVoice(v.voice_id, v.name, 'elevenlabs')}
-                        style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? '#1a3a5c' : '#1a1a1a' }}>
+                        style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voice_id ? 'var(--accent-subtle)' : 'var(--bg-elevated)' }}>
                         <div style={{ flex: 1, minWidth: 0 }}>
-                          <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
-                          <span style={{ color: '#555', fontSize: 10, marginLeft: 6, fontFamily: 'monospace' }}>{v.voice_id.slice(0, 8)}...</span>
+                          <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{v.name}</span>
+                          <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 6, fontFamily: 'monospace' }}>{v.voice_id.slice(0, 8)}...</span>
                         </div>
-                        <span style={{ color: '#666', fontSize: 11 }}>{v.category}</span>
+                        <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>{v.category}</span>
                         {v.preview_url && (
                           <button onClick={(e) => { e.stopPropagation(); new Audio(v.preview_url!).play(); }} style={styles.previewBtn} aria-label={`Preview ${v.name}`}><Play size={12} /></button>
                         )}
                       </div>
                     ))}
-                    {filteredVoices.length === 0 && <p style={{ color: '#555', fontSize: 12, padding: 12 }}>No voices found. Check your ElevenLabs API key.</p>}
+                    {filteredVoices.length === 0 && <p style={{ color: 'var(--text-muted)', fontSize: 12, padding: 12 }}>No voices found. Check your ElevenLabs API key.</p>}
                   </div>
                 </>
               ) : (
@@ -416,19 +416,19 @@ export function VoicesPage() {
                     ) : (
                       filteredProviderVoices.map((v: any) => (
                         <div key={v.voiceId} onClick={() => assignVoice(v.voiceId, v.name, activeProvider)}
-                          style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voiceId && selectedChar.tts_provider === activeProvider ? '#1a3a5c' : '#1a1a1a' }}>
+                          style={{ ...styles.voiceItem, background: selectedChar.voice_id === v.voiceId && selectedChar.tts_provider === activeProvider ? 'var(--accent-subtle)' : 'var(--bg-elevated)' }}>
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <span style={{ color: '#ddd', fontSize: 13 }}>{v.name}</span>
-                            {v.gender && <span style={{ color: '#666', fontSize: 10, marginLeft: 6 }}>{v.gender}</span>}
-                            {v.language && <span style={{ color: '#555', fontSize: 10, marginLeft: 4 }}>{v.language}</span>}
+                            <span style={{ color: 'var(--text-primary)', fontSize: 13 }}>{v.name}</span>
+                            {v.gender && <span style={{ color: 'var(--text-tertiary)', fontSize: 10, marginLeft: 6 }}>{v.gender}</span>}
+                            {v.language && <span style={{ color: 'var(--text-muted)', fontSize: 10, marginLeft: 4 }}>{v.language}</span>}
                           </div>
                           {v.category && <span style={{ color: PROVIDER_COLORS[activeProvider], fontSize: 10, background: PROVIDER_COLORS[activeProvider] + '15', padding: '1px 6px', borderRadius: 3 }}>{v.category}</span>}
-                          {v.description && <span style={{ color: '#555', fontSize: 10, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.description}</span>}
+                          {v.description && <span style={{ color: 'var(--text-muted)', fontSize: 10, maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.description}</span>}
                         </div>
                       ))
                     )}
                     {!loadingProviderVoices && filteredProviderVoices.length === 0 && (
-                      <p style={{ color: '#555', fontSize: 12, padding: 12 }}>No voices available. Check your {PROVIDER_LABELS[activeProvider]} API key in Settings.</p>
+                      <p style={{ color: 'var(--text-muted)', fontSize: 12, padding: 12 }}>No voices available. Check your {PROVIDER_LABELS[activeProvider]} API key in Settings.</p>
                     )}
                   </div>
                 </>
@@ -546,8 +546,8 @@ const styles: Record<string, React.CSSProperties> = {
   charItemTop: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   delBtn: { position: 'absolute', right: 12, top: 12, background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' },
   emptyState: { padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, textAlign: 'center' },
-  emptyTitle: { fontSize: 13, color: '#888' },
-  emptyHint: { fontSize: 11, color: '#555', lineHeight: 1.5 },
+  emptyTitle: { fontSize: 13, color: 'var(--text-tertiary)' },
+  emptyHint: { fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5 },
   emptyBtn: { display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12 },
   settingsPanel: { flex: 1, background: 'var(--bg-surface)', borderRadius: 14, overflow: 'auto', padding: 20, border: '1px solid var(--border-subtle)' },
   settingsHeader: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: 20 },
@@ -555,21 +555,21 @@ const styles: Record<string, React.CSSProperties> = {
   section: { display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 },
   sectionLabel: { fontSize: 12, color: 'var(--accent)', fontWeight: 600 },
   sectionHint: { fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 },
-  label: { fontSize: 11, color: '#888', marginTop: 4 },
+  label: { fontSize: 11, color: 'var(--text-tertiary)', marginTop: 4 },
   slider: { width: '100%', accentColor: 'var(--accent)' },
-  checkLabel: { fontSize: 12, color: '#aaa', display: 'flex', alignItems: 'center', gap: 8 },
+  checkLabel: { fontSize: 12, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: 8 },
   providerTabs: { display: 'flex', gap: 6, flexWrap: 'wrap' },
   providerTab: { display: 'flex', alignItems: 'center', gap: 4, padding: '5px 12px', fontSize: 11, fontWeight: 500, background: 'var(--bg-elevated)', color: 'var(--text-tertiary)', border: '1px solid var(--border-subtle)', borderRadius: 20, cursor: 'pointer' },
   voiceIdRow: { display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0' },
-  voiceIdResult: { padding: 10, background: '#1a2a1a', borderRadius: 8, border: '1px solid #2a3a2a' },
+  voiceIdResult: { padding: 10, background: 'var(--success-subtle)', borderRadius: 8, border: '1px solid var(--border-subtle)' },
   voiceSearch: { display: 'flex', alignItems: 'center', gap: 8 },
   searchInput: { flex: 1, padding: '8px 12px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'var(--bg-deep)', color: 'var(--text-primary)', fontSize: 12, outline: 'none' },
-  lookupBtn: { display: 'flex', alignItems: 'center', gap: 4, padding: '7px 14px', background: '#4A90D9', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' },
+  lookupBtn: { display: 'flex', alignItems: 'center', gap: 4, padding: '7px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500, whiteSpace: 'nowrap' },
   voiceList: { maxHeight: 280, overflow: 'auto', borderRadius: 8, border: '1px solid var(--border-subtle)' },
-  voiceItem: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #1a1a1a' },
-  previewBtn: { background: 'none', border: '1px solid #333', color: '#888', borderRadius: 6, padding: '4px 6px', cursor: 'pointer', display: 'flex' },
-  assignIdBtn: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#1a3a1a', color: '#8f8', border: '1px solid #2a4a2a', borderRadius: 6, cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap' },
-  voiceTag: { fontSize: 9, color: '#888', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 },
+  voiceItem: { display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border-subtle)' },
+  previewBtn: { background: 'none', border: '1px solid var(--border-strong)', color: 'var(--text-tertiary)', borderRadius: 6, padding: '4px 6px', cursor: 'pointer', display: 'flex' },
+  assignIdBtn: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'var(--success-subtle)', color: 'var(--success)', border: '1px solid var(--border-subtle)', borderRadius: 6, cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap' },
+  voiceTag: { fontSize: 9, color: 'var(--text-tertiary)', background: 'var(--bg-elevated)', padding: '1px 5px', borderRadius: 3 },
   emptySettings: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 10, textAlign: 'center', padding: 40 },
   autoAssignBtn: { display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '8px 14px', background: 'linear-gradient(135deg, #6C3483 0%, #4A90D9 100%)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500, justifyContent: 'center' },
 };

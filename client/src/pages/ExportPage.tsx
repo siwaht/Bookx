@@ -60,8 +60,8 @@ export function ExportPage() {
             </div>
           </div>
           <div style={styles.specCard}>
-            <h4 style={{ color: '#fff', marginBottom: 12 }}>ACX Package Contents</h4>
-            <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+            <h4 style={{ color: 'var(--text-primary)', marginBottom: 12 }}>ACX Package Contents</h4>
+            <ul style={{ color: 'var(--text-secondary)', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
               <li>Per-chapter MP3 files (192kbps CBR, 44.1kHz)</li>
               <li>ACX-compliant file naming convention</li>
               <li>Metadata CSV with chapter info</li>
@@ -81,8 +81,8 @@ export function ExportPage() {
             </div>
           </div>
           <div style={styles.specCard}>
-            <h4 style={{ color: '#fff', marginBottom: 12 }}>Podcast Package Contents</h4>
-            <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+            <h4 style={{ color: 'var(--text-primary)', marginBottom: 12 }}>Podcast Package Contents</h4>
+            <ul style={{ color: 'var(--text-secondary)', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
               <li>Per-episode MP3 files (192kbps, 44.1kHz)</li>
               <li>Episode metadata JSON (for RSS feed generation)</li>
               <li>Cover art (if set)</li>
@@ -102,8 +102,8 @@ export function ExportPage() {
             </div>
           </div>
           <div style={styles.specCard}>
-            <h4 style={{ color: '#fff', marginBottom: 12 }}>InAudio Package Contents</h4>
-            <ul style={{ color: '#aaa', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
+            <h4 style={{ color: 'var(--text-primary)', marginBottom: 12 }}>InAudio Package Contents</h4>
+            <ul style={{ color: 'var(--text-secondary)', fontSize: 13, paddingLeft: 20, lineHeight: 2 }}>
               <li>MP3 files re-encoded to CBR 192kbps, 44.1kHz</li>
               <li>InAudio naming convention:</li>
               <li style={{ marginLeft: 16 }}>Opening - [Name].mp3</li>
@@ -125,15 +125,15 @@ export function ExportPage() {
 
       {result && (
         <div style={styles.resultSection}>
-          <h4 style={{ color: '#fff', marginBottom: 12 }}>Pre-flight Validation</h4>
-          <p style={{ color: '#666', fontSize: 12, marginBottom: 12 }}>
+          <h4 style={{ color: 'var(--text-primary)', marginBottom: 12 }}>Pre-flight Validation</h4>
+          <p style={{ color: 'var(--text-tertiary)', fontSize: 12, marginBottom: 12 }}>
             These checks verify your audiobook meets ACX requirements before packaging.
           </p>
           {result.validation.checks.map((check, i) => (
             <div key={i} style={styles.checkRow}>
-              {check.pass ? <CheckCircle size={16} color="#8f8" /> : <XCircle size={16} color="#f88" />}
-              <span style={{ color: check.pass ? '#8f8' : '#f88', fontSize: 14 }}>{check.name}</span>
-              <span style={{ color: '#666', fontSize: 12, marginLeft: 'auto' }}>{check.message}</span>
+              {check.pass ? <CheckCircle size={16} color="var(--success)" /> : <XCircle size={16} color="var(--danger)" />}
+              <span style={{ color: check.pass ? 'var(--success)' : 'var(--danger)', fontSize: 14 }}>{check.name}</span>
+              <span style={{ color: 'var(--text-tertiary)', fontSize: 12, marginLeft: 'auto' }}>{check.message}</span>
             </div>
           ))}
 
@@ -145,8 +145,8 @@ export function ExportPage() {
 
           {result.status === 'validation_failed' && (
             <div style={styles.failBox}>
-              <XCircle size={16} color="#f88" />
-              <p style={{ color: '#f88', fontSize: 14 }}>
+              <XCircle size={16} color="var(--danger)" />
+              <p style={{ color: 'var(--danger)', fontSize: 14 }}>
                 Fix the issues above before exporting. Go back to Step 4 (QC & Render) to re-render and verify.
               </p>
             </div>

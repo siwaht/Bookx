@@ -1,6 +1,6 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Headphones, LayoutGrid, BookMarked, Settings, LogOut } from 'lucide-react';
+import { Headphones, LayoutGrid, BookMarked, Settings, LogOut, Sun, Moon } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { clearToken } from '../services/api';
 
@@ -14,6 +14,8 @@ export function TopNav() {
   const navigate = useNavigate();
   const location = useLocation();
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
+  const theme = useAppStore((s) => s.theme);
+  const toggleTheme = useAppStore((s) => s.toggleTheme);
 
   const handleLogout = () => {
     clearToken();
@@ -51,10 +53,20 @@ export function TopNav() {
           ))}
         </div>
       </div>
-      <button onClick={handleLogout} style={styles.logoutBtn} title="Log out" aria-label="Log out">
-        <LogOut size={15} />
-        <span style={styles.logoutLabel}>Log out</span>
-      </button>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <button
+          onClick={toggleTheme}
+          style={styles.themeBtn}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+        </button>
+        <button onClick={handleLogout} style={styles.logoutBtn} title="Log out" aria-label="Log out">
+          <LogOut size={15} />
+          <span style={styles.logoutLabel}>Log out</span>
+        </button>
+      </div>
     </nav>
   );
 }
@@ -133,6 +145,18 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     cursor: 'pointer',
     fontSize: 12,
+  },
+  themeBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    background: 'none',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-md)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
   },
   logoutLabel: {
     fontSize: 12,
