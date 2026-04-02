@@ -25,6 +25,8 @@ import { aiParseRouter } from './routes/ai-parse.js';
 import { pronunciationRouter } from './routes/pronunciation.js';
 import { ttsProvidersRouter } from './routes/tts-providers.js';
 import { libraryRouter } from './routes/library.js';
+import { backgroundBoostRouter } from './routes/background-boost.js';
+import { generationRouter } from './routes/generation.js';
 import { initStorageFromSettings } from './storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -89,7 +91,7 @@ async function main() {
   } else {
     log.warn('No ElevenLabs API key found. Set it in Settings page.');
   }
-  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key']) {
+  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key', 'deepgram']) {
     const settingKey = `${provider}_api_key`;
     const envKey = provider === 'google_tts' ? 'GOOGLE_TTS_API_KEY'
       : provider === 'aws_access_key' ? 'AWS_ACCESS_KEY_ID'
@@ -206,6 +208,8 @@ async function main() {
   app.use('/api/books/:bookId/pronunciation', pronunciationRouter(db));
   app.use('/api/tts', ttsProvidersRouter(db));
   app.use('/api/library', libraryRouter(db));
+  app.use('/api/books/:bookId/background-boost', backgroundBoostRouter(db));
+  app.use('/api/books/:bookId/generation', generationRouter(db));
 
   // ── Save DB explicitly ──
   app.post('/api/save', (_req, res) => {

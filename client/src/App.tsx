@@ -19,6 +19,8 @@ import { SettingsPage } from './pages/SettingsPage';
 import { PronunciationPage } from './pages/PronunciationPage';
 import { UsagePage } from './pages/UsagePage';
 import { LibraryPage } from './pages/LibraryPage';
+import { BackgroundBoostPage } from './pages/BackgroundBoostPage';
+import { GenerationPage } from './pages/GenerationPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -76,6 +78,8 @@ function AppLayout() {
             <Route path="voices" element={<VoicesPage />} />
             <Route path="pronunciation" element={<PronunciationPage />} />
             <Route path="studio" element={<AudioStudioPage />} />
+            <Route path="generation" element={<GenerationPage />} />
+            <Route path="boost" element={<BackgroundBoostPage />} />
             <Route path="timeline" element={<TimelinePage />} />
             <Route path="qc" element={<QCPage />} />
             <Route path="export" element={<ExportPage />} />

@@ -38,12 +38,14 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
       const provider = getSetting(db, 'default_llm_provider') || detectAvailableProvider(db);
       if (!provider) {
         res.status(400).json({
-          error: 'No LLM API key configured. Go to Settings and add an OpenAI, Mistral, or Gemini API key.',
+          error: 'No LLM API key configured. Go to Settings and add an OpenAI, Claude, Mistral, or Gemini API key.',
         });
         return;
       }
 
-      const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
+      const apiKey = provider === 'claude'
+        ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+        : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
       if (!apiKey) {
         res.status(400).json({ error: `No API key found for ${provider}. Go to Settings and add your ${provider} API key.` });
         return;
@@ -101,7 +103,9 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
         res.status(400).json({ error: 'No LLM API key configured. Go to Settings and add an API key.' });
         return;
       }
-      const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
+      const apiKey = provider === 'claude'
+        ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+        : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
       if (!apiKey) {
         res.status(400).json({ error: `No API key found for ${provider}.` });
         return;
@@ -148,12 +152,13 @@ Rules:
 }
 
 function detectAvailableProvider(db: SqlJsDatabase): string | null {
-  for (const p of ['openai', 'mistral', 'gemini']) {
-    const key = getSetting(db, `${p}_api_key`);
+  for (const p of ['openai', 'claude', 'mistral', 'gemini']) {
+    const key = p === 'claude' ? getSetting(db, 'claude_api_key') : getSetting(db, `${p}_api_key`);
     if (key) return p;
   }
   // Fallback: check env vars
   if (process.env.OPENAI_API_KEY) return 'openai';
+  if (process.env.ANTHROPIC_API_KEY) return 'claude';
   if (process.env.MISTRAL_API_KEY) return 'mistral';
   if (process.env.GEMINI_API_KEY) return 'gemini';
   return null;
@@ -239,6 +244,30 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
       }
       const data = await res.json() as any;
       return data.choices[0].message.content;
+    }
+
+    if (provider === 'claude') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 8000,
+          system,
+          messages: [{ role: 'user', content: user }],
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        throw new Error(`Claude API error ${res.status}: ${errText}`);
+      }
+      const data = await res.json() as any;
+      return data.content[0].text;
     }
 
     if (provider === 'mistral') {

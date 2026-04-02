@@ -37,7 +37,7 @@ export interface Chapter {
   };
 }
 
-export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon';
+export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon' | 'deepgram';
 
 export interface Character {
   id: string;
@@ -217,4 +217,61 @@ export interface LibraryBookFormat {
   file_path: string;
   file_size_bytes: number;
   created_at: string;
+}
+
+// ── Background Boost ──
+
+export interface BoostScene {
+  id: string;
+  book_id: string;
+  scene_index: number;
+  title: string;
+  mood: string;
+  intensity: number;
+  segment_start: number;
+  segment_end: number;
+  music_prompt: string | null;
+  music_volume: number;
+  music_fade_in_ms: number;
+  music_fade_out_ms: number;
+  music_duration_hint: number;
+  music_loop: boolean;
+  ambience: BoostAmbience[];
+  sfx: BoostSFX[];
+  voice_mood: string | null;
+  status: 'pending' | 'generated' | 'applied';
+}
+
+export interface BoostAmbience {
+  prompt: string;
+  volume: number;
+  fade_in_ms: number;
+  fade_out_ms: number;
+  loop: boolean;
+  duration_hint_seconds: number;
+}
+
+export interface BoostSFX {
+  prompt: string;
+  at_segment: number;
+  position: 'start' | 'middle' | 'end';
+  offset_hint_ms: number;
+  volume: number;
+  duration_hint_seconds: number;
+}
+
+export interface BoostAnalysisResult {
+  scenes: BoostScene[];
+  total_scenes: number;
+  provider: string;
+  chapters_analyzed: number;
+}
+
+export interface BoostGenerateResult {
+  music_generated: number;
+  ambience_generated: number;
+  sfx_generated: number;
+  clips_created: number;
+  errors: string[];
+  tracks: Track[];
 }

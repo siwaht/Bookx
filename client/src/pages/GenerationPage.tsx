@@ -1,0 +1,375 @@
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useParams } from 'react-router-dom';
+import { generation } from '../services/api';
+import { toast } from '../components/Toast';
+import { Zap, Loader, Square, RefreshCw, CheckCircle, XCircle, Clock, BookOpen, ChevronDown, ChevronRight } from 'lucide-react';
+
+interface ChapterStatus {
+  chapter_id: string;
+  title: string;
+  sort_order: number;
+  total_segments: number;
+  with_audio: number;
+  ready_to_generate: number;
+  missing_audio: number;
+}
+
+interface JobInfo {
+  id: string;
+  scope: string;
+  status: string;
+  total_segments: number;
+  completed_segments: number;
+  cached_segments: number;
+  failed_segments: number;
+  skipped_segments: number;
+  errors: string[];
+  current_chapter: string | null;
+  current_segment: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export function GenerationPage() {
+  const { bookId } = useParams<{ bookId: string }>();
+  const [chapters, setChapters] = useState<ChapterStatus[]>([]);
+  const [totals, setTotals] = useState({ total_segments: 0, with_audio: 0, ready_to_generate: 0, missing_audio: 0 });
+  const [jobs, setJobs] = useState<any[]>([]);
+  const [activeJob, setActiveJob] = useState<JobInfo | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set());
+  const [regenerate, setRegenerate] = useState(false);
+  const [expandedErrors, setExpandedErrors] = useState(false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const loadStatus = useCallback(async () => {
+    if (!bookId) return;
+    try {
+      const data = await generation.status(bookId);
+      setChapters(data.chapters);
+      setTotals(data.totals);
+      setJobs(data.jobs);
+
+      // Check if there's a running job
+      const running = data.jobs.find((j: any) => j.status === 'running');
+      if (running) {
+        pollJob(running.id);
+      }
+    } catch (err: any) {
+      toast.error(`Failed to load status: ${err.message}`);
+    } finally {
+      setLoading(false);
+    }
+  }, [bookId]);
+
+  useEffect(() => { loadStatus(); }, [loadStatus]);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
+  const pollJob = useCallback((jobId: string) => {
+    if (pollRef.current) clearInterval(pollRef.current);
+    const poll = async () => {
+      if (!bookId) return;
+      try {
+        const job = await generation.job(bookId, jobId);
+        setActiveJob(job);
+        if (job.status !== 'running') {
+          if (pollRef.current) clearInterval(pollRef.current);
+          pollRef.current = null;
+          loadStatus();
+        }
+      } catch { /* ignore poll errors */ }
+    };
+    poll();
+    pollRef.current = setInterval(poll, 1500);
+  }, [bookId, loadStatus]);
+
+  const handleStartBook = async () => {
+    if (!bookId) return;
+    try {
+      const { job_id } = await generation.start(bookId, { scope: 'book', regenerate });
+      toast.success('Generation started');
+      pollJob(job_id);
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  const handleStartChapters = async () => {
+    if (!bookId || selectedChapters.size === 0) return;
+    try {
+      const { job_id } = await generation.start(bookId, {
+        scope: 'chapter',
+        scope_ids: Array.from(selectedChapters),
+        regenerate,
+      });
+      toast.success(`Generating ${selectedChapters.size} chapter(s)`);
+      pollJob(job_id);
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  const handleCancel = async () => {
+    if (!bookId || !activeJob) return;
+    try {
+      await generation.cancel(bookId, activeJob.id);
+      toast.success('Cancelling...');
+    } catch (err: any) { toast.error(err.message); }
+  };
+
+  const toggleChapter = (id: string) => {
+    setSelectedChapters(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAll = () => setSelectedChapters(new Set(chapters.map(c => c.chapter_id)));
+  const selectNone = () => setSelectedChapters(new Set());
+  const selectMissing = () => setSelectedChapters(new Set(chapters.filter(c => c.missing_audio > 0).map(c => c.chapter_id)));
+
+  const isRunning = activeJob?.status === 'running';
+  const jobProgress = activeJob && activeJob.total_segments > 0
+    ? ((activeJob.completed_segments + activeJob.cached_segments + activeJob.failed_segments + activeJob.skipped_segments) / activeJob.total_segments) * 100
+    : 0;
+
+  if (loading) {
+    return (
+      <div style={S.container}>
+        <div style={S.loading}><Loader size={20} className="spin" /> Loading generation status...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={S.container}>
+      <div style={S.header}>
+        <div>
+          <h1 style={S.title}><Zap size={20} /> Audio Generation</h1>
+          <p style={S.subtitle}>Generate TTS audio for your entire book, selected chapters, or regenerate specific sections.</p>
+        </div>
+      </div>
+
+      {/* Overview cards */}
+      <div style={S.cards}>
+        <div style={S.card}>
+          <div style={S.cardLabel}>Total Segments</div>
+          <div style={S.cardValue}>{totals.total_segments}</div>
+        </div>
+        <div style={{ ...S.card, borderColor: 'rgba(74,222,128,0.3)' }}>
+          <div style={S.cardLabel}>With Audio</div>
+          <div style={{ ...S.cardValue, color: '#4ade80' }}>{totals.with_audio}</div>
+        </div>
+        <div style={{ ...S.card, borderColor: 'rgba(251,191,36,0.3)' }}>
+          <div style={S.cardLabel}>Missing Audio</div>
+          <div style={{ ...S.cardValue, color: '#fbbf24' }}>{totals.missing_audio}</div>
+        </div>
+        <div style={{ ...S.card, borderColor: 'rgba(91,141,239,0.3)' }}>
+          <div style={S.cardLabel}>Ready to Generate</div>
+          <div style={{ ...S.cardValue, color: '#5b8def' }}>{totals.ready_to_generate}</div>
+        </div>
+      </div>
+
+      {/* Overall progress bar */}
+      {totals.total_segments > 0 && (
+        <div style={S.overallProgress}>
+          <div style={S.progressLabel}>
+            <span>Book Progress</span>
+            <span>{totals.with_audio}/{totals.total_segments} segments ({totals.total_segments > 0 ? Math.round((totals.with_audio / totals.total_segments) * 100) : 0}%)</span>
+          </div>
+          <div style={S.progressTrack}>
+            <div style={{ ...S.progressFill, width: `${(totals.with_audio / totals.total_segments) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      {/* Active job panel */}
+      {activeJob && (
+        <div style={{ ...S.jobPanel, borderColor: isRunning ? 'rgba(91,141,239,0.4)' : activeJob.status === 'completed' ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)' }}>
+          <div style={S.jobHeader}>
+            <div style={S.jobTitle}>
+              {isRunning ? <Loader size={14} className="spin" /> : activeJob.status === 'completed' ? <CheckCircle size={14} style={{ color: '#4ade80' }} /> : <XCircle size={14} style={{ color: '#ef4444' }} />}
+              <span>Generation Job — {activeJob.scope === 'book' ? 'Entire Book' : activeJob.scope === 'chapter' ? 'Selected Chapters' : 'Selected Segments'}</span>
+              <span style={{ ...S.statusBadge, background: isRunning ? 'rgba(91,141,239,0.2)' : activeJob.status === 'completed' ? 'rgba(74,222,128,0.2)' : 'rgba(239,68,68,0.2)', color: isRunning ? '#5b8def' : activeJob.status === 'completed' ? '#4ade80' : '#ef4444' }}>
+                {activeJob.status}
+              </span>
+            </div>
+            {isRunning && (
+              <button onClick={handleCancel} style={S.cancelBtn}><Square size={12} /> Cancel</button>
+            )}
+          </div>
+
+          <div style={S.progressTrack}>
+            <div style={{ ...S.progressFill, width: `${jobProgress}%`, background: isRunning ? '#5b8def' : activeJob.status === 'completed' ? '#4ade80' : '#ef4444' }} />
+          </div>
+
+          <div style={S.jobStats}>
+            <span>✅ {activeJob.completed_segments} generated</span>
+            <span>💾 {activeJob.cached_segments} cached</span>
+            <span>⏭️ {activeJob.skipped_segments} skipped</span>
+            <span>❌ {activeJob.failed_segments} failed</span>
+            <span style={{ color: '#666' }}>of {activeJob.total_segments} total</span>
+          </div>
+
+          {isRunning && activeJob.current_chapter && (
+            <div style={S.currentWork}>
+              Currently: <strong>{activeJob.current_chapter}</strong>
+              {activeJob.current_segment && <span style={{ color: '#666' }}> — {activeJob.current_segment}...</span>}
+            </div>
+          )}
+
+          {activeJob.errors.length > 0 && (
+            <div style={S.errorsSection}>
+              <button onClick={() => setExpandedErrors(!expandedErrors)} style={S.errorsToggle}>
+                {expandedErrors ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                {activeJob.errors.length} error(s)
+              </button>
+              {expandedErrors && (
+                <div style={S.errorsList}>
+                  {activeJob.errors.map((e, i) => <div key={i} style={S.errorItem}>{e}</div>)}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Actions */}
+      <div style={S.actions}>
+        <div style={S.actionsRow}>
+          <button onClick={handleStartBook} disabled={isRunning || totals.total_segments === 0} style={S.primaryBtn}>
+            <Zap size={14} /> {regenerate ? 'Regenerate Entire Book' : 'Generate Entire Book'}
+          </button>
+          <button onClick={handleStartChapters} disabled={isRunning || selectedChapters.size === 0} style={S.secondaryBtn}>
+            <BookOpen size={14} /> {regenerate ? 'Regenerate' : 'Generate'} {selectedChapters.size} Chapter(s)
+          </button>
+          <label style={S.checkboxLabel}>
+            <input type="checkbox" checked={regenerate} onChange={(e) => setRegenerate(e.target.checked)} />
+            Regenerate existing audio
+          </label>
+          {!isRunning && activeJob && (
+            <button onClick={() => setActiveJob(null)} style={S.ghostBtn}>Clear Job</button>
+          )}
+        </div>
+      </div>
+
+      {/* Chapter list */}
+      <div style={S.chapterSection}>
+        <div style={S.chapterHeader}>
+          <h2 style={S.sectionTitle}>Chapters</h2>
+          <div style={S.selectBtns}>
+            <button onClick={selectAll} style={S.linkBtn}>Select All</button>
+            <button onClick={selectMissing} style={S.linkBtn}>Select Missing</button>
+            <button onClick={selectNone} style={S.linkBtn}>Clear</button>
+          </div>
+        </div>
+
+        <div style={S.chapterList}>
+          {chapters.map((ch) => {
+            const pct = ch.total_segments > 0 ? Math.round((ch.with_audio / ch.total_segments) * 100) : 0;
+            const isComplete = ch.with_audio === ch.total_segments && ch.total_segments > 0;
+            const selected = selectedChapters.has(ch.chapter_id);
+
+            return (
+              <div key={ch.chapter_id} style={{ ...S.chapterRow, ...(selected ? S.chapterRowSelected : {}) }}
+                onClick={() => toggleChapter(ch.chapter_id)}>
+                <input type="checkbox" checked={selected} onChange={() => {}} style={{ cursor: 'pointer' }} />
+                <div style={S.chapterInfo}>
+                  <div style={S.chapterTitle}>
+                    {isComplete && <CheckCircle size={12} style={{ color: '#4ade80', flexShrink: 0 }} />}
+                    {ch.title}
+                  </div>
+                  <div style={S.chapterMeta}>
+                    {ch.with_audio}/{ch.total_segments} segments · {ch.ready_to_generate} ready
+                    {ch.missing_audio > 0 && <span style={{ color: '#fbbf24' }}> · {ch.missing_audio} missing</span>}
+                  </div>
+                </div>
+                <div style={S.chapterProgress}>
+                  <div style={S.miniTrack}>
+                    <div style={{ ...S.miniFill, width: `${pct}%`, background: isComplete ? '#4ade80' : '#5b8def' }} />
+                  </div>
+                  <span style={{ fontSize: 11, color: isComplete ? '#4ade80' : '#888', minWidth: 32, textAlign: 'right' }}>{pct}%</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Recent jobs */}
+      {jobs.length > 0 && (
+        <div style={S.historySection}>
+          <h2 style={S.sectionTitle}><Clock size={14} /> Recent Jobs</h2>
+          <div style={S.jobList}>
+            {jobs.filter(j => j.id !== activeJob?.id).slice(0, 5).map((j: any) => (
+              <div key={j.id} style={S.historyRow}>
+                <span style={{ ...S.statusDot, background: j.status === 'completed' ? '#4ade80' : j.status === 'failed' ? '#ef4444' : '#fbbf24' }} />
+                <span style={{ fontSize: 12, color: '#ccc' }}>{j.scope === 'book' ? 'Full Book' : j.scope === 'chapter' ? 'Chapters' : 'Segments'}</span>
+                <span style={{ fontSize: 11, color: '#666' }}>
+                  {j.completed_segments + j.cached_segments}/{j.total_segments} done
+                  {j.failed_segments > 0 && `, ${j.failed_segments} failed`}
+                </span>
+                <span style={{ fontSize: 10, color: '#555', marginLeft: 'auto' }}>
+                  {j.completed_at ? new Date(j.completed_at).toLocaleString() : j.started_at ? new Date(j.started_at).toLocaleString() : ''}
+                </span>
+                <button onClick={() => { setActiveJob({ ...j, errors: JSON.parse(j.errors || '[]'), scope_ids: j.scope_ids ? JSON.parse(j.scope_ids) : null }); }} style={S.ghostBtn}>View</button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const S: Record<string, React.CSSProperties> = {
+  container: { padding: 24, maxWidth: 900, margin: '0 auto' },
+  loading: { display: 'flex', alignItems: 'center', gap: 8, color: '#888', padding: 40, justifyContent: 'center' },
+  header: { marginBottom: 20 },
+  title: { fontSize: 18, fontWeight: 600, color: '#eee', display: 'flex', alignItems: 'center', gap: 8, margin: 0 },
+  subtitle: { fontSize: 12, color: '#888', marginTop: 4 },
+  cards: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 },
+  card: { background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 8, padding: '14px 16px' },
+  cardLabel: { fontSize: 10, color: '#888', textTransform: 'uppercase' as const, letterSpacing: 1, marginBottom: 4 },
+  cardValue: { fontSize: 24, fontWeight: 700, color: '#eee' },
+  overallProgress: { marginBottom: 20 },
+  progressLabel: { display: 'flex', justifyContent: 'space-between', fontSize: 11, color: '#888', marginBottom: 6 },
+  progressTrack: { height: 6, background: '#1a1a1a', borderRadius: 3, overflow: 'hidden' },
+  progressFill: { height: '100%', background: '#4ade80', borderRadius: 3, transition: 'width 0.3s ease' },
+  jobPanel: { background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 10, padding: 16, marginBottom: 20 },
+  jobHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  jobTitle: { display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 600, color: '#ddd' },
+  statusBadge: { fontSize: 10, padding: '2px 8px', borderRadius: 10, fontWeight: 600, textTransform: 'uppercase' as const },
+  jobStats: { display: 'flex', gap: 16, fontSize: 12, color: '#aaa', marginTop: 10, flexWrap: 'wrap' as const },
+  currentWork: { fontSize: 11, color: '#888', marginTop: 8, padding: '6px 10px', background: '#111', borderRadius: 6 },
+  cancelBtn: { display: 'flex', alignItems: 'center', gap: 4, background: 'rgba(239,68,68,0.15)', color: '#ef4444', border: '1px solid rgba(239,68,68,0.3)', borderRadius: 6, padding: '5px 12px', fontSize: 11, cursor: 'pointer', fontWeight: 500 },
+  errorsSection: { marginTop: 10 },
+  errorsToggle: { display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: '#ef4444', fontSize: 11, cursor: 'pointer', padding: 0 },
+  errorsList: { marginTop: 6, maxHeight: 150, overflowY: 'auto' as const, background: '#111', borderRadius: 6, padding: 8 },
+  errorItem: { fontSize: 10, color: '#f87171', padding: '2px 0', borderBottom: '1px solid #1a1a1a' },
+  actions: { marginBottom: 20 },
+  actionsRow: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' as const },
+  primaryBtn: { display: 'flex', alignItems: 'center', gap: 6, background: '#2d5a27', color: '#8f8', border: '1px solid rgba(74,222,128,0.3)', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  secondaryBtn: { display: 'flex', alignItems: 'center', gap: 6, background: 'rgba(91,141,239,0.1)', color: '#5b8def', border: '1px solid rgba(91,141,239,0.3)', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  ghostBtn: { background: 'none', border: '1px solid #333', color: '#888', borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer' },
+  checkboxLabel: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#aaa', cursor: 'pointer' },
+  chapterSection: { marginBottom: 24 },
+  chapterHeader: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
+  sectionTitle: { fontSize: 14, fontWeight: 600, color: '#ddd', display: 'flex', alignItems: 'center', gap: 6, margin: 0 },
+  selectBtns: { display: 'flex', gap: 8 },
+  linkBtn: { background: 'none', border: 'none', color: '#5b8def', fontSize: 11, cursor: 'pointer', padding: 0, textDecoration: 'underline' },
+  chapterList: { display: 'flex', flexDirection: 'column' as const, gap: 4 },
+  chapterRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 8, cursor: 'pointer', transition: 'all 150ms' },
+  chapterRowSelected: { borderColor: 'rgba(91,141,239,0.4)', background: 'rgba(91,141,239,0.05)' },
+  chapterInfo: { flex: 1, minWidth: 0 },
+  chapterTitle: { fontSize: 13, fontWeight: 500, color: '#ddd', display: 'flex', alignItems: 'center', gap: 6 },
+  chapterMeta: { fontSize: 11, color: '#666', marginTop: 2 },
+  chapterProgress: { display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 },
+  miniTrack: { width: 80, height: 4, background: '#1a1a1a', borderRadius: 2, overflow: 'hidden' },
+  miniFill: { height: '100%', borderRadius: 2, transition: 'width 0.3s ease' },
+  historySection: { marginTop: 24 },
+  jobList: { display: 'flex', flexDirection: 'column' as const, gap: 4, marginTop: 8 },
+  historyRow: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--bg-base)', border: '1px solid var(--border-subtle)', borderRadius: 6 },
+  statusDot: { width: 8, height: 8, borderRadius: '50%', flexShrink: 0 },
+};

@@ -13,19 +13,21 @@ interface ApiKeyConfig {
 const API_KEYS: ApiKeyConfig[] = [
   { key: 'elevenlabs_api_key', label: 'ElevenLabs', placeholder: 'xi-...', hint: 'TTS, SFX, and music generation (primary)' },
   { key: 'openai_api_key', label: 'OpenAI', placeholder: 'sk-...', hint: 'GPT models for AI parsing + OpenAI TTS voices' },
+  { key: 'claude_api_key', label: 'Anthropic Claude', placeholder: 'sk-ant-...', hint: 'Claude models for AI parsing' },
   { key: 'google_tts_api_key', label: 'Google Cloud TTS', placeholder: 'AIza...', hint: 'Google Cloud Text-to-Speech voices (Journey, Studio, Neural2)' },
   { key: 'aws_access_key_api_key', label: 'AWS Access Key', placeholder: 'AKIA...', hint: 'Amazon Polly TTS voices (neural)' },
   { key: 'aws_secret_access_key_api_key', label: 'AWS Secret Key', placeholder: 'wJal...', hint: 'Amazon Polly secret access key' },
-  { key: 'deepgram_api_key', label: 'Deepgram', placeholder: 'dg-...', hint: 'Speech-to-text and transcription' },
+  { key: 'deepgram_api_key', label: 'Deepgram', placeholder: 'dg-...', hint: 'Deepgram Aura TTS voices and speech-to-text' },
   { key: 'mistral_api_key', label: 'Mistral', placeholder: 'mist-...', hint: 'Mistral models for AI script parsing' },
   { key: 'gemini_api_key', label: 'Google Gemini', placeholder: 'AIza...', hint: 'Gemini models for AI script parsing' },
 ];
 
 const LLM_PROVIDERS = [
   { value: '', label: 'Auto-detect (use first available)' },
-  { value: 'openai', label: 'OpenAI (GPT-4o-mini)' },
-  { value: 'mistral', label: 'Mistral (Small)' },
-  { value: 'gemini', label: 'Google Gemini (Flash)' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'claude', label: 'Anthropic Claude' },
+  { value: 'mistral', label: 'Mistral' },
+  { value: 'gemini', label: 'Google Gemini' },
 ];
 
 export function SettingsPage() {

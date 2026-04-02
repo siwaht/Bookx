@@ -186,20 +186,31 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       const { text, voice_id, model_id, voice_settings, seed, book_id } = req.body;
       if (!text || !voice_id) { res.status(400).json({ error: 'text and voice_id required' }); return; }
 
+      // Check cache first to avoid regenerating identical audio
+      const promptHash = computePromptHash({ text, voice_id, model_id, voice_settings, seed });
+      if (book_id) {
+        const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'tts']);
+        if (cached && fs.existsSync(cached.file_path)) {
+          res.json({ audio_asset_id: cached.id, file_path: cached.file_path, request_id: cached.elevenlabs_request_id, cached: true });
+          return;
+        }
+      }
+
       const { buffer, requestId } = await generateTTS({ text, voice_id, model_id, voice_settings, seed, output_format: 'mp3_44100_192' });
       const assetId = uuid();
       const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
       fs.writeFileSync(filePath, buffer);
 
+      const durationMs = Math.round((buffer.length / 24000) * 1000);
+
       if (book_id) {
-        const promptHash = computePromptHash({ text, voice_id, model_id, voice_settings, seed });
         run(db,
-          `INSERT INTO audio_assets (id, book_id, type, file_path, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
-           VALUES (?, ?, 'tts', ?, ?, ?, ?, ?)`,
-          [assetId, book_id, filePath, promptHash, requestId, JSON.stringify(req.body), buffer.length]);
+          `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
+           VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
+          [assetId, book_id, filePath, durationMs, promptHash, requestId, JSON.stringify(req.body), buffer.length]);
       }
 
-      res.json({ audio_asset_id: assetId, file_path: filePath, request_id: requestId });
+      res.json({ audio_asset_id: assetId, file_path: filePath, request_id: requestId, cached: false });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 
@@ -229,7 +240,7 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       const promptHash = computePromptHash({ prompt, duration_seconds, prompt_influence, loop, model_id, type: 'sfx' });
       if (book_id) {
         const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'sfx']);
-        if (cached) { res.json({ audio_asset_id: cached.id, cached: true }); return; }
+        if (cached && fs.existsSync(cached.file_path)) { res.json({ audio_asset_id: cached.id, cached: true, duration_ms: cached.duration_ms }); return; }
       }
 
       const { buffer } = await generateSFX({ text: prompt, duration_seconds, prompt_influence, loop, model_id });
@@ -261,7 +272,7 @@ export function elevenlabsRouter(db: SqlJsDatabase): Router {
       const promptHash = computePromptHash({ prompt, music_length_ms: lengthMs, force_instrumental, model_id, type: 'music' });
       if (book_id) {
         const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'music']);
-        if (cached) { res.json({ audio_asset_id: cached.id, cached: true }); return; }
+        if (cached && fs.existsSync(cached.file_path)) { res.json({ audio_asset_id: cached.id, cached: true, duration_ms: cached.duration_ms }); return; }
       }
 
       const { buffer } = await generateMusic(prompt, lengthMs, force_instrumental);

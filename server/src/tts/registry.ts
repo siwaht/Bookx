@@ -7,6 +7,7 @@ import type { TTSProvider, TTSProviderName, TTSGenerateRequest, TTSGenerateResul
 import { OpenAITTSProvider } from './openai-provider.js';
 import { GoogleTTSProvider } from './google-provider.js';
 import { AmazonPollyProvider } from './amazon-provider.js';
+import { DeepgramTTSProvider } from './deepgram-provider.js';
 
 // ElevenLabs is handled separately since it has richer features (SFX, music, etc.)
 // but we wrap it here for the unified voice/generate interface
@@ -82,6 +83,7 @@ function initProviders() {
   providers.set('openai', new OpenAITTSProvider());
   providers.set('google', new GoogleTTSProvider());
   providers.set('amazon', new AmazonPollyProvider());
+  providers.set('deepgram', new DeepgramTTSProvider());
 }
 
 export function getProvider(name: TTSProviderName): TTSProvider {

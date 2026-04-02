@@ -3,16 +3,18 @@ import { useParams, useNavigate, NavLink, Outlet, useLocation } from 'react-rout
 import { books, elevenlabs, chapters as chaptersApi, characters as charsApi, timeline as timelineApi } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones, BookMarked, ChevronRight } from 'lucide-react';
+import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones, BookMarked, ChevronRight, Sparkles, Zap } from 'lucide-react';
 
 const STEPS = [
   { to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', step: 1, hint: 'Import & split text', podcastHint: 'Import script / text', end: true },
   { to: 'voices', icon: Users, label: 'Voices', podcastLabel: 'Voices', step: 2, hint: 'Assign character voices', podcastHint: 'Assign speaker voices' },
   { to: 'pronunciation', icon: BookOpen, label: 'Pronunciation', podcastLabel: 'Pronunciation', step: 3, hint: 'Fix word pronunciations', podcastHint: 'Fix word pronunciations' },
   { to: 'studio', icon: Music, label: 'Audio Studio', podcastLabel: 'Audio Studio', step: 4, hint: 'SFX, music & v3 tags', podcastHint: 'SFX, music & effects' },
-  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', step: 5, hint: 'Arrange & preview audio', podcastHint: 'Arrange & preview' },
-  { to: 'qc', icon: CheckCircle, label: 'QC & Render', podcastLabel: 'QC & Render', step: 6, hint: 'Render & check quality', podcastHint: 'Render & check quality' },
-  { to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', step: 7, hint: 'Download ACX package', podcastHint: 'Download final audio' },
+  { to: 'generation', icon: Zap, label: 'Generate', podcastLabel: 'Generate', step: 5, hint: 'Generate audiobook audio', podcastHint: 'Generate all audio' },
+  { to: 'boost', icon: Sparkles, label: 'BG Boost', podcastLabel: 'BG Boost', step: 6, hint: 'AI cinematic sound design', podcastHint: 'AI background audio' },
+  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', step: 7, hint: 'Arrange & preview audio', podcastHint: 'Arrange & preview' },
+  { to: 'qc', icon: CheckCircle, label: 'QC & Render', podcastLabel: 'QC & Render', step: 8, hint: 'Render & check quality', podcastHint: 'Render & check quality' },
+  { to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', step: 9, hint: 'Download ACX package', podcastHint: 'Download final audio' },
 ];
 
 export function BookEditor() {
@@ -23,11 +25,11 @@ export function BookEditor() {
   const [book, setBook] = useState<Book | null>(null);
 
   // Real workflow progress tracking
-  const [stepsDone, setStepsDone] = useState<boolean[]>(new Array(7).fill(false));
+  const [stepsDone, setStepsDone] = useState<boolean[]>(new Array(9).fill(false));
 
   const checkWorkflowProgress = useCallback(async () => {
     if (!bookId) return;
-    const done = new Array(7).fill(false);
+    const done = new Array(9).fill(false);
     try {
       const chapterList = await chaptersApi.list(bookId);
       // Step 1: Has chapters with text
@@ -37,22 +39,28 @@ export function BookEditor() {
       const charList = await charsApi.list(bookId);
       done[1] = charList.some((c: any) => c.voice_id);
 
-      // Step 2 also implies step 3 (pronunciation is optional, mark done if voices exist)
+      // Step 3: Pronunciation is optional, mark done if voices exist
       done[2] = done[1];
 
       // Step 4: Audio studio is optional, mark done if voices assigned
       done[3] = done[1];
 
-      // Step 5: Has tracks with clips on timeline
+      // Step 5: Generation - check if any chapter has audio
+      const hasAudio = chapterList.some((ch: any) => ch.stats?.with_audio > 0);
+      done[4] = hasAudio;
+
+      // Step 6: BG Boost is optional, mark done if voices assigned
+      done[5] = done[1];
+
+      // Step 7: Has tracks with clips on timeline
       const trackList = await timelineApi.tracks(bookId);
       const hasClips = trackList.some((t: any) => t.clips && t.clips.length > 0);
-      done[4] = hasClips;
+      done[6] = hasClips;
 
-      // Step 6: QC/Render - check if any chapter has audio stats
-      const hasAudio = chapterList.some((ch: any) => ch.stats?.with_audio > 0);
-      done[5] = hasAudio && hasClips;
+      // Step 8: QC/Render - check if any chapter has audio stats
+      done[7] = hasAudio && hasClips;
 
-      // Step 7: Export - we can't easily check, leave false
+      // Step 9: Export - we can't easily check, leave false
     } catch {
       // Silently fail - progress indicators are non-critical
     }

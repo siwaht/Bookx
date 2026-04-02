@@ -4,13 +4,14 @@ import { characters as charsApi, elevenlabs, ttsProviders } from '../services/ap
 import { useAppStore } from '../stores/appStore';
 import { toast } from '../components/Toast';
 import type { Character, ElevenLabsVoice, TTSProviderName } from '../types';
-import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, X, Zap } from 'lucide-react';
+import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, X, Zap, Wand2 } from 'lucide-react';
 
 const PROVIDER_LABELS: Record<TTSProviderName, string> = {
   elevenlabs: 'ElevenLabs',
   openai: 'OpenAI TTS',
   google: 'Google Cloud TTS',
   amazon: 'Amazon Polly',
+  deepgram: 'Deepgram Aura',
 };
 
 const PROVIDER_COLORS: Record<TTSProviderName, string> = {
@@ -18,6 +19,7 @@ const PROVIDER_COLORS: Record<TTSProviderName, string> = {
   openai: '#10a37f',
   google: '#4285f4',
   amazon: '#ff9900',
+  deepgram: '#13ef93',
 };
 
 export function VoicesPage() {
@@ -49,6 +51,9 @@ export function VoicesPage() {
   const [activeProvider, setActiveProvider] = useState<TTSProviderName>('elevenlabs');
   const [providerVoices, setProviderVoices] = useState<any[]>([]);
   const [loadingProviderVoices, setLoadingProviderVoices] = useState(false);
+
+  // Auto-assign voices
+  const [autoAssigning, setAutoAssigning] = useState(false);
 
   const loadCharacters = async () => {
     if (!bookId) return;
@@ -98,6 +103,37 @@ export function VoicesPage() {
     setNewName(''); setShowCreate(false);
     setCharacterList([...characterList, char]);
     setSelectedChar(char);
+  };
+
+  const handleAutoAssignVoices = async () => {
+    if (!bookId) return;
+    const unassigned = characterList.filter((c) => !c.voice_id);
+    if (unassigned.length === 0) {
+      toast.info('All characters already have voices assigned.');
+      return;
+    }
+    setAutoAssigning(true);
+    try {
+      const result = await charsApi.autoAssignVoices(bookId);
+      if (result.assigned > 0) {
+        toast.success(`Assigned voices to ${result.assigned} character${result.assigned > 1 ? 's' : ''}. You can modify any assignment below.`);
+        // Refresh the full character list from server
+        const refreshed = await charsApi.list(bookId);
+        const list = Array.isArray(refreshed) ? refreshed : [];
+        setCharacterList(list);
+        // Update selected char if it was one of the assigned
+        if (selectedChar) {
+          const updated = list.find((c: any) => c.id === selectedChar.id);
+          if (updated) setSelectedChar(updated);
+        }
+      } else {
+        toast.info('No voices could be assigned. Check that you have TTS providers configured in Settings.');
+      }
+    } catch (err: any) {
+      toast.error(`Auto-assign failed: ${err.message}`);
+    } finally {
+      setAutoAssigning(false);
+    }
   };
 
   const handleUpdate = async (field: string, value: any) => {
@@ -190,6 +226,16 @@ export function VoicesPage() {
               {charsWithVoice.length}/{characterList.length} voices assigned
             </span>
             {charsWithoutVoice.length === 0 && <CheckCircle size={12} color="#8f8" />}
+          </div>
+        )}
+        {characterList.length > 0 && charsWithoutVoice.length > 0 && (
+          <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
+            <button onClick={handleAutoAssignVoices} disabled={autoAssigning}
+              style={{ ...styles.autoAssignBtn, opacity: autoAssigning ? 0.6 : 1 }}
+              title="Automatically assign distinct voices to all characters without one">
+              {autoAssigning ? <Loader size={12} /> : <Wand2 size={12} />}
+              {autoAssigning ? 'Assigning...' : `Auto-assign ${charsWithoutVoice.length} voice${charsWithoutVoice.length > 1 ? 's' : ''}`}
+            </button>
           </div>
         )}
         {showCreate && (
@@ -525,4 +571,5 @@ const styles: Record<string, React.CSSProperties> = {
   assignIdBtn: { display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: '#1a3a1a', color: '#8f8', border: '1px solid #2a4a2a', borderRadius: 6, cursor: 'pointer', fontSize: 11, whiteSpace: 'nowrap' },
   voiceTag: { fontSize: 9, color: '#888', background: '#1a1a1a', padding: '1px 5px', borderRadius: 3 },
   emptySettings: { display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 10, textAlign: 'center', padding: 40 },
+  autoAssignBtn: { display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '8px 14px', background: 'linear-gradient(135deg, #6C3483 0%, #4A90D9 100%)', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500, justifyContent: 'center' },
 };

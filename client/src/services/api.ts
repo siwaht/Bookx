@@ -144,6 +144,9 @@ export const characters = {
   autoAssignByName: (bookId: string) =>
     request<{ assigned: number; total_segments: number; matches: { segment_id: string; character_name: string }[] }>(
       `/books/${bookId}/characters/auto-assign-by-name`, { method: 'POST' }),
+  autoAssignVoices: (bookId: string, voices?: Array<{ voiceId: string; name: string; provider: string; gender?: string; category?: string; labels?: Record<string, string> }>) =>
+    request<{ assigned: number; total_characters: number; unassigned_remaining: number; assignments: Array<{ character_id: string; character_name: string; voice_id: string; voice_name: string; provider: string }> }>(
+      `/books/${bookId}/characters/auto-assign-voices`, { method: 'POST', body: JSON.stringify(voices ? { voices } : {}) }),
 };
 
 // ── Segments ──
@@ -450,6 +453,63 @@ export const system = {
     audio_mb: number; exports_mb: number; renders_mb: number;
     backups_mb: number; total_mb: number;
   }>('/disk-usage'),
+};
+
+// ── Generation ──
+export const generation = {
+  status: (bookId: string) =>
+    request<{
+      chapters: Array<{
+        chapter_id: string; title: string; sort_order: number;
+        total_segments: number; with_audio: number; ready_to_generate: number; missing_audio: number;
+      }>;
+      totals: { total_segments: number; with_audio: number; ready_to_generate: number; missing_audio: number };
+      jobs: any[];
+    }>(`/books/${bookId}/generation/status`),
+  start: (bookId: string, data: { scope: 'book' | 'chapter' | 'segment'; scope_ids?: string[]; regenerate?: boolean }) =>
+    request<{ job_id: string; total_segments: number }>(`/books/${bookId}/generation/start`, {
+      method: 'POST', body: JSON.stringify(data),
+    }),
+  job: (bookId: string, jobId: string) =>
+    request<{
+      id: string; book_id: string; scope: string; scope_ids: string[] | null;
+      status: string; total_segments: number; completed_segments: number;
+      cached_segments: number; failed_segments: number; skipped_segments: number;
+      errors: string[]; current_chapter: string | null; current_segment: string | null;
+      started_at: string | null; completed_at: string | null;
+    }>(`/books/${bookId}/generation/jobs/${jobId}`),
+  cancel: (bookId: string, jobId: string) =>
+    request<{ ok: boolean }>(`/books/${bookId}/generation/cancel/${jobId}`, { method: 'POST' }),
+};
+
+// ── Background Boost ──
+export const backgroundBoost = {
+  analyze: (bookId: string, opts?: { chapterIds?: string[]; provider?: string; model?: string }) =>
+    request<any>(`/books/${bookId}/background-boost/analyze`, {
+      method: 'POST', body: JSON.stringify({ chapter_ids: opts?.chapterIds, provider: opts?.provider, model: opts?.model }),
+    }),
+  models: (bookId: string, refresh?: boolean) =>
+    request<{ providers: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }>; currentProvider: string | null; currentModel: string | null }>(`/books/${bookId}/background-boost/models${refresh ? '?refresh=true' : ''}`),
+  scenes: (bookId: string) =>
+    request<any[]>(`/books/${bookId}/background-boost/scenes`),
+  updateScene: (bookId: string, sceneId: string, data: any) =>
+    request<any>(`/books/${bookId}/background-boost/scenes/${sceneId}`, {
+      method: 'PUT', body: JSON.stringify(data),
+    }),
+  deleteScene: (bookId: string, sceneId: string) =>
+    request<void>(`/books/${bookId}/background-boost/scenes/${sceneId}`, { method: 'DELETE' }),
+  generate: (bookId: string, data?: { scene_ids?: string[]; generate_music?: boolean; generate_ambience?: boolean; generate_sfx?: boolean; force_regenerate?: boolean }) =>
+    request<any>(`/books/${bookId}/background-boost/generate`, {
+      method: 'POST', body: JSON.stringify(data || {}),
+    }),
+  regenerateScene: (bookId: string, sceneId: string, layer?: 'music' | 'ambience' | 'sfx') =>
+    request<any>(`/books/${bookId}/background-boost/scenes/${sceneId}/regenerate`, {
+      method: 'POST', body: JSON.stringify({ layer }),
+    }),
+  clear: (bookId: string, deleteTracks?: boolean) =>
+    request<{ ok: boolean }>(`/books/${bookId}/background-boost/clear`, {
+      method: 'POST', body: JSON.stringify({ delete_tracks: deleteTracks }),
+    }),
 };
 
 // ── Library ──

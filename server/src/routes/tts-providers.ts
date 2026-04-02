@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
-import { run } from '../db/helpers.js';
+import { queryOne, run } from '../db/helpers.js';
 import { getAllProviders, getProvider, listAllVoices, generateWithProvider } from '../tts/registry.js';
 import { computePromptHash } from '../elevenlabs/client.js';
 import type { TTSProviderName } from '../tts/provider.js';
@@ -66,6 +66,22 @@ export function ttsProvidersRouter(db: SqlJsDatabase): Router {
         return;
       }
 
+      // Check cache first to avoid regenerating identical audio
+      const promptHash = computePromptHash({ provider, text, voice_id, model_id, speed, stability, similarity_boost, style, speaker_boost, seed });
+      if (book_id) {
+        const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'tts']);
+        if (cached && fs.existsSync(cached.file_path)) {
+          res.json({
+            audio_asset_id: cached.id,
+            provider,
+            request_id: cached.elevenlabs_request_id,
+            duration_ms: cached.duration_ms,
+            cached: true,
+          });
+          return;
+        }
+      }
+
       const result = await generateWithProvider(provider as TTSProviderName, {
         text, voiceId: voice_id, modelId: model_id, speed,
         stability, similarityBoost: similarity_boost, style,
@@ -77,7 +93,6 @@ export function ttsProvidersRouter(db: SqlJsDatabase): Router {
       fs.writeFileSync(filePath, result.buffer);
 
       if (book_id) {
-        const promptHash = computePromptHash({ provider, text, voice_id, model_id, speed });
         run(db,
           `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
            VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
@@ -90,6 +105,7 @@ export function ttsProvidersRouter(db: SqlJsDatabase): Router {
         provider: result.provider,
         request_id: result.requestId,
         duration_ms: result.durationMs,
+        cached: false,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });

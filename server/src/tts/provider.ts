@@ -10,7 +10,7 @@
  * Each provider implements the TTSProvider interface.
  */
 
-export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon';
+export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon' | 'deepgram';
 
 export interface TTSGenerateRequest {
   text: string;

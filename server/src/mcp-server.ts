@@ -65,6 +65,8 @@ function initDb() {
     initializeSchema(db);
     const storedKey = getSetting(db, 'elevenlabs_api_key');
     if (storedKey) process.env.ELEVENLABS_API_KEY = storedKey;
+    const storedDgKey = getSetting(db, 'deepgram_api_key');
+    if (storedDgKey) process.env.DEEPGRAM_API_KEY = storedDgKey;
     log('Database initialized');
     return db;
   })();
@@ -830,7 +832,7 @@ server.tool('get_settings', 'Get current app settings (API keys are masked)', {}
 );
 
 server.tool('update_setting', 'Update an app setting (e.g. API keys, default LLM provider)', {
-  key: z.enum(['elevenlabs_api_key', 'openai_api_key', 'mistral_api_key', 'gemini_api_key', 'default_llm_provider']),
+  key: z.enum(['elevenlabs_api_key', 'openai_api_key', 'claude_api_key', 'mistral_api_key', 'gemini_api_key', 'default_llm_provider', 'default_llm_model']),
   value: z.string(),
 }, async ({ key, value }) => {
   const db = await dbReady;
@@ -918,8 +920,10 @@ server.tool('ai_parse_chapters', 'Use an LLM to auto-detect characters, assign d
   if (!chapters.length) return err('No chapters found. Add chapters first.');
 
   const provider = detectProvider(db);
-  if (!provider) return err('No LLM API key configured. Use update_setting to add an openai_api_key, mistral_api_key, or gemini_api_key.');
-  const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
+  if (!provider) return err('No LLM API key configured. Use update_setting to add an openai_api_key, claude_api_key, mistral_api_key, or gemini_api_key.');
+  const apiKey = provider === 'claude'
+    ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+    : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
   if (!apiKey) return err(`No API key for ${provider}`);
 
   const format = book.format || 'single_narrator';
@@ -980,7 +984,9 @@ server.tool('ai_suggest_v3_tags', 'Use an LLM to suggest ElevenLabs v3 audio tag
   const db = await dbReady;
   const provider = detectProvider(db);
   if (!provider) return err('No LLM API key configured.');
-  const apiKey = getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`];
+  const apiKey = provider === 'claude'
+    ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+    : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
   if (!apiKey) return err(`No API key for ${provider}`);
 
   const systemPrompt = `You are an expert audio production assistant specializing in ElevenLabs v3 audio tags.
@@ -1148,10 +1154,12 @@ server.tool('generate_and_populate', 'Generate TTS for all segments then auto-po
 // ═══════════════════════════════════════════════════════
 
 function detectProvider(db: any): string | null {
-  for (const p of ['openai', 'mistral', 'gemini']) {
-    if (getSetting(db, `${p}_api_key`)) return p;
+  for (const p of ['openai', 'claude', 'mistral', 'gemini']) {
+    const key = p === 'claude' ? getSetting(db, 'claude_api_key') : getSetting(db, `${p}_api_key`);
+    if (key) return p;
   }
   if (process.env.OPENAI_API_KEY) return 'openai';
+  if (process.env.ANTHROPIC_API_KEY) return 'claude';
   if (process.env.MISTRAL_API_KEY) return 'mistral';
   if (process.env.GEMINI_API_KEY) return 'gemini';
   return null;
@@ -1169,6 +1177,16 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
       });
       if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text()}`);
       return ((await res.json()) as any).choices[0].message.content;
+    }
+    if (provider === 'claude') {
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 8000, system, messages: [{ role: 'user', content: user }] }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Claude ${res.status}: ${await res.text()}`);
+      return ((await res.json()) as any).content[0].text;
     }
     if (provider === 'mistral') {
       const res = await fetch('https://api.mistral.ai/v1/chat/completions', {

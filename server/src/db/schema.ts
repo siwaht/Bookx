@@ -277,6 +277,55 @@ export function initializeSchema(database: SqlJsDatabase): void {
 
   database.run('CREATE INDEX IF NOT EXISTS idx_library_formats_book ON library_book_formats(library_book_id)');
 
+  // ── Background Boost ──
+  database.run(`
+    CREATE TABLE IF NOT EXISTS background_boost_scenes (
+      id TEXT PRIMARY KEY,
+      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      scene_index INTEGER NOT NULL DEFAULT 0,
+      title TEXT,
+      mood TEXT,
+      intensity REAL DEFAULT 0.5,
+      segment_start INTEGER DEFAULT 0,
+      segment_end INTEGER DEFAULT 0,
+      music_prompt TEXT,
+      music_volume REAL DEFAULT 0.2,
+      music_fade_in_ms INTEGER DEFAULT 2000,
+      music_fade_out_ms INTEGER DEFAULT 3000,
+      music_duration_hint INTEGER DEFAULT 30,
+      music_loop INTEGER DEFAULT 1,
+      ambience_json TEXT DEFAULT '[]',
+      sfx_json TEXT DEFAULT '[]',
+      voice_mood TEXT,
+      status TEXT DEFAULT 'pending',
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_boost_scenes_book ON background_boost_scenes(book_id, scene_index)');
+
+  // ── Generation Jobs ──
+  database.run(`
+    CREATE TABLE IF NOT EXISTS generation_jobs (
+      id TEXT PRIMARY KEY,
+      book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      scope TEXT NOT NULL DEFAULT 'book',
+      scope_ids TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      total_segments INTEGER DEFAULT 0,
+      completed_segments INTEGER DEFAULT 0,
+      cached_segments INTEGER DEFAULT 0,
+      failed_segments INTEGER DEFAULT 0,
+      skipped_segments INTEGER DEFAULT 0,
+      errors TEXT DEFAULT '[]',
+      current_chapter TEXT,
+      current_segment TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_gen_jobs_book ON generation_jobs(book_id, created_at)');
+
   // API keys / settings store
   database.run(`
     CREATE TABLE IF NOT EXISTS settings (
