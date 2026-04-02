@@ -8,34 +8,81 @@ import {
   Play, Pause, SkipBack, ZoomIn, ZoomOut, Plus, Trash2, Volume2, VolumeX,
   Save, Download, Scissors, Copy, Clipboard, Undo2, Redo2, HelpCircle, X,
   Wand2, Loader, Upload, Clock, Magnet, Layers, GitMerge, AlignLeft, Sliders,
-  ChevronDown, Music, Mic, Zap,
+  ChevronDown, Music, Mic, Zap, Grid, Type, Headphones, FileAudio, 
+  Maximize2, Minimize2, Settings, Search, Filter, Eye, EyeOff, 
+  ChevronRight, ChevronLeft, Square, Circle, Hash, AlignCenter,
+  Move, GripVertical, Split, Merge, Waves, BarChart3, Timer
 } from 'lucide-react';
 
-type DragMode = 'move' | 'trimStart' | 'trimEnd';
+type DragMode = 'move' | 'trimStart' | 'trimEnd' | 'fadeIn' | 'fadeOut';
 interface ClipboardData { clip: Clip; trackId: string; cut: boolean; }
 interface ContextMenu { x: number; y: number; clipId: string; trackId: string; }
 
-const TRACK_H = 72;
-const RULER_H = 32;
+const TRACK_H = 80;
+const RULER_H = 40;
 const MIN_PX_PER_MS = 0.005;
 const MAX_PX_PER_MS = 0.5;
 
-// ── Track type colors ──
-const TRACK_COLORS: Record<string, { bg: string; border: string; text: string; clip: string; clipHover: string }> = {
-  narration: { bg: 'rgba(59,130,246,0.06)', border: 'rgba(59,130,246,0.2)', text: '#60a5fa', clip: 'rgba(59,130,246,0.35)', clipHover: 'rgba(59,130,246,0.5)' },
-  dialogue:  { bg: 'rgba(168,85,247,0.06)', border: 'rgba(168,85,247,0.2)', text: '#c084fc', clip: 'rgba(168,85,247,0.35)', clipHover: 'rgba(168,85,247,0.5)' },
-  sfx:       { bg: 'rgba(34,197,94,0.06)',  border: 'rgba(34,197,94,0.2)',  text: '#4ade80', clip: 'rgba(34,197,94,0.35)',  clipHover: 'rgba(34,197,94,0.5)' },
-  music:     { bg: 'rgba(251,146,60,0.06)', border: 'rgba(251,146,60,0.2)', text: '#fb923c', clip: 'rgba(251,146,60,0.35)', clipHover: 'rgba(251,146,60,0.5)' },
-  imported:  { bg: 'rgba(156,163,175,0.06)', border: 'rgba(156,163,175,0.2)', text: '#9ca3af', clip: 'rgba(156,163,175,0.35)', clipHover: 'rgba(156,163,175,0.5)' },
+// ── Modern track type colors ──
+const TRACK_COLORS: Record<string, { 
+  bg: string; border: string; text: string; 
+  clip: string; clipHover: string; accent: string;
+  gradient: string;
+}> = {
+  narration: { 
+    bg: 'linear-gradient(135deg, rgba(59,130,246,0.08) 0%, rgba(59,130,246,0.02) 100%)', 
+    border: 'rgba(59,130,246,0.15)', 
+    text: '#3b82f6', 
+    clip: 'linear-gradient(135deg, rgba(59,130,246,0.25) 0%, rgba(59,130,246,0.4) 100%)', 
+    clipHover: 'linear-gradient(135deg, rgba(59,130,246,0.35) 0%, rgba(59,130,246,0.5) 100%)',
+    accent: '#1d4ed8',
+    gradient: 'linear-gradient(135deg, #3b82f6, #1d4ed8)'
+  },
+  dialogue:  { 
+    bg: 'linear-gradient(135deg, rgba(168,85,247,0.08) 0%, rgba(168,85,247,0.02) 100%)', 
+    border: 'rgba(168,85,247,0.15)', 
+    text: '#a855f7', 
+    clip: 'linear-gradient(135deg, rgba(168,85,247,0.25) 0%, rgba(168,85,247,0.4) 100%)', 
+    clipHover: 'linear-gradient(135deg, rgba(168,85,247,0.35) 0%, rgba(168,85,247,0.5) 100%)',
+    accent: '#7c3aed',
+    gradient: 'linear-gradient(135deg, #a855f7, #7c3aed)'
+  },
+  sfx:       { 
+    bg: 'linear-gradient(135deg, rgba(34,197,94,0.08) 0%, rgba(34,197,94,0.02) 100%)', 
+    border: 'rgba(34,197,94,0.15)', 
+    text: '#22c55e', 
+    clip: 'linear-gradient(135deg, rgba(34,197,94,0.25) 0%, rgba(34,197,94,0.4) 100%)', 
+    clipHover: 'linear-gradient(135deg, rgba(34,197,94,0.35) 0%, rgba(34,197,94,0.5) 100%)',
+    accent: '#16a34a',
+    gradient: 'linear-gradient(135deg, #22c55e, #16a34a)'
+  },
+  music:     { 
+    bg: 'linear-gradient(135deg, rgba(251,146,60,0.08) 0%, rgba(251,146,60,0.02) 100%)', 
+    border: 'rgba(251,146,60,0.15)', 
+    text: '#fb923c', 
+    clip: 'linear-gradient(135deg, rgba(251,146,60,0.25) 0%, rgba(251,146,60,0.4) 100%)', 
+    clipHover: 'linear-gradient(135deg, rgba(251,146,60,0.35) 0%, rgba(251,146,60,0.5) 100%)',
+    accent: '#ea580c',
+    gradient: 'linear-gradient(135deg, #fb923c, #ea580c)'
+  },
+  imported:  { 
+    bg: 'linear-gradient(135deg, rgba(156,163,175,0.08) 0%, rgba(156,163,175,0.02) 100%)', 
+    border: 'rgba(156,163,175,0.15)', 
+    text: '#9ca3af', 
+    clip: 'linear-gradient(135deg, rgba(156,163,175,0.25) 0%, rgba(156,163,175,0.4) 100%)', 
+    clipHover: 'linear-gradient(135deg, rgba(156,163,175,0.35) 0%, rgba(156,163,175,0.5) 100%)',
+    accent: '#6b7280',
+    gradient: 'linear-gradient(135deg, #9ca3af, #6b7280)'
+  },
 };
 const getTrackColor = (type: string) => TRACK_COLORS[type] || TRACK_COLORS.imported;
 
 const TRACK_ICONS: Record<string, React.ReactNode> = {
-  narration: <Mic size={13} />,
-  dialogue: <Mic size={13} />,
-  sfx: <Zap size={13} />,
-  music: <Music size={13} />,
-  imported: <Upload size={13} />,
+  narration: <Mic size={14} />,
+  dialogue: <Type size={14} />,
+  sfx: <Zap size={14} />,
+  music: <Music size={14} />,
+  imported: <FileAudio size={14} />,
 };
 
 export function TimelinePage() {
@@ -83,6 +130,20 @@ export function TimelinePage() {
   const [snapGridMs, setSnapGridMs] = useState(100);
   const [rippleMode, setRippleMode] = useState(false);
   const [showAdvancedPanel, setShowAdvancedPanel] = useState(false);
+  
+  // Modern timeline features
+  const [waveformVisible, setWaveformVisible] = useState(true);
+  const [gridVisible, setGridVisible] = useState(true);
+  const [showMiniMap, setShowMiniMap] = useState(false);
+  const [miniMapScale, setMiniMapScale] = useState(0.1);
+  const [showTrackEffects, setShowTrackEffects] = useState(false);
+  const [activeTool, setActiveTool] = useState<'select' | 'split' | 'fade' | 'zoom'>('select');
+  const [showTimecode, setShowTimecode] = useState(true);
+  const [timeFormat, setTimeFormat] = useState<'mm:ss' | 'hh:mm:ss' | 'frames'>('mm:ss');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [showClipLabels, setShowClipLabels] = useState(true);
+  const [showClipWaveforms, setShowClipWaveforms] = useState(false);
+  const [trackHeightMode, setTrackHeightMode] = useState<'compact' | 'normal' | 'expanded'>('normal');
 
   // ── Data Loading ──
   const loadTracks = useCallback(async () => {
@@ -742,54 +803,113 @@ export function TimelinePage() {
   // ── RENDER ──
   return (
     <div className="tl-root">
-      {/* ── Transport Bar ── */}
+      {/* ── Modern Transport Bar ── */}
       <div className="tl-transport">
         <div className="tl-transport-left">
-          <button className={`tl-btn tl-btn-play ${playing ? 'active' : ''}`} onClick={togglePlay} title="Space">
-            {playing ? <Pause size={16} /> : <Play size={16} />}
-          </button>
-          <button className="tl-btn" onClick={() => seekTo(0)} title="Home"><SkipBack size={14} /></button>
-          <div className="tl-time">{formatTime(playheadMs)}</div>
+          <div className="tl-transport-playback">
+            <button className={`tl-btn tl-btn-play ${playing ? 'active' : ''}`} onClick={togglePlay} title="Space (Play/Pause)">
+              {playing ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+            <button className="tl-btn tl-btn-secondary" onClick={() => seekTo(0)} title="Home (Go to start)"><SkipBack size={16} /></button>
+            <div className="tl-time-display">
+              <div className="tl-time-current">{formatTimeExtended(playheadMs, timeFormat)}</div>
+              <div className="tl-time-total">/ {formatTimeExtended(totalDuration(), timeFormat)}</div>
+            </div>
+          </div>
+          
+          <div className="tl-transport-tools">
+            <div className={`tl-tool-btn ${activeTool === 'select' ? 'active' : ''}`} onClick={() => setActiveTool('select')} title="Select Tool (V)">
+              <Move size={14} />
+            </div>
+            <div className={`tl-tool-btn ${activeTool === 'split' ? 'active' : ''}`} onClick={() => setActiveTool('split')} title="Split Tool (S)">
+              <Scissors size={14} />
+            </div>
+            <div className={`tl-tool-btn ${activeTool === 'fade' ? 'active' : ''}`} onClick={() => setActiveTool('fade')} title="Fade Tool (F)">
+              <Waves size={14} />
+            </div>
+            <div className={`tl-tool-btn ${activeTool === 'zoom' ? 'active' : ''}`} onClick={() => setActiveTool('zoom')} title="Zoom Tool (Z)">
+              <ZoomIn size={14} />
+            </div>
+          </div>
         </div>
 
         <div className="tl-transport-center">
-          <div className="tl-btn-group">
-            <button className="tl-btn" onClick={undo} disabled={!canUndo} title="Ctrl+Z"><Undo2 size={14} /></button>
-            <button className="tl-btn" onClick={redo} disabled={!canRedo} title="Ctrl+Y"><Redo2 size={14} /></button>
+          <div className="tl-transport-controls">
+            <div className="tl-control-group">
+              <button className="tl-btn tl-btn-icon" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)"><Undo2 size={14} /></button>
+              <button className="tl-btn tl-btn-icon" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Y)"><Redo2 size={14} /></button>
+            </div>
+            
+            <div className="tl-control-group">
+              <button className={`tl-btn tl-btn-icon ${snapEnabled ? 'active' : ''}`} onClick={() => setSnapEnabled(p => !p)} title="Snap (G)">
+                <Magnet size={14} />
+              </button>
+              <button className={`tl-btn tl-btn-icon ${rippleMode ? 'active' : ''}`} onClick={() => setRippleMode(p => !p)} title="Ripple (R)">
+                <Layers size={14} />
+              </button>
+              <button className={`tl-btn tl-btn-icon ${gridVisible ? 'active' : ''}`} onClick={() => setGridVisible(p => !p)} title="Grid (Ctrl+G)">
+                <Grid size={14} />
+              </button>
+              <button className={`tl-btn tl-btn-icon ${waveformVisible ? 'active' : ''}`} onClick={() => setWaveformVisible(p => !p)} title="Waveforms (W)">
+                <BarChart3 size={14} />
+              </button>
+            </div>
+            
+            <div className="tl-control-group">
+              <button className="tl-btn tl-btn-icon" onClick={zoomOut} title="Zoom Out (-)"><ZoomOut size={14} /></button>
+              <div className="tl-zoom-level">{Math.round(pxPerMs * 1000)}%</div>
+              <button className="tl-btn tl-btn-icon" onClick={zoomIn} title="Zoom In (+)"><ZoomIn size={14} /></button>
+            </div>
+            
+            <div className="tl-control-group">
+              <button className="tl-btn tl-btn-icon" onClick={() => setShowQuickAdd(!showQuickAdd)} title="Generate SFX/Music">
+                <Wand2 size={14} />
+              </button>
+              <button className="tl-btn tl-btn-icon" onClick={() => importFileRef.current?.click()} disabled={importing} title="Import Audio">
+                <Upload size={14} />
+              </button>
+              <button className="tl-btn tl-btn-icon" onClick={() => setShowSilenceMenu(!showSilenceMenu)} title="Insert Silence">
+                <Clock size={14} />
+              </button>
+              <button className={`tl-btn tl-btn-icon ${showAdvancedPanel ? 'active' : ''}`} onClick={() => setShowAdvancedPanel(p => !p)} title="Advanced Tools">
+                <Sliders size={14} />
+              </button>
+            </div>
           </div>
-          <div className="tl-divider" />
-          <div className="tl-btn-group">
-            <button className="tl-btn" onClick={zoomOut} title="Zoom out"><ZoomOut size={14} /></button>
-            <button className="tl-btn" onClick={zoomIn} title="Zoom in"><ZoomIn size={14} /></button>
+          
+          <div className="tl-transport-progress">
+            <div className="tl-progress-bar" onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const clickX = e.clientX - rect.left;
+              const percentage = clickX / rect.width;
+              seekTo(totalDuration() * percentage);
+            }}>
+              <div className="tl-progress-fill" style={{ width: `${(playheadMs / totalDuration()) * 100}%` }} />
+              <div className="tl-progress-playhead" style={{ left: `${(playheadMs / totalDuration()) * 100}%` }} />
+            </div>
           </div>
-          <div className="tl-divider" />
-          <button className={`tl-btn tl-toggle ${snapEnabled ? 'on' : ''}`} onClick={() => setSnapEnabled(p => !p)} title="Snap (G)">
-            <Magnet size={13} /> Snap
-          </button>
-          <button className={`tl-btn tl-toggle ${rippleMode ? 'on' : ''}`} onClick={() => setRippleMode(p => !p)} title="Ripple (R)">
-            <Layers size={13} /> Ripple
-          </button>
-          <div className="tl-divider" />
-          <button className="tl-btn" onClick={() => setShowQuickAdd(!showQuickAdd)} title="Generate SFX/Music"><Wand2 size={13} /></button>
-          <button className="tl-btn" onClick={() => importFileRef.current?.click()} disabled={importing} title="Import audio">
-            <Upload size={13} /> {importing && '...'}
-          </button>
-          <input ref={importFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac" onChange={handleImportAudio} hidden aria-label="Import audio file" />
-          <button className="tl-btn" onClick={() => setShowSilenceMenu(!showSilenceMenu)} disabled={insertingSilence} title="Insert silence">
-            <Clock size={13} />
-          </button>
-          <button className={`tl-btn ${showAdvancedPanel ? 'active' : ''}`} onClick={() => setShowAdvancedPanel(p => !p)} title="Advanced tools">
-            <Sliders size={13} />
-          </button>
         </div>
 
         <div className="tl-transport-right">
-          <button className="tl-btn" onClick={handleSave} disabled={saving}><Save size={14} /> {saving ? '...' : 'Save'}</button>
-          {bookId && <a href={downloadProjectUrl(bookId)} className="tl-btn" download><Download size={14} /></a>}
-          <button className="tl-btn tl-btn-render" onClick={handleRender} disabled={rendering}>
-            {rendering ? <Loader size={14} className="spinner" /> : <Play size={14} />} Render
-          </button>
-          <button className="tl-btn" onClick={() => setShowHelp(true)} title="Shortcuts"><HelpCircle size={14} /></button>
+          <div className="tl-transport-actions">
+            <button className="tl-btn tl-btn-primary" onClick={handleSave} disabled={saving}>
+              <Save size={14} /> {saving ? 'Saving...' : 'Save'}
+            </button>
+            {bookId && (
+              <a href={downloadProjectUrl(bookId)} className="tl-btn tl-btn-secondary" download title="Download Project">
+                <Download size={14} />
+              </a>
+            )}
+            <button className="tl-btn tl-btn-accent" onClick={handleRender} disabled={rendering}>
+              {rendering ? <Loader size={14} className="spinner" /> : <Play size={14} />} Render
+            </button>
+            <button className="tl-btn tl-btn-icon" onClick={() => setShowHelp(true)} title="Keyboard Shortcuts (?)">
+              <HelpCircle size={14} />
+            </button>
+            <button className="tl-btn tl-btn-icon" onClick={() => setShowMiniMap(p => !p)} title="Minimap">
+              {showMiniMap ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -1110,6 +1230,34 @@ function formatTime(ms: number): string {
   return `${m}:${String(sec).padStart(2, '0')}.${frac}`;
 }
 
+function formatTimeExtended(ms: number, format: 'mm:ss' | 'hh:mm:ss' | 'frames' = 'mm:ss'): string {
+  const totalSeconds = ms / 1000;
+  
+  if (format === 'frames') {
+    const fps = 30; // Standard video frame rate
+    const totalFrames = Math.round(totalSeconds * fps);
+    const minutes = Math.floor(totalFrames / (fps * 60));
+    const seconds = Math.floor((totalFrames % (fps * 60)) / fps);
+    const frames = totalFrames % fps;
+    return `${minutes}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
+  }
+  
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  const milliseconds = Math.floor((ms % 1000) / 10);
+  
+  if (format === 'hh:mm:ss') {
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  }
+  
+  // mm:ss format
+  return `${minutes}:${String(seconds).padStart(2, '0')}.${String(milliseconds).padStart(2, '0')}`;
+}
+
 const timelineStyles = `
 /* ── Root ── */
 .tl-root {
@@ -1120,40 +1268,260 @@ const timelineStyles = `
   background: var(--bg-deep);
 }
 
-/* ── Transport Bar ── */
+/* ── Modern Transport Bar ── */
 .tl-transport {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 16px;
-  background: var(--bg-surface);
-  border-bottom: 1px solid var(--border-default);
-  gap: 12px;
+  padding: 12px 20px;
+  background: linear-gradient(180deg, var(--bg-surface) 0%, var(--bg-deep) 100%);
+  border-bottom: 1px solid var(--border-strong);
+  gap: 16px;
   flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  z-index: 20;
+}
+
+.tl-transport-left {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  min-width: 280px;
+}
+
+.tl-transport-playback {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-elevated);
+  padding: 6px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+}
+
+.tl-btn-play {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: white;
+  border: none;
+  box-shadow: 0 2px 8px rgba(91, 141, 239, 0.3);
+  transition: all 0.2s ease;
+}
+
+.tl-btn-play:hover:not(:disabled) {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(91, 141, 239, 0.4);
+}
+
+.tl-btn-play.active {
+  background: linear-gradient(135deg, var(--warning), #dc2626);
+}
+
+.tl-btn-secondary {
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+
+.tl-time-display {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  font-family: 'SF Mono', 'Cascadia Code', monospace;
+  margin-left: 8px;
+}
+
+.tl-time-current {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.tl-time-total {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  opacity: 0.7;
+}
+
+.tl-transport-tools {
+  display: flex;
+  gap: 4px;
+  background: var(--bg-elevated);
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+}
+
+.tl-tool-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tl-tool-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tl-tool-btn.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(91, 141, 239, 0.2);
+}
+
+.tl-transport-center {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.tl-transport-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
   flex-wrap: wrap;
 }
-.tl-transport-left, .tl-transport-center, .tl-transport-right {
+
+.tl-control-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--bg-elevated);
+  padding: 4px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+}
+
+.tl-btn-icon {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-tertiary);
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.tl-btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.tl-btn-icon.active {
+  background: var(--accent-subtle);
+  color: var(--accent);
+}
+
+.tl-zoom-level {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: center;
+  font-family: 'SF Mono', monospace;
+}
+
+.tl-transport-progress {
+  width: 100%;
+  height: 6px;
+}
+
+.tl-progress-bar {
+  width: 100%;
+  height: 100%;
+  background: var(--bg-deep);
+  border-radius: 3px;
+  position: relative;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.tl-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  border-radius: 3px;
+}
+
+.tl-progress-playhead {
+  position: absolute;
+  top: 0;
+  width: 2px;
+  height: 100%;
+  background: white;
+  box-shadow: 0 0 4px rgba(255, 255, 255, 0.8);
+  transform: translateX(-1px);
+  z-index: 2;
+}
+
+.tl-transport-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+  justify-content: flex-end;
+}
+
+.tl-transport-actions {
   display: flex;
   align-items: center;
   gap: 6px;
 }
-.tl-transport-center { flex-wrap: wrap; }
 
-.tl-time {
-  font-family: 'SF Mono', 'Cascadia Code', monospace;
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--accent);
-  min-width: 72px;
-  padding: 0 8px;
-  letter-spacing: 0.5px;
+.tl-btn-primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 13px;
+  box-shadow: 0 2px 6px rgba(91, 141, 239, 0.3);
 }
 
-.tl-divider {
-  width: 1px;
-  height: 20px;
-  background: var(--border-default);
-  margin: 0 4px;
+.tl-btn-primary:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(91, 141, 239, 0.4);
+}
+
+.tl-btn-accent {
+  background: linear-gradient(135deg, var(--success), #16a34a);
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-weight: 500;
+  font-size: 13px;
+  box-shadow: 0 2px 6px rgba(34, 197, 94, 0.3);
+}
+
+.tl-btn-accent:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(34, 197, 94, 0.4);
 }
 
 /* ── Buttons ── */

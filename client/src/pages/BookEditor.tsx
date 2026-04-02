@@ -23,8 +23,6 @@ export function BookEditor() {
   const location = useLocation();
   const { setCurrentBook, setCapabilities } = useAppStore();
   const [book, setBook] = useState<Book | null>(null);
-
-  // Real workflow progress tracking
   const [stepsDone, setStepsDone] = useState<boolean[]>(new Array(9).fill(false));
 
   const checkWorkflowProgress = useCallback(async () => {
@@ -32,38 +30,19 @@ export function BookEditor() {
     const done = new Array(9).fill(false);
     try {
       const chapterList = await chaptersApi.list(bookId);
-      // Step 1: Has chapters with text
       done[0] = chapterList.length > 0;
-
-      // Step 2: Has characters with voices assigned
       const charList = await charsApi.list(bookId);
       done[1] = charList.some((c: any) => c.voice_id);
-
-      // Step 3: Pronunciation is optional, mark done if voices exist
       done[2] = done[1];
-
-      // Step 4: Audio studio is optional, mark done if voices assigned
       done[3] = done[1];
-
-      // Step 5: Generation - check if any chapter has audio
       const hasAudio = chapterList.some((ch: any) => ch.stats?.with_audio > 0);
       done[4] = hasAudio;
-
-      // Step 6: BG Boost is optional, mark done if voices assigned
       done[5] = done[1];
-
-      // Step 7: Has tracks with clips on timeline
       const trackList = await timelineApi.tracks(bookId);
       const hasClips = trackList.some((t: any) => t.clips && t.clips.length > 0);
       done[6] = hasClips;
-
-      // Step 8: QC/Render - check if any chapter has audio stats
       done[7] = hasAudio && hasClips;
-
-      // Step 9: Export - we can't easily check, leave false
-    } catch {
-      // Silently fail - progress indicators are non-critical
-    }
+    } catch { /* progress indicators are non-critical */ }
     setStepsDone(done);
   }, [bookId]);
 
@@ -75,10 +54,7 @@ export function BookEditor() {
     return () => setCurrentBook(null);
   }, [bookId, checkWorkflowProgress]);
 
-  // Re-check progress when navigating between steps
-  useEffect(() => {
-    checkWorkflowProgress();
-  }, [location.pathname, checkWorkflowProgress]);
+  useEffect(() => { checkWorkflowProgress(); }, [location.pathname, checkWorkflowProgress]);
 
   if (!book) return (
     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-deep)', color: 'var(--text-tertiary)' }}>
@@ -87,21 +63,15 @@ export function BookEditor() {
   );
 
   const isPodcast = book.project_type === 'podcast';
-
-  // Determine current step index for progress indicator
-  const pathSegments = location.pathname.split('/');
-  const lastSegment = pathSegments[pathSegments.length - 1];
-  const currentStepIdx = STEPS.findIndex((s) =>
-    s.to === '' ? (lastSegment === bookId) : lastSegment === s.to
-  );
+  const completedCount = stepsDone.filter(Boolean).length;
 
   return (
     <div style={styles.layout}>
       <nav style={styles.sidebar} aria-label="Project editor navigation">
         <button onClick={() => navigate('/')} style={styles.backBtn}>
-          <ArrowLeft size={14} />
+          <ArrowLeft size={13} />
           <span>Projects</span>
-          <ChevronRight size={10} style={{ opacity: 0.4 }} />
+          <ChevronRight size={10} style={{ opacity: 0.3 }} />
           <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {book.title.length > 16 ? book.title.slice(0, 16) + '…' : book.title}
           </span>
@@ -124,12 +94,17 @@ export function BookEditor() {
           )}
         </div>
 
-        <div style={styles.stepsLabel}>
-          <span>WORKFLOW</span>
-          <span style={styles.stepProgress}>
-            {stepsDone.filter(Boolean).length}/{STEPS.length} done
-          </span>
+        {/* Progress bar */}
+        <div style={styles.progressSection}>
+          <div style={styles.progressHeader}>
+            <span style={styles.stepsLabel}>WORKFLOW</span>
+            <span style={styles.stepProgress}>{completedCount}/{STEPS.length}</span>
+          </div>
+          <div style={styles.progressTrack}>
+            <div style={{ ...styles.progressFill, width: `${(completedCount / STEPS.length) * 100}%` }} />
+          </div>
         </div>
+
         <div style={styles.navList} className="stagger-children">
           {STEPS.map((item, idx) => (
             <NavLink
@@ -155,7 +130,7 @@ export function BookEditor() {
                       ...styles.navLabel,
                       color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
                     }}>
-                      <item.icon size={14} style={{ opacity: isActive ? 1 : 0.5 }} />
+                      <item.icon size={13} style={{ opacity: isActive ? 1 : 0.5 }} />
                       {isPodcast ? item.podcastLabel : item.label}
                     </div>
                     <div style={{
@@ -174,7 +149,7 @@ export function BookEditor() {
         <div style={styles.sidebarFooter}>
           <NavLink to={`/book/${bookId}/usage`} style={({ isActive }) => ({
             ...styles.footerLink,
-            ...(isActive ? { color: 'var(--accent)', borderColor: 'rgba(91,141,239,0.3)', background: 'var(--accent-subtle)' } : {}),
+            ...(isActive ? { color: 'var(--accent)', borderColor: 'var(--border-accent)', background: 'var(--accent-subtle)' } : {}),
           })}>
             <BarChart3 size={13} /> Usage & Costs
           </NavLink>
@@ -186,7 +161,7 @@ export function BookEditor() {
             <span style={styles.tipText}>
               {isPodcast
                 ? 'Import your script, AI assigns speakers, then generate audio'
-                : 'Follow steps 1→7 to produce your audiobook'}
+                : 'Follow steps 1→9 to produce your audiobook'}
             </span>
           </div>
         </div>
@@ -201,7 +176,7 @@ export function BookEditor() {
 const styles: Record<string, React.CSSProperties> = {
   layout: { display: 'flex', minHeight: '100vh', background: 'var(--bg-deep)' },
   sidebar: {
-    width: 248, background: 'var(--bg-base)', padding: '10px 0',
+    width: 252, background: 'var(--bg-base)', padding: '10px 0',
     display: 'flex', flexDirection: 'column',
     borderRight: '1px solid var(--border-subtle)', flexShrink: 0,
     overflow: 'hidden',
@@ -214,36 +189,44 @@ const styles: Record<string, React.CSSProperties> = {
   },
   bookInfo: {
     padding: '10px 16px 14px', borderBottom: '1px solid var(--border-subtle)',
-    marginBottom: 4, display: 'flex', flexDirection: 'column', gap: 6,
+    display: 'flex', flexDirection: 'column', gap: 6,
   },
   typeBadge: {
-    fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 500,
+    fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 600,
     alignSelf: 'flex-start',
   },
   bookTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 },
   bookAuthor: { fontSize: 11, color: 'var(--text-tertiary)' },
+  progressSection: {
+    padding: '12px 16px 8px',
+  },
+  progressHeader: {
+    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+    marginBottom: 6,
+  },
   stepsLabel: {
     fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, fontWeight: 600,
-    padding: '12px 16px 6px',
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
   },
   stepProgress: {
     fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: 0, fontWeight: 500,
     background: 'var(--bg-elevated)', padding: '1px 7px', borderRadius: 10,
   },
-  navList: { display: 'flex', flexDirection: 'column', gap: 2, flex: 1, padding: '0 8px', overflowY: 'auto' },
+  progressTrack: {
+    height: 3, background: 'var(--bg-elevated)', borderRadius: 2, overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%', borderRadius: 2,
+    background: 'var(--accent-gradient)',
+    transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
+  },
+  navList: { display: 'flex', flexDirection: 'column', gap: 1, flex: 1, padding: '4px 8px', overflowY: 'auto' },
   navItem: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px',
+    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
     textDecoration: 'none', cursor: 'pointer', borderRadius: 'var(--radius-md)',
-    transition: 'all 150ms ease',
-    position: 'relative',
+    transition: 'all 150ms ease', position: 'relative',
   },
   navItemActive: {
     background: 'var(--accent-subtle)',
-  },
-  activeIndicator: {
-    position: 'absolute', left: 0, top: '20%', bottom: '20%', width: 3,
-    borderRadius: 2, background: 'var(--accent)',
   },
   stepNumber: {
     width: 22, height: 22, borderRadius: '50%', background: 'var(--bg-elevated)',
@@ -254,11 +237,11 @@ const styles: Record<string, React.CSSProperties> = {
   stepNumberActive: {
     background: 'var(--accent)', color: '#fff',
     border: '1.5px solid var(--accent)',
-    boxShadow: '0 0 8px var(--accent-glow)',
+    boxShadow: '0 0 10px var(--accent-glow)',
   },
   stepNumberDone: {
     background: 'var(--success-subtle)', color: 'var(--success)',
-    border: '1.5px solid rgba(74, 222, 128, 0.3)',
+    border: '1.5px solid rgba(74, 222, 128, 0.25)',
     fontSize: 9,
   },
   navContent: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
@@ -277,7 +260,7 @@ const styles: Record<string, React.CSSProperties> = {
   tipBox: {
     display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 10px',
     background: 'var(--accent-subtle)', borderRadius: 'var(--radius-md)',
-    border: '1px solid rgba(91,141,239,0.1)',
+    border: '1px solid rgba(91,141,239,0.08)',
   },
   tipText: { fontSize: 10, color: 'var(--accent)', lineHeight: 1.4 },
   main: { flex: 1, overflow: 'auto', background: 'var(--bg-deep)' },

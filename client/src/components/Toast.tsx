@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { create } from 'zustand';
 import { CheckCircle, AlertTriangle, XCircle, Info, X } from 'lucide-react';
 
@@ -31,7 +31,6 @@ export const useToastStore = create<ToastStore>((set) => ({
   remove: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
 }));
 
-// Convenience functions for use anywhere (no hook needed)
 export const toast = {
   success: (msg: string, duration?: number) => useToastStore.getState().add('success', msg, duration),
   error: (msg: string, duration?: number) => useToastStore.getState().add('error', msg, duration ?? 6000),
@@ -46,11 +45,11 @@ const ICONS: Record<ToastType, React.ReactNode> = {
   info: <Info size={16} />,
 };
 
-const COLORS: Record<ToastType, { bg: string; border: string; text: string }> = {
-  success: { bg: 'rgba(74, 222, 128, 0.1)', border: 'rgba(74, 222, 128, 0.25)', text: '#4ade80' },
-  error: { bg: 'rgba(248, 113, 113, 0.1)', border: 'rgba(248, 113, 113, 0.25)', text: '#f87171' },
-  warning: { bg: 'rgba(251, 191, 36, 0.1)', border: 'rgba(251, 191, 36, 0.25)', text: '#fbbf24' },
-  info: { bg: 'rgba(91, 141, 239, 0.1)', border: 'rgba(91, 141, 239, 0.25)', text: '#5b8def' },
+const COLORS: Record<ToastType, { bg: string; border: string; text: string; glow: string }> = {
+  success: { bg: 'rgba(74, 222, 128, 0.08)', border: 'rgba(74, 222, 128, 0.20)', text: '#4ade80', glow: 'rgba(74, 222, 128, 0.06)' },
+  error: { bg: 'rgba(248, 113, 113, 0.08)', border: 'rgba(248, 113, 113, 0.20)', text: '#f87171', glow: 'rgba(248, 113, 113, 0.06)' },
+  warning: { bg: 'rgba(251, 191, 36, 0.08)', border: 'rgba(251, 191, 36, 0.20)', text: '#fbbf24', glow: 'rgba(251, 191, 36, 0.06)' },
+  info: { bg: 'rgba(91, 141, 239, 0.08)', border: 'rgba(91, 141, 239, 0.20)', text: '#5b8def', glow: 'rgba(91, 141, 239, 0.06)' },
 };
 
 function ToastItem({ t, onRemove }: { t: Toast; onRemove: () => void }) {
@@ -67,11 +66,11 @@ function ToastItem({ t, onRemove }: { t: Toast; onRemove: () => void }) {
       role="alert"
       style={{
         display: 'flex', alignItems: 'center', gap: 10,
-        padding: '10px 14px', borderRadius: 10,
+        padding: '11px 14px', borderRadius: 12,
         background: c.bg, border: `1px solid ${c.border}`,
         color: c.text, fontSize: 13, fontWeight: 500,
-        backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)',
-        boxShadow: '0 4px 20px rgba(0,0,0,0.3)',
+        backdropFilter: 'blur(16px)', WebkitBackdropFilter: 'blur(16px)',
+        boxShadow: `0 8px 32px rgba(0,0,0,0.3), 0 0 24px ${c.glow}`,
         animation: exiting ? 'toastOut 200ms ease forwards' : 'toastIn 250ms ease both',
         maxWidth: 420, lineHeight: 1.4,
       }}
@@ -82,7 +81,7 @@ function ToastItem({ t, onRemove }: { t: Toast; onRemove: () => void }) {
         onClick={handleRemove}
         style={{
           background: 'none', border: 'none', color: c.text, cursor: 'pointer',
-          padding: 2, opacity: 0.6, flexShrink: 0,
+          padding: 2, opacity: 0.5, flexShrink: 0,
         }}
         aria-label="Dismiss"
       >

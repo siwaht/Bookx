@@ -32,39 +32,43 @@ export function TopNav() {
       <div style={styles.left}>
         <button onClick={() => navigate('/')} style={styles.logo} aria-label="Home">
           <div style={styles.logoIcon}>
-            <Headphones size={18} color="var(--accent)" />
+            <Headphones size={17} color="var(--accent)" />
           </div>
           <span style={styles.logoText}>Audio Producer</span>
         </button>
+        <div style={styles.divider} />
         <div style={styles.links}>
-          {NAV_ITEMS.map((item) => (
-            <button
-              key={item.path}
-              onClick={() => navigate(item.path)}
-              style={{
-                ...styles.link,
-                ...(isActive(item.path) ? styles.linkActive : {}),
-              }}
-              aria-current={isActive(item.path) ? 'page' : undefined}
-            >
-              <item.icon size={15} />
-              {item.label}
-            </button>
-          ))}
+          {NAV_ITEMS.map((item) => {
+            const active = isActive(item.path);
+            return (
+              <button
+                key={item.path}
+                onClick={() => navigate(item.path)}
+                style={{
+                  ...styles.link,
+                  ...(active ? styles.linkActive : {}),
+                }}
+                aria-current={active ? 'page' : undefined}
+              >
+                <item.icon size={14} style={{ opacity: active ? 1 : 0.6 }} />
+                {item.label}
+              </button>
+            );
+          })}
         </div>
       </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={styles.right}>
         <button
           onClick={toggleTheme}
-          style={styles.themeBtn}
+          style={styles.iconBtn}
           title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
           aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+          {theme === 'dark' ? <Sun size={14} /> : <Moon size={14} />}
         </button>
         <button onClick={handleLogout} style={styles.logoutBtn} title="Log out" aria-label="Log out">
-          <LogOut size={15} />
-          <span style={styles.logoutLabel}>Log out</span>
+          <LogOut size={14} />
+          <span>Log out</span>
         </button>
       </div>
     </nav>
@@ -82,16 +86,18 @@ const styles: Record<string, React.CSSProperties> = {
     borderBottom: '1px solid var(--border-subtle)',
     flexShrink: 0,
     zIndex: 50,
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
   },
   left: {
     display: 'flex',
     alignItems: 'center',
-    gap: 24,
+    gap: 16,
   },
   logo: {
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
+    gap: 9,
     background: 'none',
     border: 'none',
     cursor: 'pointer',
@@ -100,17 +106,23 @@ const styles: Record<string, React.CSSProperties> = {
   logoIcon: {
     width: 30,
     height: 30,
-    borderRadius: '50%',
+    borderRadius: 8,
     background: 'var(--accent-subtle)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
+    border: '1px solid rgba(91, 141, 239, 0.15)',
   },
   logoText: {
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: 600,
     color: 'var(--text-primary)',
-    letterSpacing: '-0.3px',
+    letterSpacing: '-0.4px',
+  },
+  divider: {
+    width: 1,
+    height: 20,
+    background: 'var(--border-default)',
   },
   links: {
     display: 'flex',
@@ -121,7 +133,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 6,
-    padding: '6px 14px',
+    padding: '6px 12px',
     background: 'none',
     border: 'none',
     borderRadius: 'var(--radius-md)',
@@ -129,10 +141,28 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     fontSize: 13,
     fontWeight: 500,
+    position: 'relative' as const,
   },
   linkActive: {
     background: 'var(--accent-subtle)',
     color: 'var(--accent)',
+  },
+  right: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  iconBtn: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 32,
+    height: 32,
+    background: 'none',
+    border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-md)',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
   },
   logoutBtn: {
     display: 'flex',
@@ -145,20 +175,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     cursor: 'pointer',
     fontSize: 12,
-  },
-  themeBtn: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: 32,
-    height: 32,
-    background: 'none',
-    border: '1px solid var(--border-subtle)',
-    borderRadius: 'var(--radius-md)',
-    color: 'var(--text-secondary)',
-    cursor: 'pointer',
-  },
-  logoutLabel: {
-    fontSize: 12,
+    fontWeight: 500,
   },
 };

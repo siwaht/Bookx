@@ -112,15 +112,18 @@ export function KeyboardShortcutsDialog({ onClose }: { onClose: () => void }) {
 
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
-    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+    position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    zIndex: 1000, backdropFilter: 'blur(4px)',
+    zIndex: 1000, backdropFilter: 'blur(8px)',
+    WebkitBackdropFilter: 'blur(8px)',
   },
   dialog: {
-    background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)',
-    border: '1px solid var(--border-subtle)', boxShadow: 'var(--shadow-lg)',
+    background: 'var(--glass-bg)', borderRadius: 'var(--radius-xl)',
+    border: '1px solid var(--glass-border)', boxShadow: 'var(--shadow-xl)',
     width: 420, maxHeight: '80vh', display: 'flex', flexDirection: 'column',
     animation: 'fadeInScale 200ms ease both',
+    backdropFilter: 'blur(24px)',
+    WebkitBackdropFilter: 'blur(24px)',
   },
   header: {
     display: 'flex', justifyContent: 'space-between', alignItems: 'center',

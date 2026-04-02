@@ -383,7 +383,7 @@ export function GenerationPage() {
             {jobs.filter(j => j.id !== activeJob?.id).slice(0, 5).map((j: any) => (
               <div key={j.id} style={S.historyRow}>
                 <span style={{ ...S.statusDot, background: j.status === 'completed' ? '#4ade80' : j.status === 'failed' ? '#ef4444' : '#fbbf24' }} />
-                <span style={{ fontSize: 12, color: '#ccc', minWidth: 70 }}>{j.scope === 'book' ? 'Full Book' : j.scope === 'chapter' ? 'Chapters' : 'Segments'}</span>
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 70 }}>{j.scope === 'book' ? 'Full Book' : j.scope === 'chapter' ? 'Chapters' : 'Segments'}</span>
                 <span style={{ fontSize: 11, color: '#666', flex: 1 }}>
                   {j.completed_segments + j.cached_segments}/{j.total_segments} done
                   {j.failed_segments > 0 && `, ${j.failed_segments} failed`}
@@ -402,11 +402,11 @@ export function GenerationPage() {
 }
 
 const S: Record<string, any> = {
-  container: { padding: '24px 24px 48px', maxWidth: 900, margin: '0 auto' },
-  loading: { display: 'flex', alignItems: 'center', gap: 8, color: '#888', padding: 40, justifyContent: 'center' },
+  container: { padding: '28px 28px 48px', maxWidth: 900, margin: '0 auto' },
+  loading: { display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)', padding: 40, justifyContent: 'center' },
   header: { marginBottom: 24 },
-  title: { fontSize: 18, fontWeight: 600, color: '#eee', display: 'flex', alignItems: 'center', gap: 8, margin: 0 },
-  subtitle: { fontSize: 12, color: '#888', marginTop: 4, margin: 0 },
+  title: { fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', display: 'flex', alignItems: 'center', gap: 8, margin: 0, letterSpacing: '-0.3px' },
+  subtitle: { fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4, margin: 0 },
 
   // Stats cards
   cards: { display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 24 },

@@ -144,7 +144,7 @@ export function UsagePage() {
               <div style={S.activityList}>
                 {local.recent_activity.map((a, i) => (
                   <div key={i} style={S.activityRow}>
-                    <Clock size={10} color="#444" />
+                    <Clock size={10} color="var(--text-muted)" />
                     <span style={S.activityAction}>{a.action.replace('_', ' ')}</span>
                     {a.characters_used > 0 && <span style={S.activityChars}>{a.characters_used} chars</span>}
                     <span style={S.activityTime}>{new Date(a.created_at).toLocaleString()}</span>

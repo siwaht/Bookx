@@ -434,7 +434,7 @@ export function AudioStudioPage() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <label style={{ fontSize: 12, color: '#aaa', fontWeight: 600 }}>Audiobook</label>
+              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>Audiobook</label>
               <div style={styles.presetGrid}>
                 {INTRO_OUTRO_PRESETS.filter(p => !p.label.includes('Podcast') && !p.label.includes('Dramatic') && !p.label.includes('Ambient')).map((preset) => (
                   <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
@@ -448,7 +448,7 @@ export function AudioStudioPage() {
                 ))}
               </div>
 
-              <label style={{ fontSize: 12, color: '#aaa', fontWeight: 600, marginTop: 8 }}>Podcast</label>
+              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginTop: 8 }}>Podcast</label>
               <div style={styles.presetGrid}>
                 {INTRO_OUTRO_PRESETS.filter(p => p.label.includes('Podcast')).map((preset) => (
                   <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
@@ -462,7 +462,7 @@ export function AudioStudioPage() {
                 ))}
               </div>
 
-              <label style={{ fontSize: 12, color: '#aaa', fontWeight: 600, marginTop: 8 }}>Special</label>
+              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginTop: 8 }}>Special</label>
               <div style={styles.presetGrid}>
                 {INTRO_OUTRO_PRESETS.filter(p => p.label.includes('Dramatic') || p.label.includes('Ambient')).map((preset) => (
                   <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
@@ -568,7 +568,7 @@ export function AudioStudioPage() {
               </p>
             </div>
 
-            {libraryLoading && <div style={{ color: '#888', fontSize: 12 }}><Loader size={14} /> Loading...</div>}
+            {libraryLoading && <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}><Loader size={14} /> Loading...</div>}
 
             {!libraryLoading && libraryAssets.length === 0 && (
               <div style={{ padding: 24, textAlign: 'center', color: '#555', fontSize: 13 }}>

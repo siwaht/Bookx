@@ -3,11 +3,12 @@ import { useParams } from 'react-router-dom';
 import { backgroundBoost, chapters as chaptersApi } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import { toast } from '../components/Toast';
-import type { BoostScene, BoostAmbience, BoostSFX, Chapter } from '../types';
+import type { BoostScene, BoostAmbience, BoostSFX, BoostPreset, BoostTransition, Chapter } from '../types';
 import {
   Sparkles, Music, Trash2, ChevronDown, ChevronRight,
   Loader2, Zap, Check, Brain, Film, Waves, AudioLines, Play,
   RotateCcw, CheckCircle2, Layers, SlidersHorizontal,
+  ArrowRightLeft, Volume2, VolumeX, Clapperboard,
 } from 'lucide-react';
 
 /* ── Mood color + icon maps ── */
@@ -24,6 +25,30 @@ const MOOD_ICONS: Record<string, string> = {
 };
 const DEFAULT_MOOD_COLOR = '#6366F1';
 const DEFAULT_MOOD_ICON = '🎵';
+
+/* ── Preset labels + icons ── */
+const PRESET_LABELS: Record<string, { icon: string; label: string; desc: string }> = {
+  dialogue_heavy: { icon: '💬', label: 'Dialogue', desc: 'Conversation-focused, music low' },
+  action_sequence: { icon: '💥', label: 'Action', desc: 'Fast-paced, loud SFX, driving music' },
+  quiet_tension: { icon: '🤫', label: 'Tension', desc: 'Near-silence, sparse sounds, low drone' },
+  exploration: { icon: '🧭', label: 'Explore', desc: 'Moderate ambience, curious music' },
+  emotional_climax: { icon: '😭', label: 'Climax', desc: 'Swelling music, minimal SFX' },
+  establishing_shot: { icon: '🎬', label: 'Establish', desc: 'Rich ambience, scene-setting' },
+  chase: { icon: '🏃', label: 'Chase', desc: 'Urgent music, running, breathing' },
+  battle: { icon: '⚔️', label: 'Battle', desc: 'Layered SFX chaos, war drums' },
+  intimate: { icon: '🤝', label: 'Intimate', desc: 'Very quiet, close sounds' },
+  comedic: { icon: '😄', label: 'Comedy', desc: 'Playful music, exaggerated SFX' },
+  horror: { icon: '👻', label: 'Horror', desc: 'Silence, stingers, whispers' },
+  montage: { icon: '🎞️', label: 'Montage', desc: 'Music-driven, quick SFX hits' },
+};
+
+const TRANSITION_LABELS: Record<string, { icon: string; label: string }> = {
+  crossfade: { icon: '🔀', label: 'Crossfade' },
+  hard_cut: { icon: '✂️', label: 'Hard Cut' },
+  sting: { icon: '⚡', label: 'Sting' },
+  fade_to_silence: { icon: '🔇', label: 'Fade → Silence' },
+  swell: { icon: '🌊', label: 'Swell' },
+};
 
 /* ── Provider / model metadata ── */
 interface ProviderMeta {
@@ -67,6 +92,8 @@ export function BackgroundBoostPage() {
     ambience: scenes.reduce((sum, s) => sum + (s.ambience?.length || 0), 0),
     music: scenes.filter((s) => s.music_prompt).length,
     generated: scenes.filter((s) => s.status === 'generated').length,
+    ducking: scenes.filter((s) => s.duck_during_dialogue).length,
+    transitions: scenes.filter((s) => s.transition_to_next && s.transition_to_next !== 'crossfade').length,
   }), [scenes]);
 
   /* ── Data loading ── */
@@ -239,7 +266,7 @@ export function BackgroundBoostPage() {
           <div style={{ flex: 1 }}>
             <h1 style={S.heroTitle}>Background Boost</h1>
             <p style={S.heroSub}>
-              AI-powered cinematic sound design — music, ambience, and SFX crafted from your scenes
+              AI-powered cinematic sound design — music, ambience, SFX, transitions, and ducking crafted from your scenes
             </p>
           </div>
           {scenes.length > 0 && (
@@ -264,6 +291,9 @@ export function BackgroundBoostPage() {
             <StatPill icon={<Music size={12} />} label="Music" value={stats.music} color="#8B5CF6" />
             <StatPill icon={<Waves size={12} />} label="Ambient" value={stats.ambience} color="#10B981" />
             <StatPill icon={<AudioLines size={12} />} label="SFX" value={stats.sfx} color="#F59E0B" />
+            {stats.ducking > 0 && (
+              <StatPill icon={<VolumeX size={12} />} label="Ducking" value={stats.ducking} color="#6366F1" />
+            )}
             <StatPill icon={<CheckCircle2 size={12} />} label="Generated" value={stats.generated} color="var(--success)" />
           </div>
         )}
@@ -283,6 +313,10 @@ export function BackgroundBoostPage() {
             <FeatureTag icon="🌿" label="Ambient layers" />
             <FeatureTag icon="🔊" label="Sound effects" />
             <FeatureTag icon="🎭" label="Mood detection" />
+            <FeatureTag icon="🔀" label="Scene transitions" />
+            <FeatureTag icon="🔉" label="Auto-ducking" />
+            <FeatureTag icon="🎬" label="Scene presets" />
+            <FeatureTag icon="💬" label="Dialogue-aware" />
           </div>
         </div>
 
@@ -617,6 +651,8 @@ function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSele
   onDelete: () => void; onUpdate: (updates: Partial<BoostScene>) => void;
 }) {
   const moodColor = MOOD_COLORS[scene.mood] || DEFAULT_MOOD_COLOR;
+  const presetInfo = PRESET_LABELS[scene.preset] || PRESET_LABELS.establishing_shot;
+  const transitionInfo = TRANSITION_LABELS[scene.transition_to_next] || TRANSITION_LABELS.crossfade;
 
   const updateAmbienceVolume = (index: number, volume: number) => {
     const updated = [...scene.ambience];
@@ -666,6 +702,9 @@ function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSele
             <span style={{ ...S.moodBadge, background: `${moodColor}18`, color: moodColor }}>
               {scene.mood}
             </span>
+            <span style={{ ...S.tag, background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontSize: 9 }}>
+              {presetInfo.icon} {presetInfo.label}
+            </span>
             <IntensityBar value={scene.intensity} color={moodColor} />
             <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
               Seg {scene.segment_start}–{scene.segment_end}
@@ -689,9 +728,22 @@ function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSele
               <AudioLines size={9} /> {scene.sfx.length}
             </span>
           )}
+          {scene.duck_during_dialogue && (
+            <span style={{ ...S.tag, background: '#6366F118', color: '#6366F1' }}>
+              <VolumeX size={9} /> Duck
+            </span>
+          )}
+          <span style={{ ...S.tag, background: 'var(--bg-elevated)', color: 'var(--text-muted)', fontSize: 9 }}>
+            {transitionInfo.icon} {transitionInfo.label}
+          </span>
           {scene.status === 'generated' && (
             <span style={{ ...S.tag, background: 'var(--success-subtle)', color: 'var(--success)' }}>
               <CheckCircle2 size={9} /> Done
+            </span>
+          )}
+          {scene.status === 'partial' && (
+            <span style={{ ...S.tag, background: '#F59E0B18', color: '#F59E0B' }}>
+              ⚠️ Partial
             </span>
           )}
         </div>
@@ -711,6 +763,92 @@ function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSele
 
       {isExpanded && (
         <div style={S.sceneBody}>
+          {/* Scene Settings: Preset, Transition, Ducking */}
+          <div style={S.sceneSettingsRow}>
+            <div style={S.settingGroup}>
+              <label style={S.fieldLabel}><Clapperboard size={10} /> Preset</label>
+              <select
+                value={scene.preset || 'establishing_shot'}
+                onChange={(e) => onUpdate({ preset: e.target.value as BoostPreset })}
+                style={S.selectSmall}
+                aria-label="Scene preset"
+              >
+                {Object.entries(PRESET_LABELS).map(([key, info]) => (
+                  <option key={key} value={key}>{info.icon} {info.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={S.settingGroup}>
+              <label style={S.fieldLabel}><ArrowRightLeft size={10} /> Transition</label>
+              <select
+                value={scene.transition_to_next || 'crossfade'}
+                onChange={(e) => onUpdate({ transition_to_next: e.target.value as BoostTransition })}
+                style={S.selectSmall}
+                aria-label="Scene transition"
+              >
+                {Object.entries(TRANSITION_LABELS).map(([key, info]) => (
+                  <option key={key} value={key}>{info.icon} {info.label}</option>
+                ))}
+              </select>
+            </div>
+            <div style={S.settingGroup}>
+              <label style={S.fieldLabel}>⏱️ Duration</label>
+              <input
+                type="number"
+                value={scene.transition_duration_ms || 2000}
+                min={0}
+                max={10000}
+                step={250}
+                onChange={(e) => onUpdate({ transition_duration_ms: parseInt(e.target.value, 10) || 2000 })}
+                style={S.numInput}
+                aria-label="Transition duration"
+              />
+            </div>
+            <button
+              onClick={() => onUpdate({ duck_during_dialogue: !scene.duck_during_dialogue })}
+              style={{
+                ...S.duckToggle,
+                borderColor: scene.duck_during_dialogue ? '#6366F144' : 'var(--border-subtle)',
+                background: scene.duck_during_dialogue ? '#6366F10C' : 'var(--bg-base)',
+                color: scene.duck_during_dialogue ? '#6366F1' : 'var(--text-muted)',
+              }}
+              aria-pressed={scene.duck_during_dialogue}
+              aria-label="Toggle auto-ducking"
+            >
+              {scene.duck_during_dialogue ? <VolumeX size={12} /> : <Volume2 size={12} />}
+              <span style={{ fontSize: 11, fontWeight: 500 }}>
+                {scene.duck_during_dialogue ? 'Ducking ON' : 'Ducking OFF'}
+              </span>
+            </button>
+          </div>
+
+          {/* Ducking controls (shown when ducking is enabled) */}
+          {scene.duck_during_dialogue && (
+            <div style={{ ...S.layer, background: '#6366F108', border: '1px solid #6366F118' }}>
+              <div style={S.layerHdr}>
+                <span style={{ color: '#6366F1', display: 'flex' }}><VolumeX size={14} /></span>
+                <span style={S.layerTitle}>Auto-Ducking (during dialogue)</span>
+              </div>
+              <div style={S.controlRow}>
+                <SliderControl
+                  label="Music duck"
+                  value={Math.abs(scene.duck_music_db ?? 8)}
+                  suffix="dB"
+                  onChange={(v) => onUpdate({ duck_music_db: -v })}
+                />
+                <SliderControl
+                  label="Ambience duck"
+                  value={Math.abs(scene.duck_ambience_db ?? 4)}
+                  suffix="dB"
+                  onChange={(v) => onUpdate({ duck_ambience_db: -v })}
+                />
+              </div>
+              <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0, lineHeight: 1.4 }}>
+                Music and ambience will automatically lower when narration plays, then restore after.
+              </p>
+            </div>
+          )}
+
           {scene.music_prompt && (
             <LayerSection icon={<Music size={14} />} title="Background Music" color="#8B5CF6">
               <div style={S.promptBox}>{scene.music_prompt}</div>
@@ -749,6 +887,11 @@ function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSele
                       suffix="%"
                       onChange={(v) => updateAmbienceVolume(i, v)}
                     />
+                    {amb.layer && (
+                      <span style={{ ...S.tag, background: '#10B98118', color: '#10B981', fontSize: 9 }}>
+                        {amb.layer === 'primary' ? '🔵' : amb.layer === 'secondary' ? '🟢' : '✨'} {amb.layer}
+                      </span>
+                    )}
                     {amb.loop && (
                       <span style={{ ...S.tag, background: '#10B98118', color: '#10B981', fontSize: 9 }}>
                         🔁 Loop
@@ -773,6 +916,11 @@ function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSele
                       @ Seg {fx.at_segment} · {fx.position}
                       {fx.offset_hint_ms ? ` +${fx.offset_hint_ms}ms` : ''} · {fx.duration_hint_seconds}s
                     </span>
+                    {fx.category && (
+                      <span style={{ ...S.tag, background: '#F59E0B18', color: '#F59E0B', fontSize: 9 }}>
+                        {fx.category}
+                      </span>
+                    )}
                     <SliderControl
                       label="Vol"
                       value={Math.round(fx.volume * 100)}
@@ -1309,5 +1457,43 @@ const S: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     color: 'var(--text-primary)',
     textAlign: 'center',
+  },
+
+  /* Scene settings row */
+  sceneSettingsRow: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    gap: 10,
+    flexWrap: 'wrap',
+    padding: '8px 0 4px',
+  },
+  settingGroup: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 4,
+    minWidth: 100,
+  },
+  selectSmall: {
+    padding: '5px 8px',
+    fontSize: 11,
+    borderRadius: 'var(--radius-sm)',
+    border: '1px solid var(--border-subtle)',
+    background: 'var(--bg-elevated)',
+    color: 'var(--text-primary)',
+    outline: 'none',
+    cursor: 'pointer',
+  },
+  duckToggle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    border: '1px solid',
+    borderRadius: 'var(--radius-sm)',
+    cursor: 'pointer',
+    background: 'none',
+    transition: 'border-color 150ms ease, background 150ms ease, color 150ms ease',
+    marginBottom: 0,
+    alignSelf: 'flex-end',
   },
 };

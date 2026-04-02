@@ -523,7 +523,7 @@ export function ManuscriptPage() {
     if (!s || s.total_segments === 0) return { step: 0, label: 'No segments', color: 'var(--text-muted)' };
     if (s.on_timeline > 0 && s.on_timeline >= s.total_segments) return { step: 4, label: 'On timeline', color: 'var(--success)' };
     if (s.with_audio >= s.total_segments) return { step: 3, label: 'Audio ready', color: 'var(--accent)' };
-    if (s.assigned >= s.total_segments) return { step: 2, label: 'Assigned', color: '#D97A4A' };
+    if (s.assigned >= s.total_segments) return { step: 2, label: 'Assigned', color: 'var(--warning)' };
     if (s.total_segments > 0) return { step: 1, label: `${s.total_segments} segs`, color: 'var(--text-tertiary)' };
     return { step: 0, label: 'Empty', color: 'var(--text-muted)' };
   };
@@ -580,7 +580,7 @@ export function ManuscriptPage() {
             const showMenu = chapterMenuId === ch.id;
 
             return (
-              <div key={ch.id} style={{ ...styles.chapterItem, background: isSelected ? '#2a2a2a' : 'transparent' }}>
+              <div key={ch.id} style={{ ...styles.chapterItem, background: isSelected ? 'var(--bg-hover)' : 'transparent' }}>
                 {isEditing ? (
                   <div style={{ display: 'flex', gap: 4, flex: 1, alignItems: 'center' }}>
                     <input value={editingTitle} onChange={(e) => setEditingTitle(e.target.value)}
@@ -593,7 +593,7 @@ export function ManuscriptPage() {
                 ) : (
                   <>
                     <button onClick={() => setSelectedChapterId(ch.id)}
-                      style={{ ...styles.chapterBtn, color: isSelected ? '#4A90D9' : '#aaa' }}>
+                      style={{ ...styles.chapterBtn, color: isSelected ? 'var(--accent)' : 'var(--text-secondary)' }}>
                       <span style={styles.chapterNum}>{idx + 1}.</span>
                       <span style={styles.chapterTitle}>{ch.title}</span>
                     </button>
@@ -629,7 +629,7 @@ export function ManuscriptPage() {
 
           {!hasChapters && (
             <div style={styles.emptyState}>
-              <BookOpen size={24} color="#444" />
+              <BookOpen size={24} color="var(--text-muted)" />
               <p style={{ fontSize: 13, color: 'var(--text-tertiary)' }}>No chapters yet</p>
               <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Import a manuscript or add chapters manually.</p>
               <p style={{ fontSize: 10, color: 'var(--text-muted)' }}>Supports: EPUB, DOCX, TXT, MD, HTML</p>
@@ -656,9 +656,9 @@ export function ManuscriptPage() {
               <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
                 {splitMode ? (
                   <>
-                    <span style={{ fontSize: 11, color: '#D97A4A' }}>Click in text to set split point, then confirm</span>
+                    <span style={{ fontSize: 11, color: 'var(--warning)' }}>Click in text to set split point, then confirm</span>
                     <button onClick={handleSplitChapter} disabled={splitPos === null}
-                      style={{ ...styles.smallBtn, background: '#D97A4A', color: '#fff' }}>
+                      style={{ ...styles.smallBtn, background: 'var(--warning)', color: '#fff' }}>
                       <Scissors size={12} /> Split Here
                     </button>
                     <button onClick={() => { setSplitMode(false); setSplitPos(null); }} style={styles.smallBtn}>
@@ -713,7 +713,7 @@ export function ManuscriptPage() {
 
             {/* Mood Presets Panel */}
             {showMoodPresets && (
-              <div style={{ ...styles.tagPanel, background: '#0f1520' }}>
+              <div style={{ ...styles.tagPanel, background: 'var(--bg-base)' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {MOOD_PRESETS.map((preset) => (
                     <button key={preset.name} onClick={() => applyMoodPreset(preset)}
@@ -729,7 +729,7 @@ export function ManuscriptPage() {
 
             {/* Pacing Settings Panel */}
             {showPacingPanel && (
-              <div style={{ ...styles.tagPanel, background: '#0f1a0f', gap: 8 }}>
+              <div style={{ ...styles.tagPanel, background: 'var(--bg-base)', gap: 8 }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4 }}>
                     <label style={{ fontSize: 10, color: 'var(--success)', fontWeight: 600 }}>Segment Gap</label>
@@ -784,22 +784,22 @@ export function ManuscriptPage() {
               value={chapterText}
               onChange={(e) => handleChapterTextChange(e.target.value)}
               onClick={(e) => { if (splitMode) setSplitPos((e.target as HTMLTextAreaElement).selectionStart); }}
-              style={{ ...styles.textarea, ...(splitMode ? { cursor: 'crosshair', borderColor: '#D97A4A' } : {}) }}
+              style={{ ...styles.textarea, ...(splitMode ? { cursor: 'crosshair', borderColor: 'var(--warning)' } : {}) }}
               aria-label="Chapter text editor"
             />
 
             <div style={styles.editorFooter}>
-              <span style={{ fontSize: 11, color: '#555' }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                 {chapterText.length} chars · ~{Math.ceil(chapterText.split(/\s+/).length / 150)} min read
               </span>
-              <span style={{ fontSize: 11, color: saveStatus === 'saved' ? '#8f8' : saveStatus === 'saving' ? '#D97A4A' : '#555' }}>
+              <span style={{ fontSize: 11, color: saveStatus === 'saved' ? 'var(--success)' : saveStatus === 'saving' ? 'var(--warning)' : 'var(--text-muted)' }}>
                 {saveStatus === 'saving' ? '● Saving...' : saveStatus === 'saved' ? '✓ Saved' : 'Auto-saves on edit'}
               </span>
             </div>
           </>
         ) : (
           <div style={styles.emptyEditor}>
-            <p style={{ color: '#444', fontSize: 14 }}>
+            <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>
               {hasChapters ? '← Select a chapter to edit' : 'Import a manuscript or add a chapter to get started'}
             </p>
           </div>
@@ -820,13 +820,13 @@ export function ManuscriptPage() {
               <Plus size={12} />
             </button>
             <button onClick={handleBatchGenerate}
-              style={{ ...styles.smallBtn, background: segmentList.length > 0 && !allHaveAudio ? '#2d5a27' : '#333', color: segmentList.length > 0 && !allHaveAudio ? '#8f8' : '#666' }}
+              style={{ ...styles.smallBtn, background: segmentList.length > 0 && !allHaveAudio ? 'var(--success-subtle)' : 'var(--bg-elevated)', color: segmentList.length > 0 && !allHaveAudio ? 'var(--success)' : 'var(--text-muted)' }}
               disabled={!selectedChapter || batchGenerating || segmentList.length === 0}
               title="Generate TTS for all segments">
               <Zap size={12} /> {batchGenerating ? `${batchElapsed}s...` : 'Gen All'}
             </button>
             <button onClick={() => chapterAudioRef.current?.click()}
-              style={{ ...styles.smallBtn, background: '#1a1a2a', color: '#b88ad9' }}
+              style={{ ...styles.smallBtn, background: 'var(--purple-subtle)', color: 'var(--purple)' }}
               disabled={!selectedChapter || uploadingChapterAudio}
               title="Upload an audio file for this chapter">
               {uploadingChapterAudio ? <Loader size={12} /> : <Upload size={12} />}
@@ -837,41 +837,41 @@ export function ManuscriptPage() {
         {hasSegments && (
           <div style={styles.workflowBar}>
             <div style={styles.workflowStep}>
-              <span style={{ ...styles.wfDot, background: '#2d5a27' }}>✓</span>
-              <span style={{ color: '#8f8', fontSize: 10 }}>Split</span>
+              <span style={{ ...styles.wfDot, background: 'var(--success-subtle)' }}>✓</span>
+              <span style={{ color: 'var(--success)', fontSize: 10 }}>Split</span>
             </div>
             <span style={styles.wfArrow}>→</span>
             <div style={styles.workflowStep}>
-              <span style={{ ...styles.wfDot, background: allHaveCharacters ? '#2d5a27' : '#333' }}>
+              <span style={{ ...styles.wfDot, background: allHaveCharacters ? 'var(--success-subtle)' : 'var(--bg-elevated)' }}>
                 {allHaveCharacters ? '✓' : '2'}
               </span>
-              <span style={{ color: allHaveCharacters ? '#8f8' : '#888', fontSize: 10 }}>Assign</span>
+              <span style={{ color: allHaveCharacters ? 'var(--success)' : 'var(--text-tertiary)', fontSize: 10 }}>Assign</span>
             </div>
             <span style={styles.wfArrow}>→</span>
             <div style={styles.workflowStep}>
-              <span style={{ ...styles.wfDot, background: allHaveAudio ? '#2d5a27' : '#333' }}>
+              <span style={{ ...styles.wfDot, background: allHaveAudio ? 'var(--success-subtle)' : 'var(--bg-elevated)' }}>
                 {allHaveAudio ? '✓' : '3'}
               </span>
-              <span style={{ color: allHaveAudio ? '#8f8' : '#888', fontSize: 10 }}>Generate</span>
+              <span style={{ color: allHaveAudio ? 'var(--success)' : 'var(--text-tertiary)', fontSize: 10 }}>Generate</span>
             </div>
             <span style={styles.wfArrow}>→</span>
             <div style={styles.workflowStep}>
-              <span style={{ ...styles.wfDot, background: selectedChapter?.stats?.on_timeline ? '#2d5a27' : '#333' }}>
+              <span style={{ ...styles.wfDot, background: selectedChapter?.stats?.on_timeline ? 'var(--success-subtle)' : 'var(--bg-elevated)' }}>
                 {(selectedChapter?.stats?.on_timeline ?? 0) > 0 ? '✓' : '4'}
               </span>
-              <span style={{ color: (selectedChapter?.stats?.on_timeline ?? 0) > 0 ? '#8f8' : '#888', fontSize: 10 }}>Timeline</span>
+              <span style={{ color: (selectedChapter?.stats?.on_timeline ?? 0) > 0 ? 'var(--success)' : 'var(--text-tertiary)', fontSize: 10 }}>Timeline</span>
             </div>
           </div>
         )}
 
         {batchProgress && (
-          <div style={{ ...styles.progressBar, background: batchGenerating ? '#0f1a0f' : '#111' }}>
+          <div style={{ ...styles.progressBar, background: batchGenerating ? 'var(--success-subtle)' : 'var(--bg-surface)' }}>
             {batchGenerating && (
-              <div style={{ height: 3, background: '#222', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
-                <div style={{ height: '100%', background: '#4A90D9', borderRadius: 2, width: '60%' }} />
+              <div style={{ height: 3, background: 'var(--bg-elevated)', borderRadius: 2, overflow: 'hidden', marginBottom: 4 }}>
+                <div style={{ height: '100%', background: 'var(--accent)', borderRadius: 2, width: '60%' }} />
               </div>
             )}
-            <span style={{ fontSize: 11, color: batchGenerating ? '#8f8' : '#aaa' }}>
+            <span style={{ fontSize: 11, color: batchGenerating ? 'var(--success)' : 'var(--text-secondary)' }}>
               {batchGenerating && `⏳ ${batchElapsed}s · `}{batchProgress}
             </span>
           </div>
@@ -879,15 +879,15 @@ export function ManuscriptPage() {
 
         {hasSegments && (
           <div style={styles.statsRow}>
-            <span style={{ color: '#4A90D9', fontSize: 11 }}>
+            <span style={{ color: 'var(--accent)', fontSize: 11 }}>
               <Users size={10} /> {segmentsWithCharacter.length}/{segmentList.length}
             </span>
-            <span style={{ color: '#8f8', fontSize: 11 }}>
+            <span style={{ color: 'var(--success)', fontSize: 11 }}>
               <Volume2 size={10} /> {segmentsWithAudio.length}/{segmentList.length}
             </span>
             {selectedChapter && hasSegments && (
               <button onClick={() => handleSendChapterToTimeline(selectedChapter.id)}
-                style={{ ...styles.smallBtn, background: '#4A90D9', color: '#fff', fontSize: 10, padding: '2px 8px' }}>
+                style={{ ...styles.smallBtn, background: 'var(--accent)', color: '#fff', fontSize: 10, padding: '2px 8px' }}>
                 <Send size={10} /> Generate & Send
               </button>
             )}
@@ -909,7 +909,7 @@ export function ManuscriptPage() {
             return (
               <div key={seg.id} style={{
                 ...styles.segmentItem,
-                borderLeft: `3px solid ${isSent ? '#9B59B6' : hasAudio ? '#2d5a27' : hasChar ? '#4A90D9' : '#333'}`,
+                borderLeft: `3px solid ${isSent ? 'var(--purple)' : hasAudio ? 'var(--success)' : hasChar ? 'var(--accent)' : 'var(--border-subtle)'}`,
               }}>
                 {/* Header: index + character + actions */}
                 <div style={styles.segmentHeader}>
@@ -931,7 +931,7 @@ export function ManuscriptPage() {
                     </button>
                   )}
                   <select value={seg.character_id || ''} onChange={(e) => handleAssignCharacter(seg.id, e.target.value || null)}
-                    style={{ ...styles.charSelect, borderColor: hasChar ? '#4A90D9' : '#333' }}
+                    style={{ ...styles.charSelect, borderColor: hasChar ? 'var(--accent)' : 'var(--border-default)' }}
                     aria-label="Assign character">
                     <option value="">— character —</option>
                     {characterList.map((c) => (
@@ -948,7 +948,7 @@ export function ManuscriptPage() {
                     <textarea value={editingSegText} onChange={(e) => setEditingSegText(e.target.value)}
                       style={styles.segEditArea} rows={4} autoFocus aria-label="Edit segment text" />
                     <div style={{ display: 'flex', gap: 4 }}>
-                      <button onClick={() => handleUpdateSegmentText(seg.id)} style={{ ...styles.tinyBtn, background: '#2d5a27', color: '#8f8' }}>
+                      <button onClick={() => handleUpdateSegmentText(seg.id)} style={{ ...styles.tinyBtn, background: 'var(--success-subtle)', color: 'var(--success)' }}>
                         <Check size={11} /> Save
                       </button>
                       <button onClick={() => setEditingSegId(null)} style={styles.tinyBtn}><X size={11} /> Cancel</button>
@@ -974,7 +974,7 @@ export function ManuscriptPage() {
                         onEnded={() => setPlayingSegId(null)}
                         style={{ width: '100%', height: 40 }}
                       />
-                      <span style={{ fontSize: 9, color: '#666', marginTop: 4, display: 'block' }}>
+                      <span style={{ fontSize: 9, color: 'var(--text-muted)', marginTop: 4, display: 'block' }}>
                         🎙 {charName || 'Unknown voice'} · Edit text above → Regenerate → Listen again
                       </span>
                     </div>
@@ -1004,7 +1004,7 @@ export function ManuscriptPage() {
                         </div>
                         <span style={styles.genProgressText}>
                           ⏳ {genElapsed}s elapsed · ~{Math.max(1, Math.ceil(seg.text.length / 200) * 3 - genElapsed)}s left
-                          <span style={{ color: '#555' }}> ({seg.text.length} chars)</span>
+                          <span style={{ color: 'var(--text-muted)' }}> ({seg.text.length} chars)</span>
                         </span>
                       </div>
                     )}
@@ -1015,8 +1015,8 @@ export function ManuscriptPage() {
                         disabled={isSending}
                         style={{
                           ...styles.sendBtn,
-                          background: isSent ? '#2a1a3a' : '#1a2a3a',
-                          color: isSent ? '#b88ad9' : '#4A90D9',
+                          background: isSent ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
+                          color: isSent ? 'var(--purple)' : 'var(--accent)',
                           borderColor: isSent ? '#3a2a4a' : '#2a3a5a',
                         }}
                         title={isSent ? 'Already on timeline (click to update)' : 'Send this audio to the timeline'}>
@@ -1060,14 +1060,14 @@ export function ManuscriptPage() {
 
           {segmentList.length === 0 && selectedChapter && (
             <div style={styles.emptyState}>
-              <Scissors size={20} color="#444" />
-              <p style={{ fontSize: 12, color: '#888' }}>No segments yet</p>
-              <p style={{ fontSize: 11, color: '#555' }}>Click "Split" to break text into segments, or "+" to add manually.</p>
+              <Scissors size={20} color="var(--text-muted)" />
+              <p style={{ fontSize: 12, color: 'var(--text-tertiary)' }}>No segments yet</p>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)' }}>Click "Split" to break text into segments, or "+" to add manually.</p>
             </div>
           )}
           {!selectedChapter && (
             <div style={styles.emptyState}>
-              <p style={{ fontSize: 12, color: '#555' }}>Select a chapter</p>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)' }}>Select a chapter</p>
             </div>
           )}
         </div>
@@ -1089,7 +1089,7 @@ export function ManuscriptPage() {
 const styles: Record<string, React.CSSProperties> = {
   container: { display: 'flex', gap: 6, height: 'calc(100vh - 48px)', position: 'relative', padding: 4 },
   overlay: { position: 'fixed', inset: 0, zIndex: 5 },
-  chapterPanel: { width: 240, background: 'var(--bg-surface)', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 10, border: '1px solid var(--border-subtle)' },
+  chapterPanel: { width: 240, background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 10, border: '1px solid var(--border-subtle)' },
   panelHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', borderBottom: '1px solid var(--border-subtle)', gap: 4 },
   panelTitle: { fontSize: 12, color: 'var(--text-primary)', whiteSpace: 'nowrap', fontWeight: 600 },
   panelFooter: { padding: 8, borderTop: '1px solid var(--border-subtle)' },
@@ -1141,7 +1141,7 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer', fontSize: 11, fontWeight: 500, boxShadow: '0 2px 8px rgba(91,141,239,0.2)',
   },
   emptyState: { padding: 24, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, textAlign: 'center' },
-  editorPanel: { flex: 1, background: 'var(--bg-surface)', borderRadius: 14, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, border: '1px solid var(--border-subtle)' },
+  editorPanel: { flex: 1, background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)', display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, border: '1px solid var(--border-subtle)' },
   editorHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderBottom: '1px solid var(--border-subtle)', gap: 8, flexWrap: 'wrap' },
   editorFooter: { display: 'flex', justifyContent: 'space-between', padding: '6px 14px', borderTop: '1px solid var(--border-subtle)' },
   textarea: {
@@ -1157,7 +1157,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4, cursor: 'pointer', fontSize: 10, fontFamily: 'monospace',
   },
   splitIndicator: { padding: '5px 14px', background: 'var(--warning-subtle)', color: 'var(--warning)', fontSize: 11, borderBottom: '1px solid rgba(251,191,36,0.1)', fontFamily: 'monospace' },
-  segmentPanel: { width: 420, background: 'var(--bg-surface)', borderRadius: 14, overflow: 'hidden', display: 'flex', flexDirection: 'column', border: '1px solid var(--border-subtle)' },
+  segmentPanel: { width: 420, background: 'var(--bg-surface)', borderRadius: 'var(--radius-lg)', overflow: 'hidden', display: 'flex', flexDirection: 'column', border: '1px solid var(--border-subtle)' },
   workflowBar: {
     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
     padding: '8px 12px', background: 'var(--bg-base)', borderBottom: '1px solid var(--border-subtle)',

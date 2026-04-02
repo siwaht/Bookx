@@ -212,7 +212,7 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
 
 const SCENE_ANALYSIS_PROMPT = `You are an elite cinematic sound designer, foley artist, and film composer creating a FULL immersive audio experience — like a Hollywood movie, anime, or AAA video game. You must treat every paragraph as if you're designing the soundtrack for a film adaptation.
 
-Your job: read the text segment by segment and identify EVERY sound that would exist in that world.
+Your job: read the text segment by segment and identify EVERY sound that would exist in that world. The goal is to make the listener feel like they are INSIDE the scene — hearing the world around them, not just the narrator's voice.
 
 ## WHAT YOU MUST DETECT
 
@@ -228,9 +228,11 @@ Every physical action described or implied MUST get a sound effect:
 - Impacts → glass breaking, wood splintering, stone crumbling, metal bending
 - Vehicles → horse hooves, carriage wheels, car engine, ship creaking
 - Magic/supernatural → energy crackling, whooshing, ethereal hum, explosion
+- Conversation reactions → crowd gasping, murmuring agreement, laughter in response, applause
+- Weather interactions → umbrella opening, rain hitting jacket, boots splashing in puddles, shivering
 
 ### Environment → Ambience (continuous loops)
-Every location described needs its ambient soundscape:
+Every location described needs its ambient soundscape. LAYER MULTIPLE ambience tracks for realism:
 - Forest → birds chirping, leaves rustling, twigs snapping, insects buzzing, wind through trees
 - City/town → crowd murmur, distant traffic, street vendors, church bells, dogs barking
 - Indoor → clock ticking, fireplace crackling, floorboards creaking, muffled voices
@@ -241,6 +243,8 @@ Every location described needs its ambient soundscape:
 - Battlefield → distant explosions, shouting, metal clashing, horses
 - Kitchen → sizzling, boiling water, chopping, pots clanking
 - Tavern/bar → crowd chatter, glasses clinking, music, laughter
+- Library/study → page turning, quill scratching, clock ticking, distant footsteps
+- Market/bazaar → haggling voices, coins clinking, fabric rustling, animals
 
 ### Mood → Background Music (scored per scene)
 Music MUST match the emotional arc precisely:
@@ -255,12 +259,36 @@ Music MUST match the emotional arc precisely:
 - Peaceful/nature → acoustic guitar, flute, light percussion, nature-inspired
 - Chase/urgency → fast ostinato strings, driving percussion, rising pitch
 
-### Transitions Between Scenes
-When mood changes between consecutive scenes:
-- Gradual shift → long crossfade (3-5 seconds), music morphs
-- Sudden shift (e.g., peace → attack) → hard cut or dramatic sting
-- Emotional climax → music swells then drops to silence
-- Scene ending → fade out with reverb tail
+### Dialogue-Aware Sound Design
+When characters are speaking (segments with [CharacterName]):
+- Reduce ambience volume during intense dialogue (set lower volume for those ambience entries)
+- Add REACTION sounds from listeners (gasps, murmurs, laughter) as SFX timed to dramatic dialogue moments
+- Add character-specific sounds: nervous finger tapping, pacing footsteps, slamming fist on table
+- For arguments/confrontations: add tension stingers, sharp breaths, chair scraping back
+- For whispered/secret conversations: reduce all ambient volume, add close-mic breathing sounds
+
+### Scene Transitions
+You MUST specify how each scene transitions to the next:
+- "crossfade" → smooth blend between scenes (3-5 seconds overlap)
+- "hard_cut" → abrupt change (for sudden events like explosions, attacks, waking up)
+- "sting" → musical hit/stinger that bridges scenes (for reveals, cliffhangers)
+- "fade_to_silence" → current scene fades out, brief silence, next scene fades in (for time jumps, chapter breaks)
+- "swell" → music builds to crescendo then transitions (for emotional climaxes)
+
+### Scene Presets (tag each scene)
+Tag each scene with a preset that describes its archetype:
+- "dialogue_heavy" → conversation-focused, music very low, ambience subtle, SFX for reactions
+- "action_sequence" → fast-paced, loud SFX, driving music, minimal ambience
+- "quiet_tension" → near-silence, sparse sounds, low drone, heartbeat
+- "exploration" → moderate ambience, curious music, environmental SFX
+- "emotional_climax" → swelling music, minimal SFX, voice mood is key
+- "establishing_shot" → rich ambience, scene-setting music, environmental sounds
+- "chase" → urgent music, running footsteps, breathing, obstacles
+- "battle" → layered SFX chaos, war drums, clashing, shouting
+- "intimate" → very quiet, close sounds, soft music, breathing
+- "comedic" → playful music, exaggerated SFX, timing-based sounds
+- "horror" → silence punctuated by stingers, creaking, whispers, heartbeat
+- "montage" → music-driven, quick SFX hits, time-passing ambience changes
 
 ## OUTPUT FORMAT
 
@@ -272,8 +300,11 @@ Respond with ONLY a JSON object:
       "title": "Brief vivid description of what happens",
       "mood": "romantic|action|suspense|horror|peaceful|melancholic|epic|comedic|mysterious|dramatic|tense|joyful|chase|battle|exploration",
       "intensity": 0.0-1.0,
+      "preset": "dialogue_heavy|action_sequence|quiet_tension|exploration|emotional_climax|establishing_shot|chase|battle|intimate|comedic|horror|montage",
       "segment_start": 0,
       "segment_end": 5,
+      "transition_to_next": "crossfade|hard_cut|sting|fade_to_silence|swell",
+      "transition_duration_ms": 2000,
       "music": {
         "prompt": "VERY detailed music prompt. Include: genre, instruments, tempo BPM, key (major/minor), dynamics, reference style. Example: 'Dark orchestral suspense score, low cello drones in D minor, sparse pizzicato violins, deep timpani rolls building slowly, 70 BPM, Hans Zimmer style tension, gradually intensifying'",
         "volume": 0.15-0.30,
@@ -289,7 +320,8 @@ Respond with ONLY a JSON object:
           "fade_in_ms": 500-2000,
           "fade_out_ms": 500-2000,
           "loop": true,
-          "duration_hint_seconds": 10-22
+          "duration_hint_seconds": 10-22,
+          "layer": "primary|secondary|accent"
         }
       ],
       "sfx": [
@@ -299,10 +331,16 @@ Respond with ONLY a JSON object:
           "position": "start|middle|end",
           "offset_hint_ms": 0-5000,
           "volume": 0.3-0.8,
-          "duration_hint_seconds": 1-10
+          "duration_hint_seconds": 1-10,
+          "category": "foley|impact|reaction|environment|transition|stinger"
         }
       ],
-      "voice_mood": "How narration should sound — whispered, urgent, trembling, warm, cold, shouting, breathless, etc."
+      "voice_mood": "How narration should sound — whispered, urgent, trembling, warm, cold, shouting, breathless, etc.",
+      "ducking": {
+        "duck_music_db": -6 to -12,
+        "duck_ambience_db": -3 to -8,
+        "duck_during_dialogue": true
+      }
     }
   ]
 }
@@ -320,7 +358,12 @@ Respond with ONLY a JSON object:
 9. **Break scenes at mood/location changes** — don't group a peaceful walk and a sudden ambush into one scene.
 10. **Be generous with SFX** — more is better. 3-8 SFX per scene is typical. A fight scene might have 10+.
 11. **offset_hint_ms** tells where within the segment's duration the SFX should play. 0 = start, higher values = later. Use this for precise timing.
-12. **Keep scenes granular** — prefer more smaller scenes (3-8 segments each) over fewer large ones. Each mood shift = new scene.`;
+12. **Keep scenes granular** — prefer more smaller scenes (3-8 segments each) over fewer large ones. Each mood shift = new scene.
+13. **Transitions are mandatory** — every scene MUST have a transition_to_next. Think about how a film editor would cut between these scenes.
+14. **Dialogue scenes need reaction sounds** — when a character says something shocking, add a crowd gasp or silence beat as SFX.
+15. **Layer ambience** — use "primary" for the main environment, "secondary" for additional texture, "accent" for occasional detail sounds.
+16. **Ducking is essential** — set duck_during_dialogue=true for dialogue-heavy scenes so music/ambience automatically lower when characters speak.
+17. **Presets guide the mix** — tag every scene with the most fitting preset. This controls the overall audio balance.`;
 
 
 export function backgroundBoostRouter(db: SqlJsDatabase): Router {
@@ -445,8 +488,8 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         const matchedChapter = chapterRanges.find((cr: any) => (scene.segment_start ?? 0) >= cr.start && (scene.segment_start ?? 0) <= cr.end);
         const chapterId = matchedChapter?.id || (chapterList.length === 1 ? chapterList[0].id : null);
         run(db,
-          `INSERT INTO background_boost_scenes (id, book_id, chapter_id, scene_index, title, mood, intensity, segment_start, segment_end, music_prompt, music_volume, music_fade_in_ms, music_fade_out_ms, music_duration_hint, music_loop, ambience_json, sfx_json, voice_mood, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          `INSERT INTO background_boost_scenes (id, book_id, chapter_id, scene_index, title, mood, intensity, segment_start, segment_end, music_prompt, music_volume, music_fade_in_ms, music_fade_out_ms, music_duration_hint, music_loop, ambience_json, sfx_json, voice_mood, preset, transition_to_next, transition_duration_ms, duck_music_db, duck_ambience_db, duck_during_dialogue, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
           [
             id, bookId, chapterId, scene.scene_index, scene.title, scene.mood, scene.intensity,
             scene.segment_start ?? 0, scene.segment_end ?? 0,
@@ -456,6 +499,12 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
             JSON.stringify(scene.ambience || []),
             JSON.stringify(scene.sfx || []),
             scene.voice_mood || null,
+            scene.preset || 'establishing_shot',
+            scene.transition_to_next || 'crossfade',
+            scene.transition_duration_ms ?? 2000,
+            scene.ducking?.duck_music_db ?? -8,
+            scene.ducking?.duck_ambience_db ?? -4,
+            scene.ducking?.duck_during_dialogue ? 1 : 0,
           ]
         );
       }
@@ -486,6 +535,7 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         ambience: JSON.parse(s.ambience_json || '[]'),
         sfx: JSON.parse(s.sfx_json || '[]'),
         music_loop: !!s.music_loop,
+        duck_during_dialogue: !!s.duck_during_dialogue,
       }));
       res.json(parsed);
     } catch (err: any) {
@@ -503,6 +553,10 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         music_fade_in_ms: 'music_fade_in_ms', music_fade_out_ms: 'music_fade_out_ms',
         music_duration_hint: 'music_duration_hint', music_loop: 'music_loop',
         voice_mood: 'voice_mood', status: 'status',
+        preset: 'preset', transition_to_next: 'transition_to_next',
+        transition_duration_ms: 'transition_duration_ms',
+        duck_music_db: 'duck_music_db', duck_ambience_db: 'duck_ambience_db',
+        duck_during_dialogue: 'duck_during_dialogue',
       };
       const updates: string[] = [];
       const values: any[] = [];
@@ -530,6 +584,7 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         ambience: JSON.parse(scene?.ambience_json || '[]'),
         sfx: JSON.parse(scene?.sfx_json || '[]'),
         music_loop: !!scene?.music_loop,
+        duck_during_dialogue: !!scene?.duck_during_dialogue,
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -584,10 +639,15 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
             run(db, "DELETE FROM clips WHERE track_id = ? AND notes LIKE ?", [trackId, `%${scene.title.slice(0, 40)}%`]);
           }
         }
+        // Clear automation points on boost tracks for regenerated scenes
+        for (const trackId of boostTrackIds) {
+          run(db, "DELETE FROM automation_points WHERE track_id = ?", [trackId]);
+        }
       } else if (boostTrackIds.length > 0 && !scene_ids?.length) {
-        // Full regeneration — clear all boost clips
+        // Full regeneration — clear all boost clips and automation
         for (const trackId of boostTrackIds) {
           run(db, 'DELETE FROM clips WHERE track_id = ?', [trackId]);
+          run(db, 'DELETE FROM automation_points WHERE track_id = ?', [trackId]);
         }
       }
 
@@ -625,6 +685,17 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         ambienceTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [id]);
       }
 
+      // Enable ducking on music and ambience tracks if any scene uses ducking
+      const anyDucking = scenes.some((s: any) => s.duck_during_dialogue);
+      if (anyDucking) {
+        if (musicTrack) {
+          run(db, `UPDATE tracks SET ducking_enabled = 1, duck_amount_db = -8, duck_attack_ms = 150, duck_release_ms = 300 WHERE id = ?`, [musicTrack.id]);
+        }
+        if (ambienceTrack) {
+          run(db, `UPDATE tracks SET ducking_enabled = 1, duck_amount_db = -4, duck_attack_ms = 150, duck_release_ms = 300 WHERE id = ?`, [ambienceTrack.id]);
+        }
+      }
+
       const results = {
         music_generated: 0, ambience_generated: 0, sfx_generated: 0,
         clips_created: 0, errors: [] as string[],
@@ -647,6 +718,55 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         const sceneStartMs = getSegmentPositionMs(scene.segment_start);
         const sceneEndMs = getSegmentPositionMs(scene.segment_end);
         const sceneDurationMs = Math.max(sceneEndMs - sceneStartMs, 5000);
+
+        // Apply ducking automation for this scene if duck_during_dialogue is enabled
+        if (scene.duck_during_dialogue) {
+          // Find narration clips within this scene's range
+          const sceneNarrationClips = narrationClips.filter((c: any) =>
+            c.position_ms >= sceneStartMs && c.position_ms <= sceneEndMs
+          );
+          for (const narClip of sceneNarrationClips) {
+            const clipStart = (narClip as any).position_ms;
+            const clipDur = (narClip as any).asset_duration_ms || 3000;
+            const duckAttack = 150; // ms before narration starts
+            const duckRelease = 300; // ms after narration ends
+
+            // Add automation points for music track ducking
+            if (doMusic && musicTrack) {
+              const duckLevel = Math.pow(10, (scene.duck_music_db ?? -8) / 20); // dB to linear
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, 1.0, 'linear')`,
+                [uuid(), musicTrack.id, Math.max(0, clipStart - duckAttack)]);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, ?, 'exponential')`,
+                [uuid(), musicTrack.id, clipStart, duckLevel]);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, ?, 'linear')`,
+                [uuid(), musicTrack.id, clipStart + clipDur, duckLevel]);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, 1.0, 'exponential')`,
+                [uuid(), musicTrack.id, clipStart + clipDur + duckRelease]);
+            }
+
+            // Add automation points for ambience track ducking
+            if (doAmbience && ambienceTrack) {
+              const duckLevel = Math.pow(10, (scene.duck_ambience_db ?? -4) / 20);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, 1.0, 'linear')`,
+                [uuid(), ambienceTrack.id, Math.max(0, clipStart - duckAttack)]);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, ?, 'exponential')`,
+                [uuid(), ambienceTrack.id, clipStart, duckLevel]);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, ?, 'linear')`,
+                [uuid(), ambienceTrack.id, clipStart + clipDur, duckLevel]);
+              run(db, `INSERT INTO automation_points (id, track_id, time_ms, value, curve) VALUES (?, ?, ?, 1.0, 'exponential')`,
+                [uuid(), ambienceTrack.id, clipStart + clipDur + duckRelease]);
+            }
+          }
+        }
+
+        // Handle scene transitions — adjust fade times based on transition type
+        const transitionType = scene.transition_to_next || 'crossfade';
+        const transitionDuration = scene.transition_duration_ms || 2000;
+        let musicFadeOut = scene.music_fade_out_ms ?? 3000;
+        if (transitionType === 'hard_cut') musicFadeOut = 50;
+        else if (transitionType === 'fade_to_silence') musicFadeOut = transitionDuration;
+        else if (transitionType === 'swell') musicFadeOut = Math.max(transitionDuration, 3000);
+        else if (transitionType === 'sting') musicFadeOut = 500;
 
         // Generate music
         if (doMusic && scene.music_prompt) {
@@ -680,7 +800,7 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
                VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
               [clipId, musicTrack.id, assetId, sceneStartMs,
                volumeToDb(scene.music_volume ?? 0.2),
-               scene.music_fade_in_ms ?? 2000, scene.music_fade_out_ms ?? 3000,
+               scene.music_fade_in_ms ?? 2000, musicFadeOut,
                `Boost: ${scene.title}`]);
             results.music_generated++;
             results.clips_created++;
@@ -791,6 +911,42 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
 
         // Mark scene as generated
         run(db, "UPDATE background_boost_scenes SET status = 'generated' WHERE id = ?", [scene.id]);
+
+        // Generate transition sting SFX if transition type is 'sting'
+        if (scene.transition_to_next === 'sting') {
+          try {
+            const stingPrompt = `Short dramatic musical sting, ${scene.mood} mood, 1-2 second orchestral hit transitioning to next scene, cinematic impact sound`;
+            const promptHash = computePromptHash({ prompt: stingPrompt, duration_seconds: 2, type: 'boost_sting' });
+            let stingAssetId: string;
+            const cached = queryOne(db, 'SELECT * FROM audio_assets WHERE prompt_hash = ? AND type = ?', [promptHash, 'sfx']);
+            if (cached && fs.existsSync(cached.file_path)) {
+              stingAssetId = cached.id;
+            } else {
+              const { buffer } = await generateSFX({ text: stingPrompt, duration_seconds: 2 });
+              stingAssetId = uuid();
+              const filePath = path.join(DATA_DIR, 'audio', `${stingAssetId}.mp3`);
+              fs.writeFileSync(filePath, buffer);
+              const estDuration = Math.round((buffer.length / 16000) * 1000);
+              run(db,
+                `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, generation_params, file_size_bytes, name)
+                 VALUES (?, ?, 'sfx', ?, ?, ?, ?, ?, ?)`,
+                [stingAssetId, bookId, filePath, estDuration, promptHash,
+                 JSON.stringify({ prompt: stingPrompt, source: 'background_boost_sting' }),
+                 buffer.length, `⚡ Sting: ${scene.title}`]);
+            }
+            const clipId = uuid();
+            run(db,
+              `INSERT INTO clips (id, track_id, audio_asset_id, position_ms, gain, notes)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [clipId, sfxTrack.id, stingAssetId, sceneEndMs,
+               volumeToDb(0.65),
+               `Sting: ${scene.title}`]);
+            results.sfx_generated++;
+            results.clips_created++;
+          } catch (err: any) {
+            results.errors.push(`Sting for "${scene.title}": ${err.message}`);
+          }
+        }
       }
 
       // Reset status to pending for scenes that had errors
@@ -1008,6 +1164,7 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
           ambience: JSON.parse(updatedScene?.ambience_json || '[]'),
           sfx: JSON.parse(updatedScene?.sfx_json || '[]'),
           music_loop: !!updatedScene?.music_loop,
+          duck_during_dialogue: !!updatedScene?.duck_during_dialogue,
         },
       });
     } catch (err: any) {

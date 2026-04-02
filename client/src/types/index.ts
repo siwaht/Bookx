@@ -239,8 +239,22 @@ export interface BoostScene {
   ambience: BoostAmbience[];
   sfx: BoostSFX[];
   voice_mood: string | null;
-  status: 'pending' | 'generated' | 'applied';
+  status: 'pending' | 'generated' | 'applied' | 'partial';
+  preset: BoostPreset;
+  transition_to_next: BoostTransition;
+  transition_duration_ms: number;
+  duck_music_db: number;
+  duck_ambience_db: number;
+  duck_during_dialogue: boolean;
 }
+
+export type BoostPreset =
+  | 'dialogue_heavy' | 'action_sequence' | 'quiet_tension' | 'exploration'
+  | 'emotional_climax' | 'establishing_shot' | 'chase' | 'battle'
+  | 'intimate' | 'comedic' | 'horror' | 'montage';
+
+export type BoostTransition =
+  | 'crossfade' | 'hard_cut' | 'sting' | 'fade_to_silence' | 'swell';
 
 export interface BoostAmbience {
   prompt: string;
@@ -249,6 +263,7 @@ export interface BoostAmbience {
   fade_out_ms: number;
   loop: boolean;
   duration_hint_seconds: number;
+  layer?: 'primary' | 'secondary' | 'accent';
 }
 
 export interface BoostSFX {
@@ -258,6 +273,7 @@ export interface BoostSFX {
   offset_hint_ms: number;
   volume: number;
   duration_hint_seconds: number;
+  category?: 'foley' | 'impact' | 'reaction' | 'environment' | 'transition' | 'stinger';
 }
 
 export interface BoostAnalysisResult {

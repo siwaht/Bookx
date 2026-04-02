@@ -59,42 +59,23 @@ export function Dashboard() {
     setUploadProgress('Creating project...');
     try {
       const book = await books.create({
-        title: uploadTitle,
-        author: uploadAuthor,
-        project_type: uploadProjectType,
-        format: 'single_narrator',
+        title: uploadTitle, author: uploadAuthor,
+        project_type: uploadProjectType, format: 'single_narrator',
       } as any);
-
-      // Create a chapter for each audio file and upload audio to it
       for (let i = 0; i < uploadFiles.length; i++) {
         const file = uploadFiles[i];
         const chapterTitle = uploadFiles.length === 1
           ? 'Full Audio'
           : `Chapter ${i + 1} - ${file.name.replace(/\.[^.]+$/, '')}`;
         setUploadProgress(`Uploading ${i + 1}/${uploadFiles.length}: ${file.name}`);
-
-        // Create chapter
-        const chapter = await chaptersApi.create(book.id, {
-          title: chapterTitle,
-          raw_text: `[Imported audio: ${file.name}]`,
-        });
-
-        // Upload audio to chapter
+        const chapter = await chaptersApi.create(book.id, { title: chapterTitle, raw_text: `[Imported audio: ${file.name}]` });
         await uploadAudioToChapter(book.id, chapter.id, file);
       }
-
-      setUploadTitle('');
-      setUploadAuthor('');
-      setUploadFiles([]);
-      setShowUpload(false);
-      setUploadProgress('');
+      setUploadTitle(''); setUploadAuthor(''); setUploadFiles([]);
+      setShowUpload(false); setUploadProgress('');
       navigate(`/book/${book.id}`);
-    } catch (err: any) {
-      toast.error(`Upload failed: ${err.message}`);
-    } finally {
-      setUploading(false);
-      setUploadProgress('');
-    }
+    } catch (err: any) { toast.error(`Upload failed: ${err.message}`); }
+    finally { setUploading(false); setUploadProgress(''); }
   };
 
   return (
@@ -106,10 +87,10 @@ export function Dashboard() {
         </div>
         <div style={styles.headerActions}>
           <button onClick={() => setShowCreate(true)} style={styles.createBtn}>
-            <Plus size={16} /> New Project
+            <Plus size={15} /> New Project
           </button>
           <button onClick={() => setShowUpload(true)} style={styles.uploadBtn}>
-            <Upload size={16} /> Upload Existing
+            <Upload size={15} /> Upload Existing
           </button>
         </div>
       </header>
@@ -229,45 +210,49 @@ export function Dashboard() {
       {!loading && bookList.length > 0 && <div style={styles.sectionLabel}>YOUR PROJECTS</div>}
 
       {!loading && <div style={styles.grid} className="stagger-children">
-        {bookList.map((book) => (
-          <div key={book.id} onClick={() => navigate(`/book/${book.id}`)} style={styles.card}
-            className="card-hover" role="button" tabIndex={0}
-            onKeyDown={(e) => e.key === 'Enter' && navigate(`/book/${book.id}`)}>
-            <div style={{
-              ...styles.cardIconWrap,
-              background: book.project_type === 'podcast' ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
-            }}>
-              {book.project_type === 'podcast'
-                ? <Mic size={20} color="var(--purple)" />
-                : <BookOpen size={20} color="var(--accent)" />}
-            </div>
-            <div style={styles.cardContent}>
-              <h3 style={styles.cardTitle}>{book.title}</h3>
-              {book.author && <p style={styles.cardAuthor}>{book.author}</p>}
-              <div style={styles.cardMeta}>
+        {bookList.map((book) => {
+          const isPodcast = book.project_type === 'podcast';
+          return (
+            <div key={book.id} onClick={() => navigate(`/book/${book.id}`)} style={styles.card}
+              className="card-hover" role="button" tabIndex={0}
+              onKeyDown={(e) => e.key === 'Enter' && navigate(`/book/${book.id}`)}>
+              <div style={styles.cardTop}>
+                <div style={{
+                  ...styles.cardIconWrap,
+                  background: isPodcast ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
+                  borderColor: isPodcast ? 'rgba(167,139,250,0.12)' : 'rgba(91,141,239,0.12)',
+                }}>
+                  {isPodcast
+                    ? <Mic size={18} color="var(--purple)" />
+                    : <BookOpen size={18} color="var(--accent)" />}
+                </div>
+                <button onClick={(e) => handleDelete(book.id, book.title, e)} style={styles.deleteBtn}
+                  aria-label={`Delete ${book.title}`}><Trash2 size={13} /></button>
+              </div>
+              <div style={styles.cardContent}>
+                <h3 style={styles.cardTitle}>{book.title}</h3>
+                {book.author && <p style={styles.cardAuthor}>{book.author}</p>}
+              </div>
+              <div style={styles.cardFooter}>
                 <span style={{
                   ...styles.badge,
-                  background: book.project_type === 'podcast' ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
-                  color: book.project_type === 'podcast' ? 'var(--purple)' : 'var(--accent)',
+                  background: isPodcast ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
+                  color: isPodcast ? 'var(--purple)' : 'var(--accent)',
                 }}>
-                  {book.project_type === 'podcast' ? 'Podcast' : 'Audiobook'}
+                  {isPodcast ? 'Podcast' : 'Audiobook'}
                 </span>
                 <span style={styles.cardDate}>{new Date(book.created_at).toLocaleDateString()}</span>
+                <ArrowRight size={13} style={{ color: 'var(--text-muted)', marginLeft: 'auto' }} />
               </div>
             </div>
-            <div style={styles.cardActions}>
-              <button onClick={(e) => handleDelete(book.id, book.title, e)} style={styles.deleteBtn}
-                aria-label={`Delete ${book.title}`}><Trash2 size={14} /></button>
-              <ArrowRight size={14} style={{ color: 'var(--text-muted)' }} />
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>}
 
       {!loading && bookList.length === 0 && !showCreate && (
         <div style={styles.emptyState} className="animate-in">
           <div style={styles.emptyIconWrap}>
-            <Headphones size={36} color="var(--accent)" />
+            <Headphones size={32} color="var(--accent)" />
           </div>
           <h3 style={styles.emptyTitle}>No projects yet</h3>
           <p style={styles.emptyText}>
@@ -299,22 +284,23 @@ export function Dashboard() {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: { padding: '28px 40px', maxWidth: 960, margin: '0 auto', overflow: 'auto' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 28 },
+  page: { padding: '32px 40px', maxWidth: 1000, margin: '0 auto', overflow: 'auto' },
+  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 32 },
   headerLeft: {},
-  h1: { fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '-0.3px' },
-  subtitle: { fontSize: 13, color: 'var(--text-tertiary)', marginTop: 2 },
+  h1: { fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', letterSpacing: '-0.5px' },
+  subtitle: { fontSize: 13, color: 'var(--text-tertiary)', marginTop: 4 },
   headerActions: { display: 'flex', gap: 8, alignItems: 'center' },
   createBtn: {
     display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px',
-    background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 'var(--radius-md)',
-    cursor: 'pointer', fontSize: 13, fontWeight: 500,
-    boxShadow: '0 2px 8px rgba(91,141,239,0.2)',
+    background: 'var(--accent-gradient)', color: '#fff', border: 'none',
+    borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13, fontWeight: 600,
+    boxShadow: '0 2px 12px rgba(91,141,239,0.2)',
   },
   uploadBtn: {
     display: 'flex', alignItems: 'center', gap: 6, padding: '9px 18px',
-    background: 'var(--bg-surface)', color: 'var(--text-secondary)', border: '1px solid var(--border-default)',
-    borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13, fontWeight: 500,
+    background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+    border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)',
+    cursor: 'pointer', fontSize: 13, fontWeight: 500,
   },
   createForm: {
     display: 'flex', flexDirection: 'column', gap: 12, padding: 24,
@@ -332,7 +318,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   typeBtnActive: {
     background: 'var(--accent-subtle)', color: 'var(--accent)',
-    borderColor: 'rgba(91,141,239,0.3)',
+    borderColor: 'var(--border-accent)',
   },
   input: {
     padding: '10px 14px', borderRadius: 'var(--radius-md)',
@@ -347,44 +333,53 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)', fontSize: 12, outline: 'none',
   },
   submitBtn: {
-    padding: '10px 24px', background: 'var(--accent)', color: '#fff',
-    border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontWeight: 500, fontSize: 13,
+    padding: '10px 24px', background: 'var(--accent-gradient)', color: '#fff',
+    border: 'none', borderRadius: 'var(--radius-md)', cursor: 'pointer',
+    fontWeight: 600, fontSize: 13,
   },
   cancelBtn: {
     padding: '10px 20px', background: 'var(--bg-elevated)', color: 'var(--text-tertiary)',
-    border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)', cursor: 'pointer', fontSize: 13,
+    border: '1px solid var(--border-default)', borderRadius: 'var(--radius-md)',
+    cursor: 'pointer', fontSize: 13,
   },
   sectionLabel: {
     fontSize: 10, color: 'var(--text-muted)', letterSpacing: 1.5, fontWeight: 600,
-    marginBottom: 12,
+    marginBottom: 12, textTransform: 'uppercase' as const,
   },
-  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 10 },
+  grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 12 },
   card: {
-    position: 'relative', padding: '16px 18px', background: 'var(--bg-surface)',
+    position: 'relative', padding: 18, background: 'var(--bg-surface)',
     borderRadius: 'var(--radius-lg)', cursor: 'pointer',
     border: '1px solid var(--border-subtle)',
-    display: 'flex', alignItems: 'center', gap: 14,
+    display: 'flex', flexDirection: 'column', gap: 12,
+    overflow: 'hidden',
+  },
+  cardTop: {
+    display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
   },
   cardIconWrap: {
-    width: 44, height: 44, borderRadius: 'var(--radius-md)',
+    width: 42, height: 42, borderRadius: 'var(--radius-md)',
     display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    border: '1px solid transparent',
   },
   cardContent: { flex: 1, minWidth: 0 },
-  cardTitle: { fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  cardAuthor: { fontSize: 11, color: 'var(--text-tertiary)', marginTop: 2 },
-  cardMeta: { display: 'flex', gap: 8, marginTop: 6, alignItems: 'center' },
-  badge: { fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 500 },
+  cardTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
+  cardAuthor: { fontSize: 12, color: 'var(--text-tertiary)', marginTop: 2 },
+  cardFooter: { display: 'flex', gap: 8, alignItems: 'center', paddingTop: 8, borderTop: '1px solid var(--border-subtle)' },
+  badge: { fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 600 },
   cardDate: { fontSize: 10, color: 'var(--text-muted)' },
-  cardActions: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8, flexShrink: 0 },
   deleteBtn: {
     background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
-    padding: 4, borderRadius: 'var(--radius-sm)',
+    padding: 4, borderRadius: 'var(--radius-sm)', opacity: 0.5,
   },
   emptyState: { textAlign: 'center', padding: '60px 20px' },
   emptyIconWrap: {
-    width: 72, height: 72, borderRadius: '50%', background: 'var(--accent-subtle)',
+    width: 72, height: 72, borderRadius: 20,
+    background: 'var(--accent-subtle)',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    margin: '0 auto 20px', boxShadow: '0 0 30px rgba(91,141,239,0.1)',
+    margin: '0 auto 20px',
+    boxShadow: '0 0 40px rgba(91,141,239,0.08)',
+    border: '1px solid rgba(91, 141, 239, 0.1)',
   },
   emptyTitle: { fontSize: 18, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 8 },
   emptyText: { fontSize: 13, color: 'var(--text-tertiary)', maxWidth: 440, margin: '0 auto 28px', lineHeight: 1.6 },

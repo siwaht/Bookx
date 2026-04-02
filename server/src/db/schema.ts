@@ -307,6 +307,14 @@ export function initializeSchema(database: SqlJsDatabase): void {
   // Migration: add chapter_id to existing background_boost_scenes tables
   try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN chapter_id TEXT REFERENCES chapters(id) ON DELETE CASCADE'); } catch {}
 
+  // Migrations: add transition, preset, and ducking columns to background_boost_scenes
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN preset TEXT DEFAULT \'establishing_shot\''); } catch {}
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN transition_to_next TEXT DEFAULT \'crossfade\''); } catch {}
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN transition_duration_ms INTEGER DEFAULT 2000'); } catch {}
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN duck_music_db REAL DEFAULT -8.0'); } catch {}
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN duck_ambience_db REAL DEFAULT -4.0'); } catch {}
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN duck_during_dialogue INTEGER DEFAULT 1'); } catch {}
+
   // ── Generation Jobs ──
   database.run(`
     CREATE TABLE IF NOT EXISTS generation_jobs (

@@ -1,36 +1,49 @@
 import React from 'react';
 
-type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
-type ButtonSize = 'sm' | 'md';
+type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'success';
+type ButtonSize = 'sm' | 'md' | 'lg';
 
 interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
   size?: ButtonSize;
   icon?: React.ReactNode;
   loading?: boolean;
+  glow?: boolean;
 }
 
 const VARIANT_STYLES: Record<ButtonVariant, React.CSSProperties> = {
   primary: {
-    background: 'var(--accent)', color: '#fff', border: 'none',
-    boxShadow: '0 2px 8px rgba(91,141,239,0.2)',
+    background: 'var(--accent-gradient)',
+    color: '#fff',
+    border: 'none',
+    boxShadow: '0 2px 12px rgba(91,141,239,0.2)',
   },
   secondary: {
-    background: 'var(--bg-surface)', color: 'var(--text-secondary)',
+    background: 'var(--bg-surface)',
+    color: 'var(--text-secondary)',
     border: '1px solid var(--border-default)',
   },
   ghost: {
-    background: 'none', color: 'var(--text-tertiary)', border: 'none',
+    background: 'none',
+    color: 'var(--text-tertiary)',
+    border: 'none',
   },
   danger: {
-    background: 'var(--danger-subtle)', color: 'var(--danger)',
-    border: '1px solid rgba(248,113,113,0.2)',
+    background: 'var(--danger-subtle)',
+    color: 'var(--danger)',
+    border: '1px solid rgba(248,113,113,0.15)',
+  },
+  success: {
+    background: 'var(--success-subtle)',
+    color: 'var(--success)',
+    border: '1px solid rgba(74,222,128,0.15)',
   },
 };
 
 const SIZE_STYLES: Record<ButtonSize, React.CSSProperties> = {
-  sm: { padding: '5px 10px', fontSize: 11, borderRadius: 6 },
-  md: { padding: '8px 16px', fontSize: 13, borderRadius: 8 },
+  sm: { padding: '5px 10px', fontSize: 11, borderRadius: 6, gap: 4 },
+  md: { padding: '8px 16px', fontSize: 13, borderRadius: 8, gap: 6 },
+  lg: { padding: '11px 22px', fontSize: 14, borderRadius: 10, gap: 8 },
 };
 
 export function Button({
@@ -38,6 +51,7 @@ export function Button({
   size = 'md',
   icon,
   loading,
+  glow,
   disabled,
   children,
   style,
@@ -47,11 +61,16 @@ export function Button({
     <button
       disabled={disabled || loading}
       style={{
-        display: 'inline-flex', alignItems: 'center', gap: 6,
-        fontWeight: 500, cursor: disabled || loading ? 'not-allowed' : 'pointer',
-        opacity: disabled || loading ? 0.5 : 1,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontWeight: 500,
+        cursor: disabled || loading ? 'not-allowed' : 'pointer',
+        opacity: disabled || loading ? 0.45 : 1,
+        letterSpacing: '-0.01em',
         ...VARIANT_STYLES[variant],
         ...SIZE_STYLES[size],
+        ...(glow && variant === 'primary' ? { boxShadow: '0 4px 20px rgba(91,141,239,0.3)' } : {}),
         ...style,
       }}
       {...props}

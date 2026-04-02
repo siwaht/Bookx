@@ -273,7 +273,7 @@ export function VoicesPage() {
         ))}
         {characterList.length === 0 && !showCreate && (
           <div style={styles.emptyState}>
-            <Mic size={28} color="#444" />
+            <Mic size={28} color="var(--text-muted)" />
             <p style={styles.emptyTitle}>No characters yet</p>
             <p style={styles.emptyHint}>Create a character and assign a voice from any configured TTS provider.</p>
             <button onClick={() => setShowCreate(true)} style={styles.emptyBtn}><Plus size={14} /> Create First Character</button>
