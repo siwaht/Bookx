@@ -3,11 +3,11 @@ import { useParams } from 'react-router-dom';
 import { backgroundBoost, chapters as chaptersApi } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import { toast } from '../components/Toast';
-import type { BoostScene, Chapter } from '../types';
+import type { BoostScene, BoostAmbience, BoostSFX, Chapter } from '../types';
 import {
-  Sparkles, Music, Wind, Volume2, Trash2, ChevronDown, ChevronRight,
+  Sparkles, Music, Trash2, ChevronDown, ChevronRight,
   Loader2, Zap, Check, Brain, Film, Waves, AudioLines, Play,
-  RotateCcw, CheckCircle2, Circle, Layers, SlidersHorizontal
+  RotateCcw, CheckCircle2, Layers, SlidersHorizontal,
 } from 'lucide-react';
 
 /* ── Mood color + icon maps ── */
@@ -22,125 +22,210 @@ const MOOD_ICONS: Record<string, string> = {
   melancholic: '😢', epic: '🏔️', comedic: '😄', mysterious: '🔮', dramatic: '🎭',
   tense: '😬', joyful: '🎉', chase: '🏃', battle: '⚔️', exploration: '🧭',
 };
+const DEFAULT_MOOD_COLOR = '#6366F1';
+const DEFAULT_MOOD_ICON = '🎵';
+
+/* ── Provider / model metadata ── */
+interface ProviderMeta {
+  providers: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }>;
+  currentProvider: string | null;
+  currentModel: string | null;
+}
 
 /* ═══════════════════════════════════════════
    Main Page
    ═══════════════════════════════════════════ */
 export function BackgroundBoostPage() {
   const { bookId } = useParams<{ bookId: string }>();
-  const caps = useAppStore((s) => s.capabilities);
+  const capabilities = useAppStore((s) => s.capabilities);
 
+  /* ── State ── */
   const [scenes, setScenes] = useState<BoostScene[]>([]);
   const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [genM, setGenM] = useState(true);
-  const [genA, setGenA] = useState(true);
-  const [genS, setGenS] = useState(true);
-  const [selChapters, setSelChapters] = useState<Set<string>>(new Set());
-  const [md, setMd] = useState<{
-    providers: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }>;
-    currentProvider: string | null;
-    currentModel: string | null;
-  } | null>(null);
-  const [prov, setProv] = useState('');
+  const [providerMeta, setProviderMeta] = useState<ProviderMeta | null>(null);
+  const [provider, setProvider] = useState('');
   const [model, setModel] = useState('');
 
+  const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set());
+  const [expandedScene, setExpandedScene] = useState<string | null>(null);
+  const [selectedScenes, setSelectedScenes] = useState<Set<string>>(new Set());
+  const [generateMusic, setGenerateMusic] = useState(true);
+  const [generateAmbience, setGenerateAmbience] = useState(true);
+  const [generateSfx, setGenerateSfx] = useState(true);
+
+  const [loading, setLoading] = useState(true);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [generating, setGenerating] = useState(false);
+  const [confirmingClear, setConfirmingClear] = useState(false);
+
+  /* ── Derived ── */
+  const availableModels = (provider && providerMeta?.providers[provider]?.models) || [];
+  const canAnalyze = !analyzing && chapters.length > 0;
+
+  const stats = useMemo(() => ({
+    sfx: scenes.reduce((sum, s) => sum + (s.sfx?.length || 0), 0),
+    ambience: scenes.reduce((sum, s) => sum + (s.ambience?.length || 0), 0),
+    music: scenes.filter((s) => s.music_prompt).length,
+    generated: scenes.filter((s) => s.status === 'generated').length,
+  }), [scenes]);
+
   /* ── Data loading ── */
-  const load = useCallback(async () => {
-    if (!bookId) return;
-    try { setScenes(await backgroundBoost.scenes(bookId)); } catch {}
-  }, [bookId]);
-
-  const loadCh = useCallback(async () => {
-    if (!bookId) return;
-    try { setChapters(await chaptersApi.list(bookId)); } catch {}
-  }, [bookId]);
-
-  const loadMd = useCallback(async () => {
+  const loadScenes = useCallback(async () => {
     if (!bookId) return;
     try {
-      const d = await backgroundBoost.models(bookId);
-      setMd(d);
-      if (d.currentProvider) setProv(d.currentProvider);
-      if (d.currentModel) setModel(d.currentModel);
-    } catch {}
+      setScenes(await backgroundBoost.scenes(bookId));
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to load scenes');
+    }
   }, [bookId]);
 
-  useEffect(() => { load(); loadCh(); loadMd(); }, [load, loadCh, loadMd]);
+  const loadChapters = useCallback(async () => {
+    if (!bookId) return;
+    try {
+      setChapters(await chaptersApi.list(bookId));
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to load chapters');
+    }
+  }, [bookId]);
 
-  const avail = (prov && md?.providers[prov]?.models) || [];
+  const loadProviderMeta = useCallback(async () => {
+    if (!bookId) return;
+    try {
+      const data = await backgroundBoost.models(bookId);
+      setProviderMeta(data);
+      if (data.currentProvider) setProvider(data.currentProvider);
+      if (data.currentModel) setModel(data.currentModel);
+    } catch {
+      // Provider metadata is optional — degrade gracefully
+    }
+  }, [bookId]);
+
   useEffect(() => {
-    if (prov && avail.length > 0 && !avail.find(m => m.id === model)) setModel(avail[0].id);
-  }, [prov, avail, model]);
+    setLoading(true);
+    Promise.all([loadScenes(), loadChapters(), loadProviderMeta()])
+      .finally(() => setLoading(false));
+  }, [loadScenes, loadChapters, loadProviderMeta]);
+
+  // Reset model when provider changes and current model isn't available
+  useEffect(() => {
+    if (provider && availableModels.length > 0 && !availableModels.find((m) => m.id === model)) {
+      setModel(availableModels[0].id);
+    }
+  }, [provider, availableModels, model]);
 
   /* ── Actions ── */
-  const analyze = async () => {
-    if (!bookId) return;
+  const handleAnalyze = async () => {
+    if (!bookId || !canAnalyze) return;
     setAnalyzing(true);
     try {
-      const chapterIds = selChapters.size > 0 ? Array.from(selChapters) : undefined;
-      const r = await backgroundBoost.analyze(bookId, {
-        chapterIds, provider: prov || undefined, model: model || undefined,
+      const chapterIds = selectedChapters.size > 0 ? Array.from(selectedChapters) : undefined;
+      const result = await backgroundBoost.analyze(bookId, {
+        chapterIds,
+        provider: provider || undefined,
+        model: model || undefined,
       });
-      toast.success(`Analyzed ${r.chapters_analyzed} chapter${r.chapters_analyzed !== 1 ? 's' : ''} → ${r.total_scenes} scenes`);
-      await load();
-    } catch (e: any) { toast.error(e.message); }
-    finally { setAnalyzing(false); }
+      toast.success(
+        `Analyzed ${result.chapters_analyzed} chapter${result.chapters_analyzed !== 1 ? 's' : ''} → ${result.total_scenes} scenes`,
+      );
+      await loadScenes();
+    } catch (err: any) {
+      toast.error(err.message ?? 'Analysis failed');
+    } finally {
+      setAnalyzing(false);
+    }
   };
 
-  const generate = async () => {
-    if (!bookId) return;
+  const handleGenerate = async () => {
+    if (!bookId || generating) return;
     setGenerating(true);
     try {
-      const ids = selected.size > 0 ? Array.from(selected) : undefined;
-      const r = await backgroundBoost.generate(bookId, {
-        scene_ids: ids, generate_music: genM, generate_ambience: genA, generate_sfx: genS,
+      const sceneIds = selectedScenes.size > 0 ? Array.from(selectedScenes) : undefined;
+      const result = await backgroundBoost.generate(bookId, {
+        scene_ids: sceneIds,
+        generate_music: generateMusic,
+        generate_ambience: generateAmbience,
+        generate_sfx: generateSfx,
       });
-      toast.success(`Generated ${r.music_generated + r.ambience_generated + r.sfx_generated} clips, placed ${r.clips_created} on timeline`);
-      if (r.errors?.length) toast.error(`${r.errors.length} errors`);
-      await load();
-    } catch (e: any) { toast.error(e.message); }
-    finally { setGenerating(false); }
+      const totalGenerated = result.music_generated + result.ambience_generated + result.sfx_generated;
+      toast.success(`Generated ${totalGenerated} clips, placed ${result.clips_created} on timeline`);
+      if (result.errors?.length) {
+        toast.error(`${result.errors.length} error${result.errors.length !== 1 ? 's' : ''} during generation`);
+      }
+      await loadScenes();
+    } catch (err: any) {
+      toast.error(err.message ?? 'Generation failed');
+    } finally {
+      setGenerating(false);
+    }
   };
 
-  const clear = async () => {
-    if (!bookId || !confirm('Remove all Background Boost scenes and clips?')) return;
+  const handleClear = async () => {
+    if (!bookId) return;
+    if (!confirmingClear) {
+      setConfirmingClear(true);
+      return;
+    }
     try {
       await backgroundBoost.clear(bookId, true);
       setScenes([]);
-      toast.success('Cleared');
-    } catch (e: any) { toast.error(e.message); }
+      setSelectedScenes(new Set());
+      toast.success('All scenes and clips cleared');
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to clear');
+    } finally {
+      setConfirmingClear(false);
+    }
   };
 
-  const delScene = async (id: string) => {
+  const handleDeleteScene = async (id: string) => {
     if (!bookId) return;
     try {
       await backgroundBoost.deleteScene(bookId, id);
-      setScenes(p => p.filter(s => s.id !== id));
-    } catch (e: any) { toast.error(e.message); }
+      setScenes((prev) => prev.filter((s) => s.id !== id));
+      setSelectedScenes((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to delete scene');
+    }
   };
 
-  const updScene = async (id: string, u: any) => {
+  const handleUpdateScene = async (id: string, updates: Partial<BoostScene>) => {
     if (!bookId) return;
     try {
-      const r = await backgroundBoost.updateScene(bookId, id, u);
-      setScenes(p => p.map(s => s.id === id ? r : s));
-    } catch (e: any) { toast.error(e.message); }
+      const updated = await backgroundBoost.updateScene(bookId, id, updates);
+      setScenes((prev) => prev.map((s) => (s.id === id ? updated : s)));
+    } catch (err: any) {
+      toast.error(err.message ?? 'Failed to update scene');
+    }
   };
 
-  const toggle = (id: string) =>
-    setSelected(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleSceneSelection = (id: string) =>
+    setSelectedScenes((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
 
-  /* ── Stats ── */
-  const stats = useMemo(() => ({
-    sfx: scenes.reduce((s, sc) => s + (sc.sfx?.length || 0), 0),
-    amb: scenes.reduce((s, sc) => s + (sc.ambience?.length || 0), 0),
-    mus: scenes.filter(s => s.music_prompt).length,
-    generated: scenes.filter(s => s.status === 'generated').length,
-  }), [scenes]);
+  const toggleChapterSelection = (id: string) =>
+    setSelectedChapters((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  /* ── Render ── */
+  if (loading) {
+    return (
+      <div style={{ ...S.page, alignItems: 'center', justifyContent: 'center', minHeight: 300 }}>
+        <Loader2 size={24} className="spinner" style={{ color: 'var(--accent)' }} />
+      </div>
+    );
+  }
+
+  const allScenesGenerated = stats.generated === scenes.length && scenes.length > 0;
 
   return (
     <div style={S.page}>
@@ -158,18 +243,26 @@ export function BackgroundBoostPage() {
             </p>
           </div>
           {scenes.length > 0 && (
-            <button onClick={clear} style={S.clearBtn} title="Clear all scenes">
-              <RotateCcw size={13} /> Reset
+            <button
+              onClick={handleClear}
+              onBlur={() => setConfirmingClear(false)}
+              style={{
+                ...S.clearBtn,
+                background: confirmingClear ? 'var(--danger)' : 'var(--danger-subtle)',
+                color: confirmingClear ? '#fff' : 'var(--danger)',
+              }}
+              aria-label="Clear all scenes and clips"
+            >
+              <RotateCcw size={13} /> {confirmingClear ? 'Confirm Reset' : 'Reset'}
             </button>
           )}
         </div>
 
-        {/* Stats bar */}
         {scenes.length > 0 && (
           <div style={S.statsBar}>
             <StatPill icon={<Film size={12} />} label="Scenes" value={scenes.length} color="var(--accent)" />
-            <StatPill icon={<Music size={12} />} label="Music" value={stats.mus} color="#8B5CF6" />
-            <StatPill icon={<Waves size={12} />} label="Ambient" value={stats.amb} color="#10B981" />
+            <StatPill icon={<Music size={12} />} label="Music" value={stats.music} color="#8B5CF6" />
+            <StatPill icon={<Waves size={12} />} label="Ambient" value={stats.ambience} color="#10B981" />
             <StatPill icon={<AudioLines size={12} />} label="SFX" value={stats.sfx} color="#F59E0B" />
             <StatPill icon={<CheckCircle2 size={12} />} label="Generated" value={stats.generated} color="var(--success)" />
           </div>
@@ -177,7 +270,13 @@ export function BackgroundBoostPage() {
       </div>
 
       {/* ── Step 1: Analyze ── */}
-      <StepCard step={1} title="Analyze Scenes" subtitle="AI reads your manuscript to detect mood shifts, sound cues, and cinematic moments" icon={<Brain size={16} />} done={scenes.length > 0}>
+      <StepCard
+        step={1}
+        title="Analyze Scenes"
+        subtitle="AI reads your manuscript to detect mood shifts, sound cues, and cinematic moments"
+        icon={<Brain size={16} />}
+        done={scenes.length > 0}
+      >
         <div style={S.featureCallout}>
           <div style={S.featureGrid}>
             <FeatureTag icon="🎵" label="Music cues" />
@@ -187,26 +286,40 @@ export function BackgroundBoostPage() {
           </div>
         </div>
 
-        {md && (
+        {providerMeta && (
           <div style={S.providerRow}>
             <div style={S.fieldGroup}>
               <label style={S.fieldLabel}>
                 <Brain size={10} /> Provider
               </label>
-              <select value={prov} onChange={e => setProv(e.target.value)} style={S.select}>
+              <select
+                value={provider}
+                onChange={(e) => setProvider(e.target.value)}
+                style={S.select}
+                aria-label="AI provider"
+              >
                 <option value="">Auto-detect</option>
-                {Object.entries(md.providers).map(([k, v]) => (
-                  <option key={k} value={k} disabled={!v.hasKey}>
-                    {k.charAt(0).toUpperCase() + k.slice(1)}{!v.hasKey ? ' (no key)' : ''}
+                {Object.entries(providerMeta.providers).map(([key, meta]) => (
+                  <option key={key} value={key} disabled={!meta.hasKey}>
+                    {key.charAt(0).toUpperCase() + key.slice(1)}
+                    {!meta.hasKey ? ' (no key)' : ''}
                   </option>
                 ))}
               </select>
             </div>
             <div style={S.fieldGroup}>
               <label style={S.fieldLabel}>Model</label>
-              <select value={model} onChange={e => setModel(e.target.value)} style={S.select} disabled={!prov}>
-                {!prov && <option value="">Default</option>}
-                {avail.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
+              <select
+                value={model}
+                onChange={(e) => setModel(e.target.value)}
+                style={S.select}
+                disabled={!provider}
+                aria-label="AI model"
+              >
+                {!provider && <option value="">Default</option>}
+                {availableModels.map((m) => (
+                  <option key={m.id} value={m.id}>{m.label}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -217,58 +330,69 @@ export function BackgroundBoostPage() {
             <div style={S.chapterHeader}>
               <span style={S.fieldLabel}>Chapters to analyze</span>
               <div style={{ display: 'flex', gap: 6 }}>
-                {selChapters.size > 0 && (
-                  <button onClick={() => setSelChapters(new Set())} style={S.tinyBtn}>Clear</button>
+                {selectedChapters.size > 0 && (
+                  <button onClick={() => setSelectedChapters(new Set())} style={S.tinyBtn}>
+                    Clear
+                  </button>
                 )}
-                <button onClick={() => setSelChapters(new Set(chapters.map(c => c.id)))} style={S.tinyBtn}>All</button>
+                <button
+                  onClick={() => setSelectedChapters(new Set(chapters.map((c) => c.id)))}
+                  style={S.tinyBtn}
+                >
+                  All
+                </button>
               </div>
             </div>
             <div style={S.chapterGrid}>
               {chapters.map((ch, i) => {
-                const isSel = selChapters.has(ch.id);
+                const isSelected = selectedChapters.has(ch.id);
                 return (
                   <button
                     key={ch.id}
-                    onClick={() => setSelChapters(p => {
-                      const n = new Set(p); n.has(ch.id) ? n.delete(ch.id) : n.add(ch.id); return n;
-                    })}
+                    onClick={() => toggleChapterSelection(ch.id)}
                     style={{
                       ...S.chapterChip,
-                      borderColor: isSel ? 'var(--accent)' : 'var(--border-subtle)',
-                      background: isSel ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
-                      color: isSel ? 'var(--accent)' : 'var(--text-secondary)',
-                      fontWeight: isSel ? 600 : 400,
+                      borderColor: isSelected ? 'var(--accent)' : 'var(--border-subtle)',
+                      background: isSelected ? 'var(--accent-subtle)' : 'var(--bg-elevated)',
+                      color: isSelected ? 'var(--accent)' : 'var(--text-secondary)',
+                      fontWeight: isSelected ? 600 : 400,
                     }}
+                    aria-pressed={isSelected}
                   >
-                    {isSel && <Check size={10} />}
+                    {isSelected && <Check size={10} />}
                     {ch.title || `Ch ${i + 1}`}
                   </button>
                 );
               })}
             </div>
-            {selChapters.size > 0 && (
+            {selectedChapters.size > 0 && (
               <p style={S.selectionHint}>
-                {selChapters.size} of {chapters.length} selected
+                {selectedChapters.size} of {chapters.length} selected
               </p>
             )}
           </div>
         )}
 
         <button
-          onClick={analyze}
-          disabled={analyzing || chapters.length === 0}
+          onClick={handleAnalyze}
+          disabled={!canAnalyze}
           style={{
             ...S.actionBtn,
-            background: analyzing || chapters.length === 0
-              ? 'var(--bg-elevated)'
-              : 'linear-gradient(135deg, var(--accent), #6d9af5)',
-            color: analyzing || chapters.length === 0 ? 'var(--text-muted)' : '#fff',
+            background: canAnalyze
+              ? 'linear-gradient(135deg, var(--accent), #6d9af5)'
+              : 'var(--bg-elevated)',
+            color: canAnalyze ? '#fff' : 'var(--text-muted)',
           }}
         >
-          {analyzing
-            ? <><Loader2 size={15} className="spinner" /> Analyzing scenes...</>
-            : <><Zap size={15} /> Analyze {selChapters.size > 0 ? `${selChapters.size} Chapter${selChapters.size !== 1 ? 's' : ''}` : `All ${chapters.length} Chapter${chapters.length !== 1 ? 's' : ''}`}</>
-          }
+          {analyzing ? (
+            <><Loader2 size={15} className="spinner" /> Analyzing scenes...</>
+          ) : (
+            <><Zap size={15} /> Analyze {
+              selectedChapters.size > 0
+                ? `${selectedChapters.size} Chapter${selectedChapters.size !== 1 ? 's' : ''}`
+                : `All ${chapters.length} Chapter${chapters.length !== 1 ? 's' : ''}`
+            }</>
+          )}
         </button>
         {chapters.length === 0 && (
           <p style={S.emptyHint}>Import a manuscript first to get started.</p>
@@ -279,33 +403,37 @@ export function BackgroundBoostPage() {
       {scenes.length > 0 && (
         <StepCard
           step={2}
-          title={`Scene Breakdown`}
+          title="Scene Breakdown"
           subtitle={`${scenes.length} scene${scenes.length !== 1 ? 's' : ''} detected across your manuscript`}
           icon={<Layers size={16} />}
-          done={stats.generated === scenes.length && scenes.length > 0}
+          done={allScenesGenerated}
           headerRight={
             <div style={{ display: 'flex', gap: 6 }}>
               <button
-                onClick={() => setSelected(new Set(scenes.map(s => s.id)))}
+                onClick={() => setSelectedScenes(new Set(scenes.map((s) => s.id)))}
                 style={S.tinyBtn}
-              >Select All</button>
-              {selected.size > 0 && (
-                <button onClick={() => setSelected(new Set())} style={S.tinyBtn}>Deselect</button>
+              >
+                Select All
+              </button>
+              {selectedScenes.size > 0 && (
+                <button onClick={() => setSelectedScenes(new Set())} style={S.tinyBtn}>
+                  Deselect
+                </button>
               )}
             </div>
           }
         >
           <div style={S.sceneList} className="stagger-children">
-            {scenes.map(sc => (
+            {scenes.map((scene) => (
               <SceneCard
-                key={sc.id}
-                scene={sc}
-                exp={expanded === sc.id}
-                sel={selected.has(sc.id)}
-                onExp={() => setExpanded(expanded === sc.id ? null : sc.id)}
-                onSel={() => toggle(sc.id)}
-                onDel={() => delScene(sc.id)}
-                onUpd={u => updScene(sc.id, u)}
+                key={scene.id}
+                scene={scene}
+                isExpanded={expandedScene === scene.id}
+                isSelected={selectedScenes.has(scene.id)}
+                onToggleExpand={() => setExpandedScene(expandedScene === scene.id ? null : scene.id)}
+                onToggleSelect={() => toggleSceneSelection(scene.id)}
+                onDelete={() => handleDeleteScene(scene.id)}
+                onUpdate={(updates) => handleUpdateScene(scene.id, updates)}
               />
             ))}
           </div>
@@ -317,41 +445,41 @@ export function BackgroundBoostPage() {
         <StepCard
           step={3}
           title="Generate & Place"
-          subtitle={`Generate audio for ${selected.size > 0 ? `${selected.size} selected` : 'all'} scenes and place on timeline`}
+          subtitle={`Generate audio for ${selectedScenes.size > 0 ? `${selectedScenes.size} selected` : 'all'} scenes and place on timeline`}
           icon={<Play size={16} />}
         >
           <div style={S.genGrid}>
             <GenToggle
-              checked={genM}
-              onChange={setGenM}
+              checked={generateMusic}
+              onChange={setGenerateMusic}
               icon={<Music size={15} />}
               label="Music"
-              count={stats.mus}
+              count={stats.music}
               color="#8B5CF6"
-              warning={!caps?.hasMusic ? 'Needs ElevenLabs' : undefined}
+              warning={!capabilities?.hasMusic ? 'Needs ElevenLabs' : undefined}
             />
             <GenToggle
-              checked={genA}
-              onChange={setGenA}
+              checked={generateAmbience}
+              onChange={setGenerateAmbience}
               icon={<Waves size={15} />}
               label="Ambience"
-              count={stats.amb}
+              count={stats.ambience}
               color="#10B981"
-              warning={!caps?.hasSFX ? 'Needs ElevenLabs' : undefined}
+              warning={!capabilities?.hasSFX ? 'Needs ElevenLabs' : undefined}
             />
             <GenToggle
-              checked={genS}
-              onChange={setGenS}
+              checked={generateSfx}
+              onChange={setGenerateSfx}
               icon={<AudioLines size={15} />}
               label="SFX"
               count={stats.sfx}
               color="#F59E0B"
-              warning={!caps?.hasSFX ? 'Needs ElevenLabs' : undefined}
+              warning={!capabilities?.hasSFX ? 'Needs ElevenLabs' : undefined}
             />
           </div>
 
           <button
-            onClick={generate}
+            onClick={handleGenerate}
             disabled={generating}
             style={{
               ...S.actionBtn,
@@ -361,10 +489,13 @@ export function BackgroundBoostPage() {
               color: generating ? 'var(--text-muted)' : '#fff',
             }}
           >
-            {generating
-              ? <><Loader2 size={15} className="spinner" /> Generating audio...</>
-              : <><Sparkles size={15} /> Generate {selected.size > 0 ? `${selected.size} Scenes` : 'All Scenes'}</>
-            }
+            {generating ? (
+              <><Loader2 size={15} className="spinner" /> Generating audio...</>
+            ) : (
+              <><Sparkles size={15} /> Generate {
+                selectedScenes.size > 0 ? `${selectedScenes.size} Scenes` : 'All Scenes'
+              }</>
+            )}
           </button>
           <p style={S.emptyHint}>
             Audio will be placed on dedicated Boost tracks with volume, fades, and spacing. Fine-tune in Timeline.
@@ -379,9 +510,15 @@ export function BackgroundBoostPage() {
    Sub-components
    ═══════════════════════════════════════════ */
 
-function StatPill({ icon, label, value, color }: { icon: React.ReactNode; label: string; value: number; color: string }) {
+function StatPill({ icon, label, value, color }: {
+  icon: React.ReactNode; label: string; value: number; color: string;
+}) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', borderRadius: 20, background: `${color}11`, border: `1px solid ${color}22` }}>
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 6,
+      padding: '6px 12px', borderRadius: 20,
+      background: `${color}11`, border: `1px solid ${color}22`,
+    }}>
       <span style={{ color, display: 'flex' }}>{icon}</span>
       <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontWeight: 500 }}>{label}</span>
       <span style={{ fontSize: 12, fontWeight: 700, color }}>{value}</span>
@@ -405,10 +542,7 @@ function StepCard({ step, title, subtitle, icon, done, headerRight, children }: 
   return (
     <div style={S.stepCard} className="animate-in">
       <div style={S.stepHeader}>
-        <div style={{
-          ...S.stepNum,
-          background: done ? 'var(--success)' : 'var(--accent)',
-        }}>
+        <div style={{ ...S.stepNum, background: done ? 'var(--success)' : 'var(--accent)' }}>
           {done ? <Check size={13} /> : step}
         </div>
         <span style={{ display: 'flex', color: 'var(--text-muted)' }}>{icon}</span>
@@ -435,6 +569,8 @@ function GenToggle({ checked, onChange, icon, label, count, color, warning }: {
         borderColor: checked ? `${color}44` : 'var(--border-subtle)',
         background: checked ? `${color}08` : 'var(--bg-base)',
       }}
+      aria-pressed={checked}
+      aria-label={`${checked ? 'Disable' : 'Enable'} ${label} generation`}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <div style={{
@@ -445,9 +581,16 @@ function GenToggle({ checked, onChange, icon, label, count, color, warning }: {
         }}>
           {icon}
         </div>
-        <div style={{ textAlign: 'left' as const }}>
-          <div style={{ fontSize: 12, fontWeight: 600, color: checked ? 'var(--text-primary)' : 'var(--text-secondary)' }}>{label}</div>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{count} clip{count !== 1 ? 's' : ''}</div>
+        <div style={{ textAlign: 'left' }}>
+          <div style={{
+            fontSize: 12, fontWeight: 600,
+            color: checked ? 'var(--text-primary)' : 'var(--text-secondary)',
+          }}>
+            {label}
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>
+            {count} clip{count !== 1 ? 's' : ''}
+          </div>
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -468,116 +611,173 @@ function GenToggle({ checked, onChange, icon, label, count, color, warning }: {
 /* ═══════════════════════════════════════════
    Scene Card
    ═══════════════════════════════════════════ */
-function SceneCard({ scene: sc, exp, sel, onExp, onSel, onDel, onUpd }: {
-  scene: BoostScene; exp: boolean; sel: boolean;
-  onExp: () => void; onSel: () => void; onDel: () => void; onUpd: (u: any) => void;
+function SceneCard({ scene, isExpanded, isSelected, onToggleExpand, onToggleSelect, onDelete, onUpdate }: {
+  scene: BoostScene; isExpanded: boolean; isSelected: boolean;
+  onToggleExpand: () => void; onToggleSelect: () => void;
+  onDelete: () => void; onUpdate: (updates: Partial<BoostScene>) => void;
 }) {
-  const c = MOOD_COLORS[sc.mood] || '#6366F1';
+  const moodColor = MOOD_COLORS[scene.mood] || DEFAULT_MOOD_COLOR;
+
+  const updateAmbienceVolume = (index: number, volume: number) => {
+    const updated = [...scene.ambience];
+    updated[index] = { ...updated[index], volume: volume / 100 };
+    onUpdate({ ambience: updated });
+  };
+
+  const updateSfxVolume = (index: number, volume: number) => {
+    const updated = [...scene.sfx];
+    updated[index] = { ...updated[index], volume: volume / 100 };
+    onUpdate({ sfx: updated });
+  };
 
   return (
     <div style={{
       ...S.sceneCard,
-      borderColor: sel ? `${c}44` : 'var(--border-subtle)',
-      background: sel ? `${c}06` : 'var(--bg-base)',
+      borderColor: isSelected ? `${moodColor}44` : 'var(--border-subtle)',
+      background: isSelected ? `${moodColor}06` : 'var(--bg-base)',
     }}>
       {/* Color accent strip */}
-      <div style={{ position: 'absolute' as const, left: 0, top: 0, bottom: 0, width: 3, background: c, borderRadius: '3px 0 0 3px' }} />
+      <div style={{
+        position: 'absolute', left: 0, top: 0, bottom: 0,
+        width: 3, background: moodColor, borderRadius: '3px 0 0 3px',
+      }} />
 
-      <div style={S.sceneHdr} onClick={onExp}>
+      <div style={S.sceneHdr} onClick={onToggleExpand}>
         <button
-          onClick={e => { e.stopPropagation(); onSel(); }}
+          onClick={(e) => { e.stopPropagation(); onToggleSelect(); }}
           style={{
             ...S.checkBtn,
-            borderColor: sel ? c : 'var(--border-default)',
-            background: sel ? c : 'transparent',
+            borderColor: isSelected ? moodColor : 'var(--border-default)',
+            background: isSelected ? moodColor : 'transparent',
           }}
-          aria-label={sel ? 'Deselect scene' : 'Select scene'}
+          aria-label={isSelected ? 'Deselect scene' : 'Select scene'}
+          aria-pressed={isSelected}
         >
-          {sel && <Check size={10} color="#fff" />}
+          {isSelected && <Check size={10} color="#fff" />}
         </button>
 
-        <span style={{ fontSize: 18, lineHeight: 1 }}>{MOOD_ICONS[sc.mood] || '🎵'}</span>
+        <span style={{ fontSize: 18, lineHeight: 1 }}>
+          {MOOD_ICONS[scene.mood] || DEFAULT_MOOD_ICON}
+        </span>
 
         <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={S.sceneTitle}>{sc.title}</div>
+          <div style={S.sceneTitle}>{scene.title}</div>
           <div style={S.sceneMeta}>
-            <span style={{ ...S.moodBadge, background: `${c}18`, color: c }}>{sc.mood}</span>
-            <IntensityBar value={sc.intensity} color={c} />
-            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>Seg {sc.segment_start}–{sc.segment_end}</span>
+            <span style={{ ...S.moodBadge, background: `${moodColor}18`, color: moodColor }}>
+              {scene.mood}
+            </span>
+            <IntensityBar value={scene.intensity} color={moodColor} />
+            <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+              Seg {scene.segment_start}–{scene.segment_end}
+            </span>
           </div>
         </div>
 
         <div style={S.badges}>
-          {sc.music_prompt && <span style={{ ...S.tag, background: '#8B5CF618', color: '#8B5CF6' }}><Music size={9} /> Music</span>}
-          {(sc.ambience?.length || 0) > 0 && <span style={{ ...S.tag, background: '#10B98118', color: '#10B981' }}><Waves size={9} /> {sc.ambience.length}</span>}
-          {(sc.sfx?.length || 0) > 0 && <span style={{ ...S.tag, background: '#F59E0B18', color: '#F59E0B' }}><AudioLines size={9} /> {sc.sfx.length}</span>}
-          {sc.status === 'generated' && <span style={{ ...S.tag, background: 'var(--success-subtle)', color: 'var(--success)' }}><CheckCircle2 size={9} /> Done</span>}
+          {scene.music_prompt && (
+            <span style={{ ...S.tag, background: '#8B5CF618', color: '#8B5CF6' }}>
+              <Music size={9} /> Music
+            </span>
+          )}
+          {(scene.ambience?.length || 0) > 0 && (
+            <span style={{ ...S.tag, background: '#10B98118', color: '#10B981' }}>
+              <Waves size={9} /> {scene.ambience.length}
+            </span>
+          )}
+          {(scene.sfx?.length || 0) > 0 && (
+            <span style={{ ...S.tag, background: '#F59E0B18', color: '#F59E0B' }}>
+              <AudioLines size={9} /> {scene.sfx.length}
+            </span>
+          )}
+          {scene.status === 'generated' && (
+            <span style={{ ...S.tag, background: 'var(--success-subtle)', color: 'var(--success)' }}>
+              <CheckCircle2 size={9} /> Done
+            </span>
+          )}
         </div>
 
         <span style={{ color: 'var(--text-muted)', display: 'flex', transition: 'transform 200ms ease' }}>
-          {exp ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          {isExpanded ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
         </span>
 
-        <button onClick={e => { e.stopPropagation(); onDel(); }} style={S.iconBtn} title="Delete scene" aria-label="Delete scene">
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          style={S.iconBtn}
+          aria-label={`Delete scene: ${scene.title}`}
+        >
           <Trash2 size={13} />
         </button>
       </div>
 
-      {exp && (
+      {isExpanded && (
         <div style={S.sceneBody}>
-          {sc.music_prompt && (
+          {scene.music_prompt && (
             <LayerSection icon={<Music size={14} />} title="Background Music" color="#8B5CF6">
-              <div style={S.promptBox}>{sc.music_prompt}</div>
+              <div style={S.promptBox}>{scene.music_prompt}</div>
               <div style={S.controlRow}>
-                <SliderControl label="Volume" value={Math.round(sc.music_volume * 100)} suffix="%" onChange={v => onUpd({ music_volume: v / 100 })} />
-                <NumberControl label="Fade In" value={sc.music_fade_in_ms} suffix="ms" onChange={v => onUpd({ music_fade_in_ms: v })} />
-                <NumberControl label="Fade Out" value={sc.music_fade_out_ms} suffix="ms" onChange={v => onUpd({ music_fade_out_ms: v })} />
+                <SliderControl
+                  label="Volume"
+                  value={Math.round(scene.music_volume * 100)}
+                  suffix="%"
+                  onChange={(v) => onUpdate({ music_volume: v / 100 })}
+                />
+                <NumberControl
+                  label="Fade In"
+                  value={scene.music_fade_in_ms}
+                  suffix="ms"
+                  onChange={(v) => onUpdate({ music_fade_in_ms: v })}
+                />
+                <NumberControl
+                  label="Fade Out"
+                  value={scene.music_fade_out_ms}
+                  suffix="ms"
+                  onChange={(v) => onUpdate({ music_fade_out_ms: v })}
+                />
               </div>
             </LayerSection>
           )}
 
-          {sc.ambience?.length > 0 && (
-            <LayerSection icon={<Waves size={14} />} title={`Ambient (${sc.ambience.length})`} color="#10B981">
-              {sc.ambience.map((a, i) => (
+          {scene.ambience?.length > 0 && (
+            <LayerSection icon={<Waves size={14} />} title={`Ambient (${scene.ambience.length})`} color="#10B981">
+              {scene.ambience.map((amb: BoostAmbience, i: number) => (
                 <div key={i} style={S.subItem}>
-                  <div style={S.promptBox}>{a.prompt}</div>
+                  <div style={S.promptBox}>{amb.prompt}</div>
                   <div style={S.controlRow}>
                     <SliderControl
                       label="Vol"
-                      value={Math.round(a.volume * 100)}
+                      value={Math.round(amb.volume * 100)}
                       suffix="%"
-                      onChange={v => {
-                        const u = [...sc.ambience];
-                        u[i] = { ...u[i], volume: v / 100 };
-                        onUpd({ ambience: u });
-                      }}
+                      onChange={(v) => updateAmbienceVolume(i, v)}
                     />
-                    {a.loop && <span style={{ ...S.tag, background: '#10B98118', color: '#10B981', fontSize: 9 }}>🔁 Loop</span>}
-                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{a.duration_hint_seconds}s</span>
+                    {amb.loop && (
+                      <span style={{ ...S.tag, background: '#10B98118', color: '#10B981', fontSize: 9 }}>
+                        🔁 Loop
+                      </span>
+                    )}
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                      {amb.duration_hint_seconds}s
+                    </span>
                   </div>
                 </div>
               ))}
             </LayerSection>
           )}
 
-          {sc.sfx?.length > 0 && (
-            <LayerSection icon={<AudioLines size={14} />} title={`SFX (${sc.sfx.length})`} color="#F59E0B">
-              {sc.sfx.map((fx, i) => (
+          {scene.sfx?.length > 0 && (
+            <LayerSection icon={<AudioLines size={14} />} title={`SFX (${scene.sfx.length})`} color="#F59E0B">
+              {scene.sfx.map((fx: BoostSFX, i: number) => (
                 <div key={i} style={S.subItem}>
                   <div style={S.promptBox}>{fx.prompt}</div>
                   <div style={S.controlRow}>
                     <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                      @ Seg {fx.at_segment} · {fx.position}{fx.offset_hint_ms ? ` +${fx.offset_hint_ms}ms` : ''} · {fx.duration_hint_seconds}s
+                      @ Seg {fx.at_segment} · {fx.position}
+                      {fx.offset_hint_ms ? ` +${fx.offset_hint_ms}ms` : ''} · {fx.duration_hint_seconds}s
                     </span>
                     <SliderControl
                       label="Vol"
                       value={Math.round(fx.volume * 100)}
                       suffix="%"
-                      onChange={v => {
-                        const u = [...sc.sfx];
-                        u[i] = { ...u[i], volume: v / 100 };
-                        onUpd({ sfx: u });
-                      }}
+                      onChange={(v) => updateSfxVolume(i, v)}
                     />
                   </div>
                 </div>
@@ -585,10 +785,13 @@ function SceneCard({ scene: sc, exp, sel, onExp, onSel, onDel, onUpd }: {
             </LayerSection>
           )}
 
-          {sc.voice_mood && (
+          {scene.voice_mood && (
             <LayerSection icon={<SlidersHorizontal size={14} />} title="Voice Mood" color="var(--text-tertiary)">
-              <p style={{ fontSize: 12, color: 'var(--text-secondary)', margin: 0, fontStyle: 'italic', lineHeight: 1.5 }}>
-                "{sc.voice_mood}"
+              <p style={{
+                fontSize: 12, color: 'var(--text-secondary)',
+                margin: 0, fontStyle: 'italic', lineHeight: 1.5,
+              }}>
+                "{scene.voice_mood}"
               </p>
             </LayerSection>
           )}
@@ -601,9 +804,23 @@ function SceneCard({ scene: sc, exp, sel, onExp, onSel, onDel, onUpd }: {
 /* ── Micro-components ── */
 
 function IntensityBar({ value, color }: { value: number; color: string }) {
+  const percentage = Math.min(Math.max(value, 0), 1) * 100;
   return (
-    <div style={{ width: 48, height: 4, background: 'var(--bg-elevated)', borderRadius: 3, overflow: 'hidden', display: 'inline-block' }}>
-      <div style={{ width: `${value * 100}%`, background: color, height: '100%', borderRadius: 3, transition: 'width 300ms ease' }} />
+    <div
+      style={{
+        width: 48, height: 4, background: 'var(--bg-elevated)',
+        borderRadius: 3, overflow: 'hidden', display: 'inline-block',
+      }}
+      role="meter"
+      aria-label="Intensity"
+      aria-valuenow={percentage}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
+      <div style={{
+        width: `${percentage}%`, background: color,
+        height: '100%', borderRadius: 3, transition: 'width 300ms ease',
+      }} />
     </div>
   );
 }
@@ -629,10 +846,13 @@ function SliderControl({ label, value, suffix, onChange }: {
     <label style={S.sliderLabel}>
       {label}
       <input
-        type="range" min="0" max="100"
+        type="range"
+        min={0}
+        max={100}
         value={value}
-        onChange={e => onChange(parseInt(e.target.value))}
+        onChange={(e) => onChange(parseInt(e.target.value, 10))}
         style={S.slider}
+        aria-label={`${label} slider`}
       />
       <span style={S.sliderVal}>{value}{suffix}</span>
     </label>
@@ -646,9 +866,14 @@ function NumberControl({ label, value, suffix, onChange }: {
     <label style={S.sliderLabel}>
       {label}
       <input
-        type="number" value={value} min={0} max={10000} step={500}
-        onChange={e => onChange(parseInt(e.target.value) || 0)}
+        type="number"
+        value={value}
+        min={0}
+        max={10000}
+        step={100}
+        onChange={(e) => onChange(parseInt(e.target.value, 10) || 0)}
         style={S.numInput}
+        aria-label={`${label} input`}
       />
       <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{suffix}</span>
     </label>
@@ -731,14 +956,13 @@ const S: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     padding: '7px 14px',
-    background: 'var(--danger-subtle)',
-    color: 'var(--danger)',
     border: '1px solid rgba(248,113,113,0.15)',
     borderRadius: 'var(--radius-sm)',
     fontSize: 12,
     fontWeight: 500,
     cursor: 'pointer',
     flexShrink: 0,
+    transition: 'background 150ms ease, color 150ms ease',
   },
 
   /* Step cards */
@@ -861,6 +1085,7 @@ const S: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     whiteSpace: 'nowrap',
     background: 'none',
+    transition: 'border-color 150ms ease, background 150ms ease',
   },
   selectionHint: {
     fontSize: 11,
@@ -891,6 +1116,7 @@ const S: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
     boxShadow: '0 2px 8px rgba(91,141,239,0.15)',
+    transition: 'opacity 150ms ease',
   },
   emptyHint: {
     fontSize: 11,
@@ -917,6 +1143,7 @@ const S: Record<string, React.CSSProperties> = {
     background: 'none',
     width: '100%',
     textAlign: 'left',
+    transition: 'border-color 150ms ease, background 150ms ease',
   },
   warnBadge: {
     fontSize: 9,
