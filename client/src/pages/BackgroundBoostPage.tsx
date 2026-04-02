@@ -21,6 +21,7 @@ export function BackgroundBoostPage() {
   const [genM, setGenM] = useState(true);
   const [genA, setGenA] = useState(true);
   const [genS, setGenS] = useState(true);
+  const [selChapters, setSelChapters] = useState<Set<string>>(new Set());
   const [md, setMd] = useState<{ providers: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }>; currentProvider: string | null; currentModel: string | null } | null>(null);
   const [prov, setProv] = useState('');
   const [model, setModel] = useState('');
@@ -32,7 +33,7 @@ export function BackgroundBoostPage() {
   const avail = (prov && md?.providers[prov]?.models) || [];
   useEffect(() => { if (prov && avail.length > 0 && !avail.find(m => m.id === model)) setModel(avail[0].id); }, [prov, avail, model]);
 
-  const analyze = async () => { if (!bookId) return; setAnalyzing(true); try { const r = await backgroundBoost.analyze(bookId, { provider: prov || undefined, model: model || undefined }); toast.success(`Analyzed ${r.chapters_analyzed} chapters → ${r.total_scenes} scenes`); await load(); } catch (e: any) { toast.error(e.message); } finally { setAnalyzing(false); } };
+  const analyze = async () => { if (!bookId) return; setAnalyzing(true); try { const chapterIds = selChapters.size > 0 ? Array.from(selChapters) : undefined; const r = await backgroundBoost.analyze(bookId, { chapterIds, provider: prov || undefined, model: model || undefined }); toast.success(`Analyzed ${r.chapters_analyzed} chapter${r.chapters_analyzed !== 1 ? 's' : ''} → ${r.total_scenes} scenes`); await load(); } catch (e: any) { toast.error(e.message); } finally { setAnalyzing(false); } };
   const generate = async () => { if (!bookId) return; setGenerating(true); try { const ids = selected.size > 0 ? Array.from(selected) : undefined; const r = await backgroundBoost.generate(bookId, { scene_ids: ids, generate_music: genM, generate_ambience: genA, generate_sfx: genS }); toast.success(`Generated ${r.music_generated + r.ambience_generated + r.sfx_generated} clips, placed ${r.clips_created} on timeline`); if (r.errors?.length) toast.error(`${r.errors.length} errors`); await load(); } catch (e: any) { toast.error(e.message); } finally { setGenerating(false); } };
   const clear = async () => { if (!bookId || !confirm('Remove all Background Boost scenes and clips?')) return; try { await backgroundBoost.clear(bookId, true); setScenes([]); toast.success('Cleared'); } catch (e: any) { toast.error(e.message); } };
   const delScene = async (id: string) => { if (!bookId) return; try { await backgroundBoost.deleteScene(bookId, id); setScenes(p => p.filter(s => s.id !== id)); } catch (e: any) { toast.error(e.message); } };
@@ -57,8 +58,24 @@ export function BackgroundBoostPage() {
             <div style={{ flex: 1, minWidth: 160 }}><label style={{ fontSize: 10, color: 'var(--text-muted)', display: 'block', marginBottom: 3 }}>Model</label>
               <select value={model} onChange={e => setModel(e.target.value)} style={S.select} disabled={!prov}>{!prov && <option value="">Default</option>}{avail.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}</select></div>
           </div>}
+          {chapters.length > 0 && <div style={{ marginBottom: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <label style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 500 }}>Chapters to analyze</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {selChapters.size > 0 && <button onClick={() => setSelChapters(new Set())} style={{ ...S.ghostBtn, padding: '2px 8px', fontSize: 10 }}>Clear</button>}
+                <button onClick={() => setSelChapters(new Set(chapters.map(c => c.id)))} style={{ ...S.ghostBtn, padding: '2px 8px', fontSize: 10 }}>All</button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, maxHeight: 120, overflowY: 'auto', padding: '6px 0' }}>
+              {chapters.map((ch, i) => {
+                const isSel = selChapters.has(ch.id);
+                return <button key={ch.id} onClick={() => setSelChapters(p => { const n = new Set(p); n.has(ch.id) ? n.delete(ch.id) : n.add(ch.id); return n; })} style={{ padding: '4px 10px', fontSize: 11, borderRadius: 'var(--radius-sm)', border: isSel ? '1px solid var(--accent)' : '1px solid var(--border-subtle)', background: isSel ? 'var(--accent-subtle)' : 'var(--bg-elevated)', color: isSel ? 'var(--accent)' : 'var(--text-secondary)', cursor: 'pointer', fontWeight: isSel ? 600 : 400, whiteSpace: 'nowrap' }}>{ch.title || `Ch ${i + 1}`}</button>;
+              })}
+            </div>
+            {selChapters.size > 0 && <p style={{ fontSize: 10, color: 'var(--accent)', marginTop: 4, fontWeight: 500 }}>{selChapters.size} of {chapters.length} chapter{chapters.length !== 1 ? 's' : ''} selected — only these will be analyzed</p>}
+          </div>}
           <button onClick={analyze} disabled={analyzing || chapters.length === 0} style={{ ...S.primaryBtn, opacity: analyzing || chapters.length === 0 ? 0.5 : 1 }}>
-            {analyzing ? <><Loader2 size={14} className="spin" /> Analyzing...</> : <><Zap size={14} /> Analyze {chapters.length} Chapter{chapters.length !== 1 ? 's' : ''}</>}
+            {analyzing ? <><Loader2 size={14} className="spin" /> Analyzing...</> : <><Zap size={14} /> Analyze {selChapters.size > 0 ? `${selChapters.size} Chapter${selChapters.size !== 1 ? 's' : ''}` : `All ${chapters.length} Chapter${chapters.length !== 1 ? 's' : ''}`}</>}
           </button>
           {chapters.length === 0 && <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6 }}>Import a manuscript first.</p>}
         </div>

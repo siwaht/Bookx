@@ -419,16 +419,36 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
         return;
       }
 
-      // Store analysis in DB
-      run(db, 'DELETE FROM background_boost_scenes WHERE book_id = ?', [bookId]);
+      // Store analysis in DB — only delete scenes for analyzed chapters (not all)
+      if (chapter_ids?.length) {
+        const ph = chapter_ids.map(() => '?').join(',');
+        run(db, `DELETE FROM background_boost_scenes WHERE book_id = ? AND chapter_id IN (${ph})`, [bookId, ...chapter_ids]);
+      } else {
+        run(db, 'DELETE FROM background_boost_scenes WHERE book_id = ?', [bookId]);
+      }
       const scenes = parsed.scenes || [];
+      // Map scene segment ranges to chapters so we can tag each scene with its chapter_id
+      const chapterSegRanges = chaptersWithSegments.map((ch: any) => ({
+        id: ch.id,
+        segCount: ch.segments.length,
+      }));
+      let segOffset = 0;
+      const chapterRanges = chapterSegRanges.map((ch: any) => {
+        const start = segOffset;
+        segOffset += ch.segCount;
+        return { id: ch.id, start, end: segOffset - 1 };
+      });
+
       for (const scene of scenes) {
         const id = uuid();
+        // Find which chapter this scene belongs to based on segment_start
+        const matchedChapter = chapterRanges.find((cr: any) => (scene.segment_start ?? 0) >= cr.start && (scene.segment_start ?? 0) <= cr.end);
+        const chapterId = matchedChapter?.id || (chapterList.length === 1 ? chapterList[0].id : null);
         run(db,
-          `INSERT INTO background_boost_scenes (id, book_id, scene_index, title, mood, intensity, segment_start, segment_end, music_prompt, music_volume, music_fade_in_ms, music_fade_out_ms, music_duration_hint, music_loop, ambience_json, sfx_json, voice_mood, status)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
+          `INSERT INTO background_boost_scenes (id, book_id, chapter_id, scene_index, title, mood, intensity, segment_start, segment_end, music_prompt, music_volume, music_fade_in_ms, music_fade_out_ms, music_duration_hint, music_loop, ambience_json, sfx_json, voice_mood, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
           [
-            id, bookId, scene.scene_index, scene.title, scene.mood, scene.intensity,
+            id, bookId, chapterId, scene.scene_index, scene.title, scene.mood, scene.intensity,
             scene.segment_start ?? 0, scene.segment_end ?? 0,
             scene.music?.prompt || null, scene.music?.volume ?? 0.2,
             scene.music?.fade_in_ms ?? 2000, scene.music?.fade_out_ms ?? 3000,

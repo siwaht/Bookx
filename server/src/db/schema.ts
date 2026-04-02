@@ -282,6 +282,7 @@ export function initializeSchema(database: SqlJsDatabase): void {
     CREATE TABLE IF NOT EXISTS background_boost_scenes (
       id TEXT PRIMARY KEY,
       book_id TEXT NOT NULL REFERENCES books(id) ON DELETE CASCADE,
+      chapter_id TEXT REFERENCES chapters(id) ON DELETE CASCADE,
       scene_index INTEGER NOT NULL DEFAULT 0,
       title TEXT,
       mood TEXT,
@@ -302,6 +303,9 @@ export function initializeSchema(database: SqlJsDatabase): void {
     )
   `);
   database.run('CREATE INDEX IF NOT EXISTS idx_boost_scenes_book ON background_boost_scenes(book_id, scene_index)');
+
+  // Migration: add chapter_id to existing background_boost_scenes tables
+  try { database.run('ALTER TABLE background_boost_scenes ADD COLUMN chapter_id TEXT REFERENCES chapters(id) ON DELETE CASCADE'); } catch {}
 
   // ── Generation Jobs ──
   database.run(`
