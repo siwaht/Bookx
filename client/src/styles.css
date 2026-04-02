@@ -69,6 +69,8 @@ body {
   line-height: 1.5;
   overflow: hidden;
   height: 100vh;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.18) rgba(255,255,255,0.02);
 }
 
 #root {
@@ -85,18 +87,18 @@ body {
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 ::-webkit-scrollbar-track {
-  background: transparent;
+  background: rgba(255, 255, 255, 0.02);
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.18);
   border-radius: 10px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.28);
 }
 
 /* ── Focus styles ── */
@@ -421,7 +423,7 @@ div[style*="overflow: auto"],
 div[style*="overflow-y: auto"],
 div[style*="overflow: scroll"] {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.06) transparent;
+  scrollbar-color: rgba(255,255,255,0.18) rgba(255,255,255,0.02);
 }
 
 /* ── Tooltip-style hover on small buttons ── */
