@@ -45,10 +45,24 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
 
       const apiKey = provider === 'claude'
         ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+        : provider === 'cloudflare'
+        ? (getSetting(db, 'cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN)
         : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
       if (!apiKey) {
         res.status(400).json({ error: `No API key found for ${provider}. Go to Settings and add your ${provider} API key.` });
         return;
+      }
+
+      // Cloudflare also needs an account ID
+      let cloudflareAccountId: string | undefined;
+      let cloudflareGatewayId: string | undefined;
+      if (provider === 'cloudflare') {
+        cloudflareAccountId = getSetting(db, 'cloudflare_account_id') || process.env.CLOUDFLARE_ACCOUNT_ID || undefined;
+        cloudflareGatewayId = getSetting(db, 'cloudflare_gateway_id') || process.env.CLOUDFLARE_GATEWAY_ID || undefined;
+        if (!cloudflareAccountId) {
+          res.status(400).json({ error: 'Cloudflare Account ID is required. Add it in Settings.' });
+          return;
+        }
       }
 
       const format = book.format || 'single_narrator';
@@ -63,7 +77,7 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
       const userPrompt = `Here is the text to analyze:\n\n${chapterTexts.slice(0, 24000)}`;
 
       // Call LLM
-      const result = await callLLM(provider, apiKey, systemPrompt, userPrompt);
+      const result = await callLLM(provider, apiKey, systemPrompt, userPrompt, { cloudflareAccountId, cloudflareGatewayId });
 
       // Parse the JSON response
       let parsed;
@@ -105,10 +119,23 @@ export function aiParseRouter(db: SqlJsDatabase): Router {
       }
       const apiKey = provider === 'claude'
         ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+        : provider === 'cloudflare'
+        ? (getSetting(db, 'cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN)
         : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
       if (!apiKey) {
         res.status(400).json({ error: `No API key found for ${provider}.` });
         return;
+      }
+
+      let cfAccountId: string | undefined;
+      let cfGatewayId: string | undefined;
+      if (provider === 'cloudflare') {
+        cfAccountId = getSetting(db, 'cloudflare_account_id') || process.env.CLOUDFLARE_ACCOUNT_ID || undefined;
+        cfGatewayId = getSetting(db, 'cloudflare_gateway_id') || process.env.CLOUDFLARE_GATEWAY_ID || undefined;
+        if (!cfAccountId) {
+          res.status(400).json({ error: 'Cloudflare Account ID is required. Add it in Settings.' });
+          return;
+        }
       }
 
       const systemPrompt = `You are an expert audio production assistant specializing in ElevenLabs v3 audio tags.
@@ -129,7 +156,7 @@ Rules:
 - Keep the original text exactly as-is, only add tags
 - Return ONLY a JSON object with "tagged_text" (the text with tags inserted) and "tags_used" (array of tag names used)`;
 
-      const result = await callLLM(provider, apiKey, systemPrompt, text.slice(0, 4000));
+      const result = await callLLM(provider, apiKey, systemPrompt, text.slice(0, 4000), { cloudflareAccountId: cfAccountId, cloudflareGatewayId: cfGatewayId });
 
       let parsed;
       try {
@@ -152,8 +179,10 @@ Rules:
 }
 
 function detectAvailableProvider(db: SqlJsDatabase): string | null {
-  for (const p of ['openai', 'claude', 'mistral', 'gemini']) {
-    const key = p === 'claude' ? getSetting(db, 'claude_api_key') : getSetting(db, `${p}_api_key`);
+  for (const p of ['openai', 'claude', 'mistral', 'gemini', 'cloudflare']) {
+    const key = p === 'claude' ? getSetting(db, 'claude_api_key')
+      : p === 'cloudflare' ? getSetting(db, 'cloudflare_api_token')
+      : getSetting(db, `${p}_api_key`);
     if (key) return p;
   }
   // Fallback: check env vars
@@ -161,6 +190,7 @@ function detectAvailableProvider(db: SqlJsDatabase): string | null {
   if (process.env.ANTHROPIC_API_KEY) return 'claude';
   if (process.env.MISTRAL_API_KEY) return 'mistral';
   if (process.env.GEMINI_API_KEY) return 'gemini';
+  if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID) return 'cloudflare';
   return null;
 }
 
@@ -220,7 +250,7 @@ Rules:
 - Limit to the most impactful SFX/music suggestions (don't over-annotate).`;
 }
 
-async function callLLM(provider: string, apiKey: string, system: string, user: string): Promise<string> {
+async function callLLM(provider: string, apiKey: string, system: string, user: string, opts?: { cloudflareAccountId?: string; cloudflareGatewayId?: string }): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
 
@@ -310,6 +340,32 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
       }
       const data = await res.json() as any;
       return data.candidates[0].content.parts[0].text;
+    }
+
+    if (provider === 'cloudflare') {
+      const accountId = opts?.cloudflareAccountId;
+      if (!accountId) throw new Error('Cloudflare Account ID is required');
+      // Use gateway URL if available, otherwise direct API
+      const baseUrl = opts?.cloudflareGatewayId
+        ? `https://gateway.ai.cloudflare.com/v1/${accountId}/${opts.cloudflareGatewayId}`
+        : `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`;
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: '@cf/meta/llama-4-scout-17b-16e-instruct',
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          temperature: 0.3,
+          max_tokens: 8000,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        throw new Error(`Cloudflare AI error ${res.status}: ${errText}`);
+      }
+      const data = await res.json() as any;
+      return data.choices?.[0]?.message?.content || data.result?.response || '';
     }
 
     throw new Error(`Unsupported LLM provider: ${provider}`);

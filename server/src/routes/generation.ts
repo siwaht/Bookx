@@ -26,28 +26,31 @@ export function generationRouter(db: SqlJsDatabase): Router {
         'SELECT id, title, sort_order FROM chapters WHERE book_id = ? ORDER BY sort_order',
         [bookId]) as any[];
 
-      const chapterStats = chapters.map((ch: any) => {
-        const total = queryOne(db,
-          'SELECT COUNT(*) as count FROM segments WHERE chapter_id = ?', [ch.id]) as any;
-        const withAudio = queryOne(db,
-          `SELECT COUNT(*) as count FROM segments s
-           WHERE s.chapter_id = ? AND s.audio_asset_id IS NOT NULL
-           AND EXISTS (SELECT 1 FROM audio_assets a WHERE a.id = s.audio_asset_id)`,
-          [ch.id]) as any;
-        const withCharacter = queryOne(db,
-          `SELECT COUNT(*) as count FROM segments s
-           WHERE s.chapter_id = ? AND s.character_id IS NOT NULL
-           AND EXISTS (SELECT 1 FROM characters c WHERE c.id = s.character_id AND c.voice_id IS NOT NULL)`,
-          [ch.id]) as any;
+      // Batch query segment stats for all chapters at once
+      const segStatRows = queryAll(db,
+        `SELECT chapter_id,
+                COUNT(*) as total,
+                SUM(CASE WHEN audio_asset_id IS NOT NULL THEN 1 ELSE 0 END) as with_audio,
+                SUM(CASE WHEN character_id IS NOT NULL AND EXISTS (
+                  SELECT 1 FROM characters c WHERE c.id = segments.character_id AND c.voice_id IS NOT NULL
+                ) THEN 1 ELSE 0 END) as ready
+         FROM segments
+         WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?)
+         GROUP BY chapter_id`, [bookId]);
 
+      const segStatsMap = new Map<string, any>();
+      for (const row of segStatRows as any[]) segStatsMap.set(row.chapter_id, row);
+
+      const chapterStats = chapters.map((ch: any) => {
+        const s = segStatsMap.get(ch.id);
         return {
           chapter_id: ch.id,
           title: ch.title,
           sort_order: ch.sort_order,
-          total_segments: total.count,
-          with_audio: withAudio.count,
-          ready_to_generate: withCharacter.count,
-          missing_audio: total.count - withAudio.count,
+          total_segments: s?.total || 0,
+          with_audio: s?.with_audio || 0,
+          ready_to_generate: s?.ready || 0,
+          missing_audio: (s?.total || 0) - (s?.with_audio || 0),
         };
       });
 

@@ -20,6 +20,9 @@ const API_KEYS: ApiKeyConfig[] = [
   { key: 'deepgram_api_key', label: 'Deepgram', placeholder: 'dg-...', hint: 'Deepgram Aura TTS voices and speech-to-text' },
   { key: 'mistral_api_key', label: 'Mistral', placeholder: 'mist-...', hint: 'Mistral models for AI script parsing' },
   { key: 'gemini_api_key', label: 'Google Gemini', placeholder: 'AIza...', hint: 'Gemini models for AI script parsing' },
+  { key: 'cloudflare_api_token', label: 'Cloudflare Workers AI Token', placeholder: 'cfut_...', hint: 'Cloudflare Workers AI API token for LLM inference' },
+  { key: 'cloudflare_account_id', label: 'Cloudflare Account ID', placeholder: 'e.g. 2c5abfb2...', hint: 'Your Cloudflare account ID (found in dashboard URL)' },
+  { key: 'cloudflare_gateway_id', label: 'Cloudflare Gateway ID (optional)', placeholder: 'e.g. my-gateway', hint: 'AI Gateway ID for caching, rate limiting, and analytics' },
 ];
 
 const LLM_PROVIDERS = [
@@ -28,6 +31,7 @@ const LLM_PROVIDERS = [
   { value: 'claude', label: 'Anthropic Claude' },
   { value: 'mistral', label: 'Mistral' },
   { value: 'gemini', label: 'Google Gemini' },
+  { value: 'cloudflare', label: 'Cloudflare Workers AI' },
 ];
 
 export function SettingsPage() {

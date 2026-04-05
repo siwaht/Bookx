@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
-import { queryAll, queryOne, run } from '../db/helpers.js';
+import { queryAll, queryOne, run, withTransaction } from '../db/helpers.js';
 
 export function chaptersRouter(db: SqlJsDatabase): Router {
   const router = Router({ mergeParams: true });
@@ -9,15 +9,40 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
   // List chapters with progress stats
   router.get('/', (req: Request, res: Response) => {
     try {
-      const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [req.params.bookId]);
+      const bookId = req.params.bookId;
+      const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
+
+      // Batch query: get segment stats for all chapters at once
+      const segStats = queryAll(db,
+        `SELECT chapter_id,
+                COUNT(*) as total_segments,
+                SUM(CASE WHEN character_id IS NOT NULL THEN 1 ELSE 0 END) as assigned,
+                SUM(CASE WHEN audio_asset_id IS NOT NULL THEN 1 ELSE 0 END) as with_audio
+         FROM segments WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?)
+         GROUP BY chapter_id`, [bookId]);
+
+      const clipCounts = queryAll(db,
+        `SELECT s.chapter_id, COUNT(c.id) as on_timeline
+         FROM clips c JOIN segments s ON c.segment_id = s.id
+         WHERE s.chapter_id IN (SELECT id FROM chapters WHERE book_id = ?)
+         GROUP BY s.chapter_id`, [bookId]);
+
+      const statsMap = new Map<string, any>();
+      for (const s of segStats as any[]) statsMap.set(s.chapter_id, s);
+      const clipMap = new Map<string, number>();
+      for (const c of clipCounts as any[]) clipMap.set(c.chapter_id, c.on_timeline);
+
       const enriched = chapters.map((ch: any) => {
-        const segs = queryAll(db, 'SELECT id, character_id, audio_asset_id FROM segments WHERE chapter_id = ?', [ch.id]);
-        const totalSegs = segs.length;
-        const assigned = segs.filter((s: any) => s.character_id).length;
-        const withAudio = segs.filter((s: any) => s.audio_asset_id).length;
-        const onTimeline = totalSegs > 0 ? queryOne(db,
-          `SELECT COUNT(*) as cnt FROM clips WHERE segment_id IN (SELECT id FROM segments WHERE chapter_id = ?)`, [ch.id])?.cnt || 0 : 0;
-        return { ...ch, stats: { total_segments: totalSegs, assigned, with_audio: withAudio, on_timeline: onTimeline } };
+        const s = statsMap.get(ch.id);
+        return {
+          ...ch,
+          stats: {
+            total_segments: s?.total_segments || 0,
+            assigned: s?.assigned || 0,
+            with_audio: s?.with_audio || 0,
+            on_timeline: clipMap.get(ch.id) || 0,
+          },
+        };
       });
       res.json(enriched);
     } catch (err: any) {
@@ -71,8 +96,10 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
     try {
       const { ids } = req.body as { ids: string[] };
       if (!Array.isArray(ids)) { res.status(400).json({ error: 'ids must be an array' }); return; }
-      ids.forEach((id, index) => {
-        run(db, 'UPDATE chapters SET sort_order = ? WHERE id = ? AND book_id = ?', [index, id, req.params.bookId]);
+      withTransaction(db, () => {
+        ids.forEach((id, index) => {
+          run(db, 'UPDATE chapters SET sort_order = ? WHERE id = ? AND book_id = ?', [index, id, req.params.bookId]);
+        });
       });
       res.json({ ok: true });
     } catch (err: any) {
@@ -96,24 +123,26 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
       const textAfter = text.slice(split_at).trimStart();
 
       // Update original chapter with first half
-      run(db, `UPDATE chapters SET raw_text = ?, cleaned_text = NULL, updated_at = datetime('now') WHERE id = ?`,
-        [textBefore, chapter.id]);
+      withTransaction(db, () => {
+        run(db, `UPDATE chapters SET raw_text = ?, cleaned_text = NULL, updated_at = datetime('now') WHERE id = ?`,
+          [textBefore, chapter.id]);
 
-      // Shift sort_order of subsequent chapters
-      run(db, `UPDATE chapters SET sort_order = sort_order + 1 WHERE book_id = ? AND sort_order > ?`,
-        [req.params.bookId, chapter.sort_order]);
+        // Shift sort_order of subsequent chapters
+        run(db, `UPDATE chapters SET sort_order = sort_order + 1 WHERE book_id = ? AND sort_order > ?`,
+          [req.params.bookId, chapter.sort_order]);
 
-      // Create new chapter with second half
-      const newId = uuid();
-      run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text) VALUES (?, ?, ?, ?, ?)`,
-        [newId, req.params.bookId, new_title || `${chapter.title} (cont.)`, chapter.sort_order + 1, textAfter]);
+        // Create new chapter with second half
+        const newId = uuid();
+        run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text) VALUES (?, ?, ?, ?, ?)`,
+          [newId, req.params.bookId, new_title || `${chapter.title} (cont.)`, chapter.sort_order + 1, textAfter]);
 
-      // Clear segments from original chapter (text changed)
-      run(db, 'DELETE FROM segments WHERE chapter_id = ?', [chapter.id]);
+        // Clear segments from original chapter (text changed)
+        run(db, 'DELETE FROM segments WHERE chapter_id = ?', [chapter.id]);
 
-      const original = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [chapter.id]);
-      const newChapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [newId]);
-      res.json({ original, new_chapter: newChapter });
+        const original = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [chapter.id]);
+        const newChapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [newId]);
+        res.json({ original, new_chapter: newChapter });
+      });
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

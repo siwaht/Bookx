@@ -15,6 +15,9 @@ const ALLOWED_KEYS = [
   'aws_secret_access_key',
   'aws_region',
   'claude_api_key',
+  'cloudflare_api_token',
+  'cloudflare_account_id',
+  'cloudflare_gateway_id',
   'default_llm_provider',
   'default_llm_model',
   'default_tts_provider',
@@ -36,7 +39,7 @@ export function settingsRouter(db: SqlJsDatabase): Router {
       const rows = queryAll(db, 'SELECT key, value, updated_at FROM settings');
       const settings: Record<string, { value: string; masked: string; updated_at: string }> = {};
       for (const row of rows as any[]) {
-        const isSecret = row.key.endsWith('_api_key') || row.key === 'mongodb_connection_string';
+        const isSecret = row.key.endsWith('_api_key') || row.key === 'cloudflare_api_token' || row.key === 'mongodb_connection_string';
         settings[row.key] = {
           value: isSecret ? '' : row.value, // never send raw keys to client
           masked: isSecret && row.value ? '••••' + row.value.slice(-4) : row.value,
@@ -83,6 +86,17 @@ export function settingsRouter(db: SqlJsDatabase): Router {
       if (key === 'aws_secret_access_key' && value) process.env.AWS_SECRET_ACCESS_KEY = value;
       if (key === 'aws_region' && value) process.env.AWS_REGION = value;
       if (key === 'deepgram_api_key' && value) process.env.DEEPGRAM_API_KEY = value;
+      if (key === 'cloudflare_api_token' && value) process.env.CLOUDFLARE_API_TOKEN = value;
+      if (key === 'cloudflare_account_id' && value) process.env.CLOUDFLARE_ACCOUNT_ID = value;
+      if (key === 'cloudflare_gateway_id' && value) process.env.CLOUDFLARE_GATEWAY_ID = value;
+
+      // Audit log for sensitive key changes
+      if (key.endsWith('_api_key') || key === 'mongodb_connection_string') {
+        try {
+          run(db, `INSERT INTO audit_log (action, details) VALUES ('setting_changed', ?)`,
+            [JSON.stringify({ key, masked: value ? '••••' + value.slice(-4) : '(cleared)' })]);
+        } catch { /* audit log is best-effort */ }
+      }
 
       res.json({ ok: true, key });
     } catch (err: any) {

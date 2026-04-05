@@ -162,6 +162,18 @@ export function TimelinePage() {
 
   useEffect(() => { loadTracks(); loadMarkers(); }, [loadTracks, loadMarkers]);
 
+  // Cleanup playback timer and audio context on unmount
+  useEffect(() => {
+    return () => {
+      if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
+      stopAllAudio();
+      if (audioCtxRef.current) {
+        audioCtxRef.current.close().catch(() => {});
+        audioCtxRef.current = null;
+      }
+    };
+  }, []);
+
   // ── Preview audio blob URL for inspector ──
   useEffect(() => {
     if (!selectedClipId) { setPreviewAudioUrl(null); return; }
@@ -347,7 +359,18 @@ export function TimelinePage() {
       const startTime = performance.now();
       const tick = (now: number) => {
         const elapsed = now - startTime;
-        setPlayheadMs(startMs + elapsed);
+        const currentMs = startMs + elapsed;
+        setPlayheadMs(currentMs);
+        // Auto-scroll to keep playhead visible
+        if (autoScroll && scrollContainerRef.current) {
+          const playheadPx = currentMs * pxPerMs;
+          const container = scrollContainerRef.current;
+          const viewLeft = container.scrollLeft;
+          const viewRight = viewLeft + container.clientWidth;
+          if (playheadPx > viewRight - 100 || playheadPx < viewLeft) {
+            container.scrollLeft = playheadPx - container.clientWidth * 0.3;
+          }
+        }
         playTimerRef.current = requestAnimationFrame(tick);
       };
       playTimerRef.current = requestAnimationFrame(tick);
@@ -701,12 +724,13 @@ export function TimelinePage() {
         for (const t of tracks) for (const c of t.clips) allIds.add(c.id);
         setSelectedClipIds(allIds);
       }
-      if (e.key === 'Delete' && selectedClipIds.size > 0) handleBatchDelete();
+      if (e.key === 'Delete' && selectedClipIds.size > 1) handleBatchDelete();
+      else if (e.key === 'Delete' && selectedClipId) deleteClip(selectedClipId);
       if (e.key === '?') setShowHelp(p => !p);
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, [selectedClipId, playheadMs, playing, tracks, clipboardData]);
+  }, [selectedClipId, playheadMs, playing, tracks, clipboardData, selectedClipIds]);
 
   // ── Zoom ──
   const zoomIn = () => setPxPerMs(p => Math.min(p * 1.5, MAX_PX_PER_MS));

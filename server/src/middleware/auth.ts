@@ -2,7 +2,7 @@ import { Request, Response, NextFunction } from 'express';
 import crypto from 'crypto';
 
 const SALT = 'audiobook-maker-salt';
-const TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const TOKEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 function getAppPassword(): string {
   return process.env.APP_PASSWORD || 'changeme';
@@ -23,9 +23,10 @@ export function generateToken(password: string): string {
 function verifyToken(token: string): boolean {
   const parts = token.split('.');
   if (parts.length !== 2) {
-    // Legacy token (no expiry) — still accept but validate against password
+    // Legacy token (no expiry) — validate with timing-safe comparison
     const legacyHash = crypto.createHash('sha256').update(getAppPassword() + SALT).digest('hex');
-    return token === legacyHash;
+    if (token.length !== legacyHash.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(token), Buffer.from(legacyHash));
   }
 
   const [hash, expiresAtStr] = parts;

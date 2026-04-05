@@ -105,6 +105,14 @@ async function main() {
   const awsRegion = getSetting(db, 'aws_region');
   if (awsRegion) process.env.AWS_REGION = awsRegion;
 
+  // Cloudflare Workers AI
+  const cfToken = getSetting(db, 'cloudflare_api_token');
+  if (cfToken) process.env.CLOUDFLARE_API_TOKEN = cfToken;
+  const cfAccountId = getSetting(db, 'cloudflare_account_id');
+  if (cfAccountId) process.env.CLOUDFLARE_ACCOUNT_ID = cfAccountId;
+  const cfGatewayId = getSetting(db, 'cloudflare_gateway_id');
+  if (cfGatewayId) process.env.CLOUDFLARE_GATEWAY_ID = cfGatewayId;
+
   // Initialize storage provider (local or external)
   const storageResult = await initStorageFromSettings((key) => getSetting(db, key));
   log.info('Storage initialized', storageResult);
@@ -150,6 +158,7 @@ async function main() {
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     if (IS_PROD) {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'");
     }
     next();
   });

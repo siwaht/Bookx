@@ -30,3 +30,19 @@ export function runMany(db: SqlJsDatabase, sql: string, paramSets: any[][]): voi
   }
   // Note: Don't call saveDb() here - the server has an auto-save interval
 }
+
+/**
+ * Execute multiple operations inside a transaction.
+ * Automatically rolls back on error.
+ */
+export function withTransaction<T>(db: SqlJsDatabase, fn: () => T): T {
+  db.run('BEGIN TRANSACTION');
+  try {
+    const result = fn();
+    db.run('COMMIT');
+    return result;
+  } catch (err) {
+    db.run('ROLLBACK');
+    throw err;
+  }
+}

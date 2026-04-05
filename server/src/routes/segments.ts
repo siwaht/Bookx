@@ -60,10 +60,10 @@ export function segmentsRouter(db: SqlJsDatabase): Router {
         res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
         return;
       }
-      const fields = ['text', 'character_id', 'sort_order'];
+      const ALLOWED_FIELDS = ['text', 'character_id', 'sort_order'] as const;
       const updates: string[] = [];
       const values: any[] = [];
-      for (const field of fields) {
+      for (const field of ALLOWED_FIELDS) {
         if ((parsed.data as any)[field] !== undefined) {
           updates.push(`${field} = ?`);
           values.push((parsed.data as any)[field]);
@@ -204,6 +204,10 @@ async function generateSegmentAudio(
         use_speaker_boost: !!char.speaker_boost,
       };
     }
+  }
+
+  if (!segment.character_id) {
+    throw new Error('Segment has no character assigned. Assign a character first.');
   }
 
   if (voiceId === 'default') {

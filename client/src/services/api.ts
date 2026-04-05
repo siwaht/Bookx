@@ -77,21 +77,37 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
 }
 
 async function doRequest<T>(path: string, options: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE}${path}`, options);
+  // Add a timeout to prevent hanging requests
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s timeout
 
-  if (res.status === 401) {
-    clearToken();
-    window.location.reload();
-    throw new Error('Unauthorized');
+  try {
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller.signal,
+    });
+
+    if (res.status === 401) {
+      clearToken();
+      window.location.reload();
+      throw new Error('Unauthorized');
+    }
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Request failed' }));
+      throw new Error(err.error || `HTTP ${res.status}`);
+    }
+
+    if (res.status === 204) return undefined as T;
+    return res.json();
+  } catch (err: any) {
+    if (err.name === 'AbortError') {
+      throw new Error('Request timed out');
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
   }
-
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Request failed' }));
-    throw new Error(err.error || `HTTP ${res.status}`);
-  }
-
-  if (res.status === 204) return undefined as T;
-  return res.json();
 }
 
 // ── Auth ──

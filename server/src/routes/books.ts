@@ -92,21 +92,26 @@ export function booksRouter(db: SqlJsDatabase): Router {
         res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
         return;
       }
-      const { title, author, narrator, isbn, cover_art_path, default_model, project_type, format,
-              default_gap_ms, chapter_gap_ms, default_speed, intro_asset_id, outro_asset_id } = parsed.data;
+      const ALLOWED_FIELDS = [
+        'title', 'author', 'narrator', 'isbn', 'cover_art_path', 'default_model',
+        'project_type', 'format', 'default_gap_ms', 'chapter_gap_ms', 'default_speed',
+        'intro_asset_id', 'outro_asset_id',
+      ] as const;
 
-      run(db,
-        `UPDATE books SET title = COALESCE(?, title), author = COALESCE(?, author),
-         narrator = COALESCE(?, narrator), isbn = COALESCE(?, isbn),
-         cover_art_path = COALESCE(?, cover_art_path), default_model = COALESCE(?, default_model),
-         project_type = COALESCE(?, project_type), format = COALESCE(?, format),
-         default_gap_ms = COALESCE(?, default_gap_ms), chapter_gap_ms = COALESCE(?, chapter_gap_ms),
-         default_speed = COALESCE(?, default_speed), intro_asset_id = COALESCE(?, intro_asset_id),
-         outro_asset_id = COALESCE(?, outro_asset_id),
-         updated_at = datetime('now') WHERE id = ?`,
-        [title, author, narrator, isbn, cover_art_path, default_model, project_type, format,
-         default_gap_ms, chapter_gap_ms, default_speed, intro_asset_id, outro_asset_id, req.params.id]
-      );
+      const updates: string[] = [];
+      const values: any[] = [];
+      for (const field of ALLOWED_FIELDS) {
+        if ((parsed.data as any)[field] !== undefined) {
+          updates.push(`${field} = ?`);
+          values.push((parsed.data as any)[field]);
+        }
+      }
+
+      if (updates.length > 0) {
+        updates.push("updated_at = datetime('now')");
+        values.push(req.params.id);
+        run(db, `UPDATE books SET ${updates.join(', ')} WHERE id = ?`, values);
+      }
 
       const book = queryOne(db, 'SELECT * FROM books WHERE id = ?', [req.params.id]);
       res.json(book);

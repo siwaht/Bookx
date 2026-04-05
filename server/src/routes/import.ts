@@ -6,7 +6,7 @@ import multer from 'multer';
 import mammoth from 'mammoth';
 import JSZip from 'jszip';
 import type { Database as SqlJsDatabase } from 'sql.js';
-import { queryAll, run } from '../db/helpers.js';
+import { queryAll, run, withTransaction } from '../db/helpers.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
@@ -44,6 +44,18 @@ export function importRouter(db: SqlJsDatabase): Router {
 
       const bookId = req.params.bookId;
       const ext = path.extname(req.file.originalname).toLowerCase();
+      // Validate file extension
+      if (!SUPPORTED_FORMATS.includes(ext)) {
+        // Clean up uploaded file
+        try { fs.unlinkSync(req.file.path); } catch { /* ignore */ }
+        res.status(400).json({
+          error: `Unsupported format: ${ext}`,
+          supported: SUPPORTED_FORMATS,
+          hint: 'Try converting your file to EPUB, DOCX, TXT, or Markdown first.',
+        });
+        return;
+      }
+
       let chapters: Array<{ title: string; text: string }> = [];
 
       if (ext === '.txt' || ext === '.md') {
@@ -58,13 +70,6 @@ export function importRouter(db: SqlJsDatabase): Router {
         const html = fs.readFileSync(req.file.path, 'utf-8');
         const text = stripHtml(html);
         chapters = splitIntoChapters(text);
-      } else {
-        res.status(400).json({
-          error: `Unsupported format: ${ext}`,
-          supported: SUPPORTED_FORMATS,
-          hint: 'Try converting your file to EPUB, DOCX, TXT, or Markdown first.',
-        });
-        return;
       }
 
       // Clean up uploaded file
@@ -75,13 +80,15 @@ export function importRouter(db: SqlJsDatabase): Router {
         return;
       }
 
-      // Replace existing chapters
-      run(db, 'DELETE FROM segments WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?)', [bookId]);
-      run(db, 'DELETE FROM chapters WHERE book_id = ?', [bookId]);
+      // Replace existing chapters atomically
+      withTransaction(db, () => {
+        run(db, 'DELETE FROM segments WHERE chapter_id IN (SELECT id FROM chapters WHERE book_id = ?)', [bookId]);
+        run(db, 'DELETE FROM chapters WHERE book_id = ?', [bookId]);
 
-      chapters.forEach((ch, index) => {
-        run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text, cleaned_text) VALUES (?, ?, ?, ?, ?, ?)`,
-          [uuid(), bookId, ch.title, index, ch.text, cleanText(ch.text)]);
+        chapters.forEach((ch, index) => {
+          run(db, `INSERT INTO chapters (id, book_id, title, sort_order, raw_text, cleaned_text) VALUES (?, ?, ?, ?, ?, ?)`,
+            [uuid(), bookId, ch.title, index, ch.text, cleanText(ch.text)]);
+        });
       });
 
       const inserted = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);

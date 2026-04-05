@@ -27,7 +27,13 @@ export function renderRouter(db: SqlJsDatabase): Router {
 
       res.json({ job_id: jobId, status: 'running' });
 
-      processRenderJob(db, jobId).catch((err) => {
+      // Process with a timeout to prevent hanging jobs
+      const RENDER_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+      const timeoutPromise = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Render job timed out after 10 minutes')), RENDER_TIMEOUT_MS)
+      );
+
+      Promise.race([processRenderJob(db, jobId), timeoutPromise]).catch((err) => {
         console.error('[Render Error]', err);
         run(db, `UPDATE render_jobs SET status = 'failed', error_message = ?, completed_at = datetime('now') WHERE id = ?`, [err.message, jobId]);
       });
@@ -42,8 +48,15 @@ export function renderRouter(db: SqlJsDatabase): Router {
 
   router.get('/:jobId/download', (req: Request, res: Response) => {
     const job = queryOne(db, 'SELECT * FROM render_jobs WHERE id = ?', [req.params.jobId]);
-    if (!job?.output_path || !fs.existsSync(job.output_path)) { res.status(404).json({ error: 'File not found' }); return; }
-    res.download(job.output_path);
+    if (!job?.output_path) { res.status(404).json({ error: 'File not found' }); return; }
+    // Prevent directory traversal
+    const resolved = path.resolve(job.output_path);
+    const dataDir = path.resolve(DATA_DIR);
+    if (!resolved.startsWith(dataDir) || !fs.existsSync(resolved)) {
+      res.status(404).json({ error: 'File not found' });
+      return;
+    }
+    res.download(resolved);
   });
 
   return router;

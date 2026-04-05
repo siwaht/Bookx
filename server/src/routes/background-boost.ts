@@ -12,14 +12,15 @@ const DATA_DIR = process.env.DATA_DIR || './data';
 // ── LLM helpers (reused from ai-parse pattern) ──
 
 function detectProvider(db: SqlJsDatabase): string | null {
-  for (const p of ['openai', 'claude', 'mistral', 'gemini']) {
-    const key = getSetting(db, `${p}_api_key`);
+  for (const p of ['openai', 'claude', 'mistral', 'gemini', 'cloudflare']) {
+    const key = p === 'cloudflare' ? getSetting(db, 'cloudflare_api_token') : getSetting(db, `${p}_api_key`);
     if (key) return p;
   }
   if (process.env.OPENAI_API_KEY) return 'openai';
   if (process.env.ANTHROPIC_API_KEY) return 'claude';
   if (process.env.MISTRAL_API_KEY) return 'mistral';
   if (process.env.GEMINI_API_KEY) return 'gemini';
+  if (process.env.CLOUDFLARE_API_TOKEN && process.env.CLOUDFLARE_ACCOUNT_ID) return 'cloudflare';
   return null;
 }
 
@@ -46,6 +47,14 @@ const FALLBACK_MODELS: Record<string, { id: string; label: string }[]> = {
     { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
     { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
     { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
+  ],
+  cloudflare: [
+    { id: '@cf/meta/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout 17B' },
+    { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', label: 'Llama 3.3 70B' },
+    { id: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B' },
+    { id: '@cf/google/gemma-4-26b-a4b-it', label: 'Gemma 4 26B' },
+    { id: '@cf/mistral/mistral-small-3.1-24b-instruct', label: 'Mistral Small 3.1 24B' },
+    { id: '@cf/qwen/qwen2.5-coder-32b-instruct', label: 'Qwen 2.5 Coder 32B' },
   ],
 };
 
@@ -109,6 +118,23 @@ async function fetchProviderModels(provider: string, apiKey: string): Promise<{ 
       }));
     }
 
+    if (provider === 'cloudflare') {
+      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+      if (!accountId) return FALLBACK_MODELS.cloudflare || [];
+      const res = await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/models/search?task=Text Generation`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) throw new Error(`Cloudflare ${res.status}`);
+      const data = await res.json() as any;
+      const cfModels = (data.result as any[] || [])
+        .filter((m: any) => m.task?.name === 'Text Generation')
+        .slice(0, 20);
+      models = cfModels.map((m: any) => ({
+        id: m.name,
+        label: m.name.replace('@cf/', '').replace(/\//g, ' / '),
+      }));
+    }
+
     if (models.length > 0) {
       modelsCache[provider] = { models, fetchedAt: Date.now() };
       return models;
@@ -128,6 +154,9 @@ function getDefaultModel(provider: string): string {
 function getApiKeyForProvider(db: SqlJsDatabase, provider: string): string | null {
   if (provider === 'claude') {
     return getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY || null;
+  }
+  if (provider === 'cloudflare') {
+    return getSetting(db, 'cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN || null;
   }
   return getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`] || null;
 }
@@ -205,6 +234,28 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
       if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text().catch(() => '')}`);
       const data = await res.json() as any;
       return data.candidates[0].content.parts[0].text;
+    }
+    if (provider === 'cloudflare') {
+      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+      const gatewayId = process.env.CLOUDFLARE_GATEWAY_ID;
+      if (!accountId) throw new Error('Cloudflare Account ID is required');
+      const baseUrl = gatewayId
+        ? `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}`
+        : `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`;
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({
+          model: model || '@cf/meta/llama-4-scout-17b-16e-instruct',
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          temperature: 0.4,
+          max_tokens: 16000,
+        }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Cloudflare AI ${res.status}: ${await res.text().catch(() => '')}`);
+      const data = await res.json() as any;
+      return data.choices?.[0]?.message?.content || data.result?.response || '';
     }
     throw new Error(`Unsupported provider: ${provider}`);
   } finally { clearTimeout(timeout); }
@@ -380,7 +431,7 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
 
       const currentProvider = getSetting(db, 'default_llm_provider') || detectProvider(db);
       const currentModel = getSetting(db, 'default_llm_model');
-      const providers = ['openai', 'claude', 'mistral', 'gemini'];
+      const providers = ['openai', 'claude', 'mistral', 'gemini', 'cloudflare'];
       const available: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }> = {};
 
       // Fetch models in parallel for all providers that have keys

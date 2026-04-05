@@ -28,6 +28,7 @@ export async function getDb(): Promise<SqlJsDatabase> {
   }
 
   db.run('PRAGMA foreign_keys = ON');
+  db.run('PRAGMA journal_mode = WAL');
 
   return db;
 }
@@ -39,10 +40,10 @@ export function saveDb(): void {
   fs.writeFileSync(dbPath, buffer);
 }
 
-// Auto-save every 5 seconds
+// Auto-save every 15 seconds (balances data safety with I/O overhead)
 export function startAutoSave(): void {
   if (autoSaveInterval) return;
-  autoSaveInterval = setInterval(() => saveDb(), 5000);
+  autoSaveInterval = setInterval(() => saveDb(), 15000);
 }
 
 export function stopAutoSave(): void {
@@ -378,10 +379,18 @@ export function initializeSchema(database: SqlJsDatabase): void {
   const indexes = [
     'CREATE INDEX IF NOT EXISTS idx_chapters_book ON chapters(book_id, sort_order)',
     'CREATE INDEX IF NOT EXISTS idx_segments_chapter ON segments(chapter_id, sort_order)',
+    'CREATE INDEX IF NOT EXISTS idx_segments_audio ON segments(audio_asset_id)',
     'CREATE INDEX IF NOT EXISTS idx_clips_track ON clips(track_id, position_ms)',
+    'CREATE INDEX IF NOT EXISTS idx_clips_segment ON clips(segment_id)',
     'CREATE INDEX IF NOT EXISTS idx_audio_assets_hash ON audio_assets(prompt_hash)',
+    'CREATE INDEX IF NOT EXISTS idx_audio_assets_book ON audio_assets(book_id)',
     'CREATE INDEX IF NOT EXISTS idx_automation_track ON automation_points(track_id, time_ms)',
     'CREATE INDEX IF NOT EXISTS idx_audit_book ON audit_log(book_id, created_at)',
+    'CREATE INDEX IF NOT EXISTS idx_characters_book ON characters(book_id)',
+    'CREATE INDEX IF NOT EXISTS idx_tracks_book ON tracks(book_id, sort_order)',
+    'CREATE INDEX IF NOT EXISTS idx_chapter_markers_book ON chapter_markers(book_id, position_ms)',
+    'CREATE INDEX IF NOT EXISTS idx_pronunciation_book ON pronunciation_rules(book_id)',
+    'CREATE INDEX IF NOT EXISTS idx_render_jobs_book ON render_jobs(book_id, created_at)',
   ];
   for (const idx of indexes) {
     database.run(idx);
