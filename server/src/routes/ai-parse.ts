@@ -353,7 +353,7 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: '@cf/meta/llama-4-scout-17b-16e-instruct',
+          model: '@cf/google/gemma-4-26b-a4b-it',
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
           temperature: 0.3,
           max_tokens: 8000,

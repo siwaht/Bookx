@@ -49,6 +49,7 @@ const FALLBACK_MODELS: Record<string, { id: string; label: string }[]> = {
     { id: 'gemini-2.0-flash', label: 'Gemini 2.0 Flash' },
   ],
   cloudflare: [
+    { id: '@cf/google/gemma-4-26b-a4b-it', label: 'Gemma 4 26B' },
     { id: '@cf/meta/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout 17B' },
     { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', label: 'Llama 3.3 70B' },
     { id: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B' },
@@ -246,7 +247,7 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model: model || '@cf/meta/llama-4-scout-17b-16e-instruct',
+          model: model || '@cf/google/gemma-4-26b-a4b-it',
           messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
           temperature: 0.4,
           max_tokens: 16000,

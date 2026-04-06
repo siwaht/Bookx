@@ -832,7 +832,7 @@ server.tool('get_settings', 'Get current app settings (API keys are masked)', {}
 );
 
 server.tool('update_setting', 'Update an app setting (e.g. API keys, default LLM provider)', {
-  key: z.enum(['elevenlabs_api_key', 'openai_api_key', 'claude_api_key', 'mistral_api_key', 'gemini_api_key', 'default_llm_provider', 'default_llm_model']),
+  key: z.enum(['elevenlabs_api_key', 'openai_api_key', 'claude_api_key', 'mistral_api_key', 'gemini_api_key', 'cloudflare_account_id', 'cloudflare_api_token', 'default_llm_provider', 'default_llm_model']),
   value: z.string(),
 }, async ({ key, value }) => {
   const db = await dbReady;
@@ -844,6 +844,8 @@ server.tool('update_setting', 'Update an app setting (e.g. API keys, default LLM
   if (key === 'openai_api_key') process.env.OPENAI_API_KEY = value;
   if (key === 'mistral_api_key') process.env.MISTRAL_API_KEY = value;
   if (key === 'gemini_api_key') process.env.GEMINI_API_KEY = value;
+  if (key === 'cloudflare_account_id') process.env.CLOUDFLARE_ACCOUNT_ID = value;
+  if (key === 'cloudflare_api_token') process.env.CLOUDFLARE_API_TOKEN = value;
   return txt({ updated: key });
 });
 
@@ -920,9 +922,11 @@ server.tool('ai_parse_chapters', 'Use an LLM to auto-detect characters, assign d
   if (!chapters.length) return err('No chapters found. Add chapters first.');
 
   const provider = detectProvider(db);
-  if (!provider) return err('No LLM API key configured. Use update_setting to add an openai_api_key, claude_api_key, mistral_api_key, or gemini_api_key.');
+  if (!provider) return err('No LLM API key configured. Use update_setting to add an openai_api_key, claude_api_key, mistral_api_key, gemini_api_key, or cloudflare_api_token.');
   const apiKey = provider === 'claude'
     ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+    : provider === 'cloudflare'
+    ? (getSetting(db, 'cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN)
     : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
   if (!apiKey) return err(`No API key for ${provider}`);
 
@@ -986,6 +990,8 @@ server.tool('ai_suggest_v3_tags', 'Use an LLM to suggest ElevenLabs v3 audio tag
   if (!provider) return err('No LLM API key configured.');
   const apiKey = provider === 'claude'
     ? (getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY)
+    : provider === 'cloudflare'
+    ? (getSetting(db, 'cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN)
     : (getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`]);
   if (!apiKey) return err(`No API key for ${provider}`);
 
@@ -1158,10 +1164,12 @@ function detectProvider(db: any): string | null {
     const key = p === 'claude' ? getSetting(db, 'claude_api_key') : getSetting(db, `${p}_api_key`);
     if (key) return p;
   }
+  if (getSetting(db, 'cloudflare_account_id') && getSetting(db, 'cloudflare_api_token')) return 'cloudflare';
   if (process.env.OPENAI_API_KEY) return 'openai';
   if (process.env.ANTHROPIC_API_KEY) return 'claude';
   if (process.env.MISTRAL_API_KEY) return 'mistral';
   if (process.env.GEMINI_API_KEY) return 'gemini';
+  if (process.env.CLOUDFLARE_ACCOUNT_ID && process.env.CLOUDFLARE_API_TOKEN) return 'cloudflare';
   return null;
 }
 
@@ -1205,6 +1213,23 @@ async function callLLM(provider: string, apiKey: string, system: string, user: s
       });
       if (!res.ok) throw new Error(`Gemini ${res.status}: ${await res.text()}`);
       return ((await res.json()) as any).candidates[0].content.parts[0].text;
+    }
+    if (provider === 'cloudflare') {
+      const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
+      if (!accountId) throw new Error('Cloudflare Account ID not set.');
+      const gatewayId = process.env.CLOUDFLARE_GATEWAY_ID;
+      const baseUrl = gatewayId
+        ? `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}`
+        : `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`;
+      const res = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ model: '@cf/google/gemma-4-26b-a4b-it', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.3, max_tokens: 8000 }),
+        signal: controller.signal,
+      });
+      if (!res.ok) throw new Error(`Cloudflare AI ${res.status}: ${await res.text()}`);
+      const data = await res.json() as any;
+      return data.choices?.[0]?.message?.content || data.result?.response || '';
     }
     throw new Error(`Unsupported provider: ${provider}`);
   } finally { clearTimeout(timeout); }
