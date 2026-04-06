@@ -116,6 +116,14 @@ export interface ChapterMarker {
   label: string;
 }
 
+export interface AutomationPoint {
+  id: string;
+  track_id: string;
+  time_ms: number;
+  value: number;
+  curve: 'linear' | 'exponential';
+}
+
 export interface ElevenLabsVoice {
   voice_id: string;
   name: string;

@@ -705,10 +705,36 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
       }
 
       // Get existing timeline to calculate positions
-      const narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]) as any;
-      const narrationClips = narrationTrack
-        ? queryAll(db, `SELECT c.*, a.duration_ms as asset_duration_ms FROM clips c LEFT JOIN audio_assets a ON c.audio_asset_id = a.id WHERE c.track_id = ? ORDER BY c.position_ms`, [narrationTrack.id])
-        : [];
+      // Fetch narration clips from ALL narration/dialogue tracks (not just one)
+      const narrationTracks = queryAll(db, "SELECT * FROM tracks WHERE book_id = ? AND type IN ('narration', 'dialogue') ORDER BY sort_order", [bookId]);
+      let narrationClips: any[] = [];
+      for (const nt of narrationTracks) {
+        const clips = queryAll(db, `SELECT c.*, a.duration_ms as asset_duration_ms, s.sort_order as segment_sort_order, s.chapter_id as segment_chapter_id FROM clips c LEFT JOIN audio_assets a ON c.audio_asset_id = a.id LEFT JOIN segments s ON c.segment_id = s.id WHERE c.track_id = ? ORDER BY c.position_ms`, [(nt as any).id]);
+        narrationClips.push(...clips);
+      }
+      // Sort by position to maintain timeline order
+      narrationClips.sort((a: any, b: any) => a.position_ms - b.position_ms);
+
+      // Build a mapping from global segment index to narration clip
+      // The LLM analysis uses global segment indices across all analyzed chapters
+      // We need to map those back to actual clip positions
+      const analyzedChapterIds = [...new Set(scenes.map((s: any) => s.chapter_id).filter(Boolean))];
+      const allSegments: any[] = [];
+      if (analyzedChapterIds.length > 0) {
+        const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
+        for (const ch of chapters) {
+          const segs = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [(ch as any).id]);
+          allSegments.push(...segs);
+        }
+      }
+
+      // Build segment-id-to-clip lookup for precise positioning
+      const segIdToClip = new Map<string, any>();
+      for (const clip of narrationClips) {
+        if (clip.segment_id) {
+          segIdToClip.set(clip.segment_id, clip);
+        }
+      }
 
       // Ensure SFX and Music tracks exist
       let sfxTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'sfx' AND name LIKE '%Boost%' LIMIT 1", [bookId]) as any;
@@ -755,7 +781,17 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
       };
 
       // Helper: find narration clip position for a segment index
+      // Maps global segment index (from LLM analysis) to actual clip position on timeline
       function getSegmentPositionMs(segIndex: number): number {
+        // First try: map via actual segment records to clip positions
+        if (segIndex < allSegments.length) {
+          const seg = allSegments[segIndex];
+          const clip = segIdToClip.get(seg.id);
+          if (clip) {
+            return clip.position_ms;
+          }
+        }
+        // Fallback: use narration clip array index
         if (segIndex < narrationClips.length) {
           return (narrationClips[segIndex] as any).position_ms;
         }
@@ -765,6 +801,19 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
           return last.position_ms + (last.asset_duration_ms || 3000) + 300;
         }
         return segIndex * 5000; // fallback
+      }
+
+      // Helper: get the narration clip for a specific segment index (for duration info)
+      function getSegmentClip(segIndex: number): any | null {
+        if (segIndex < allSegments.length) {
+          const seg = allSegments[segIndex];
+          const clip = segIdToClip.get(seg.id);
+          if (clip) return clip;
+        }
+        if (segIndex < narrationClips.length) {
+          return narrationClips[segIndex];
+        }
+        return null;
       }
 
       for (const scene of scenes) {
@@ -934,9 +983,9 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
                 sfxPositionMs = getSegmentPositionMs(sfx.at_segment);
               }
               // Apply position-based offset within the segment
-              if (sfx.at_segment !== undefined && sfx.at_segment < narrationClips.length) {
-                const segClip = narrationClips[sfx.at_segment] as any;
-                const segDuration = segClip?.asset_duration_ms || 3000;
+              const segClip = sfx.at_segment !== undefined ? getSegmentClip(sfx.at_segment) : null;
+              if (segClip) {
+                const segDuration = segClip.asset_duration_ms || 3000;
                 if (sfx.offset_hint_ms) {
                   sfxPositionMs += Math.min(sfx.offset_hint_ms, segDuration);
                 } else if (sfx.position === 'middle') {

@@ -3,7 +3,7 @@ import { useParams } from 'react-router-dom';
 import { timeline as timelineApi, elevenlabs, audioUrl, render, saveProject, downloadProjectUrl, uploadAudio, audioAssets } from '../services/api';
 import { toast } from '../components/Toast';
 import { KeyboardShortcutsDialog } from '../components/KeyboardShortcutsDialog';
-import type { Track, Clip, ChapterMarker } from '../types';
+import type { Track, Clip, ChapterMarker, AutomationPoint } from '../types';
 import {
   Play, Pause, SkipBack, ZoomIn, ZoomOut, Plus, Trash2, Volume2, VolumeX,
   Save, Download, Scissors, Copy, Clipboard, Undo2, Redo2, HelpCircle, X,
@@ -145,6 +145,9 @@ export function TimelinePage() {
   const [showClipWaveforms, setShowClipWaveforms] = useState(false);
   const [trackHeightMode, setTrackHeightMode] = useState<'compact' | 'normal' | 'expanded'>('normal');
 
+  // Automation points per track (for ducking)
+  const [automationByTrack, setAutomationByTrack] = useState<Map<string, AutomationPoint[]>>(new Map());
+
   // ── Data Loading ──
   const loadTracks = useCallback(async () => {
     if (!bookId) return;
@@ -160,7 +163,25 @@ export function TimelinePage() {
     setMarkers(data);
   }, [bookId]);
 
+  // Load automation points for tracks that have ducking enabled
+  const loadAutomation = useCallback(async () => {
+    if (!bookId || tracks.length === 0) return;
+    const duckingTracks = tracks.filter(t => t.ducking_enabled);
+    if (duckingTracks.length === 0) return;
+    const newMap = new Map<string, AutomationPoint[]>();
+    for (const t of duckingTracks) {
+      try {
+        const points = await timelineApi.getAutomation(bookId, t.id);
+        if (points.length > 0) {
+          newMap.set(t.id, points.sort((a: AutomationPoint, b: AutomationPoint) => a.time_ms - b.time_ms));
+        }
+      } catch {}
+    }
+    setAutomationByTrack(newMap);
+  }, [bookId, tracks]);
+
   useEffect(() => { loadTracks(); loadMarkers(); }, [loadTracks, loadMarkers]);
+  useEffect(() => { loadAutomation(); }, [loadAutomation]);
 
   // Cleanup playback timer and audio context on unmount
   useEffect(() => {
@@ -286,6 +307,7 @@ export function TimelinePage() {
 
     for (const track of tracks) {
       if (track.muted) continue;
+      const trackAutomation = automationByTrack.get(track.id);
       for (const clip of track.clips) {
         const clipDur = getClipDuration(clip);
         const clipEnd = clip.position_ms + clipDur;
@@ -299,14 +321,39 @@ export function TimelinePage() {
         const gainNode = ctx.createGain();
         const trackGainDb = track.gain || 0;
         const clipGainDb = clip.gain || 0;
-        gainNode.gain.value = Math.pow(10, (trackGainDb + clipGainDb) / 20);
+        const baseGain = Math.pow(10, (trackGainDb + clipGainDb) / 20);
+        gainNode.gain.value = baseGain;
         source.playbackRate.value = clip.speed || 1.0;
+
+        // Apply automation points (ducking) if available for this track
+        if (trackAutomation && trackAutomation.length > 0) {
+          // Schedule gain automation for the duration of this clip
+          for (let i = 0; i < trackAutomation.length; i++) {
+            const point = trackAutomation[i];
+            const pointTimeRelative = (point.time_ms - startMs) / 1000;
+            if (pointTimeRelative < -1) continue; // skip points well before playback start
+            const scheduleTime = Math.max(0, pointTimeRelative);
+            const automatedGain = baseGain * point.value;
+
+            if (point.curve === 'exponential' && automatedGain > 0) {
+              gainNode.gain.exponentialRampToValueAtTime(
+                Math.max(automatedGain, 0.0001), // exponentialRamp requires > 0
+                ctx.currentTime + scheduleTime
+              );
+            } else {
+              gainNode.gain.linearRampToValueAtTime(
+                automatedGain,
+                ctx.currentTime + scheduleTime
+              );
+            }
+          }
+        }
 
         if (clip.fade_in_ms && clip.fade_in_ms > 0) {
           const fadeStartTime = Math.max(0, (clip.position_ms - startMs) / 1000);
           gainNode.gain.setValueAtTime(0, ctx.currentTime + fadeStartTime);
           gainNode.gain.linearRampToValueAtTime(
-            Math.pow(10, (trackGainDb + clipGainDb) / 20),
+            baseGain,
             ctx.currentTime + fadeStartTime + clip.fade_in_ms / 1000
           );
         }
@@ -314,7 +361,7 @@ export function TimelinePage() {
           const fadeOutStart = Math.max(0, (clip.position_ms + clipDur - clip.fade_out_ms - startMs) / 1000);
           const fadeOutEnd = Math.max(0, (clip.position_ms + clipDur - startMs) / 1000);
           if (fadeOutStart > 0) {
-            gainNode.gain.setValueAtTime(Math.pow(10, (trackGainDb + clipGainDb) / 20), ctx.currentTime + fadeOutStart);
+            gainNode.gain.setValueAtTime(baseGain, ctx.currentTime + fadeOutStart);
             gainNode.gain.linearRampToValueAtTime(0, ctx.currentTime + fadeOutEnd);
           }
         }

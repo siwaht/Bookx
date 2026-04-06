@@ -264,6 +264,8 @@ export const timeline = {
   closeGaps: (bookId: string, trackId: string, gapMs?: number) =>
     request<{ ok: boolean; adjusted: number }>(
       `/books/${bookId}/tracks/${trackId}/close-gaps`, { method: 'POST', body: JSON.stringify({ gap_ms: gapMs }) }),
+  getAutomation: (bookId: string, trackId: string) =>
+    request<any[]>(`/books/${bookId}/tracks/${trackId}/automation`),
 };
 
 // ── Import ──
