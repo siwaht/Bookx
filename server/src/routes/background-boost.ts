@@ -50,6 +50,7 @@ const FALLBACK_MODELS: Record<string, { id: string; label: string }[]> = {
   ],
   cloudflare: [
     { id: '@cf/google/gemma-4-26b-a4b-it', label: 'Gemma 4 26B' },
+    { id: '@cf/moonshotai/kimi-k2.5', label: 'Kimi K2.5 (Frontier)' },
     { id: '@cf/meta/llama-4-scout-17b-16e-instruct', label: 'Llama 4 Scout 17B' },
     { id: '@cf/meta/llama-3.3-70b-instruct-fp8-fast', label: 'Llama 3.3 70B' },
     { id: '@cf/meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B' },
