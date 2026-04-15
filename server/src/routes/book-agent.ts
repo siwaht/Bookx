@@ -37,7 +37,11 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
 
   if (provider === 'openai' || provider === 'openai-compatible') {
     url = baseUrl || 'https://api.openai.com/v1/chat/completions';
-    headers['Authorization'] = `Bearer ${apiKey || process.env.OPENAI_API_KEY || ''}`;
+    const token = apiKey || process.env.OPENAI_API_KEY || '';
+    if (!token && provider === 'openai') {
+      throw new Error('OpenAI API key is required. Set it in the form or via OPENAI_API_KEY env variable.');
+    }
+    headers['Authorization'] = `Bearer ${token}`;
     body = {
       model,
       messages: [
@@ -48,14 +52,22 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
       max_tokens: maxTokens,
     };
   } else if (provider === 'gemini') {
-    url = baseUrl || `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey || process.env.GEMINI_API_KEY || ''}`;
+    const token = apiKey || process.env.GEMINI_API_KEY || '';
+    if (!token) {
+      throw new Error('Gemini API key is required. Set it in the form or via GEMINI_API_KEY env variable.');
+    }
+    url = baseUrl || `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${token}`;
     body = {
       contents: [{ parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
       generationConfig: { temperature, maxOutputTokens: maxTokens },
     };
   } else if (provider === 'mistral') {
     url = baseUrl || 'https://api.mistral.ai/v1/chat/completions';
-    headers['Authorization'] = `Bearer ${apiKey || process.env.MISTRAL_API_KEY || ''}`;
+    const token = apiKey || process.env.MISTRAL_API_KEY || '';
+    if (!token) {
+      throw new Error('Mistral API key is required. Set it in the form or via MISTRAL_API_KEY env variable.');
+    }
+    headers['Authorization'] = `Bearer ${token}`;
     body = {
       model,
       messages: [
@@ -67,7 +79,11 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
     };
   } else if (provider === 'anthropic') {
     url = baseUrl || 'https://api.anthropic.com/v1/messages';
-    headers['x-api-key'] = apiKey || process.env.ANTHROPIC_API_KEY || '';
+    const token = apiKey || process.env.ANTHROPIC_API_KEY || '';
+    if (!token) {
+      throw new Error('Anthropic API key is required. Set it in the form or via ANTHROPIC_API_KEY env variable.');
+    }
+    headers['x-api-key'] = token;
     headers['anthropic-version'] = '2023-06-01';
     body = {
       model,
@@ -81,6 +97,12 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
     const accountId = config.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '';
     const gatewayId = config.gatewayId || process.env.CLOUDFLARE_GATEWAY_ID || '';
     const token = apiKey || process.env.CLOUDFLARE_API_TOKEN || '';
+    if (!token) {
+      throw new Error('Cloudflare API token is required. Set it in the form or via CLOUDFLARE_API_TOKEN env variable.');
+    }
+    if (!accountId) {
+      throw new Error('Cloudflare Account ID is required. Set it in the form or via CLOUDFLARE_ACCOUNT_ID env variable.');
+    }
     if (gatewayId) {
       url = baseUrl || `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/openai/chat/completions`;
     } else {
@@ -389,6 +411,9 @@ Respond in valid JSON format:
     addLog(null, 'info', `Phase 2: Processing ${totalChapters} chapters...`);
     updateJob({ current_phase: 'editing' });
 
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3;
+
     for (let i = 0; i < chapters.length; i++) {
       if (ctrl?.cancel) { updateJob({ status: 'cancelled' }); return; }
 
@@ -460,11 +485,20 @@ Respond with a JSON object:
         addLog(taskId, 'info', `Chapter ${i + 1} completed: ${changesSummary}`);
 
         updateJob({ completed_chapters: i + 1 });
+        consecutiveFailures = 0; // Reset on success
       } catch (err: any) {
         run(db, `UPDATE book_agent_tasks SET status = 'failed', error_message = ? WHERE id = ?`,
           [err.message, taskId]);
         addLog(taskId, 'error', `Chapter ${i + 1} failed: ${err.message}`);
-        // Continue with next chapter
+
+        consecutiveFailures++;
+        // Abort early if we hit repeated failures (likely a config/auth issue)
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          const abortMsg = `Aborting: ${consecutiveFailures} consecutive chapters failed. This usually means the API key is invalid or missing. Last error: ${err.message}`;
+          addLog(null, 'error', abortMsg);
+          updateJob({ status: 'failed', error_message: abortMsg });
+          return;
+        }
       }
     }
 
@@ -971,6 +1005,46 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
         try { fs.unlinkSync(req.file.path); } catch { }
         res.status(400).json({ error: 'Instructions are required. Use GET /prompt-guide for templates.' });
         return;
+      }
+
+      // Validate provider credentials before starting the job
+      if (provider === 'cloudflare') {
+        const token = apiKey || process.env.CLOUDFLARE_API_TOKEN || '';
+        const cfAccountId = accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '';
+        if (!token) {
+          try { fs.unlinkSync(req.file.path); } catch { }
+          res.status(400).json({ error: 'Cloudflare API token is required. Provide it in the form or set CLOUDFLARE_API_TOKEN env variable.' });
+          return;
+        }
+        if (!cfAccountId) {
+          try { fs.unlinkSync(req.file.path); } catch { }
+          res.status(400).json({ error: 'Cloudflare Account ID is required. Provide it in the form or set CLOUDFLARE_ACCOUNT_ID env variable.' });
+          return;
+        }
+      } else if (provider === 'openai') {
+        if (!apiKey && !process.env.OPENAI_API_KEY) {
+          try { fs.unlinkSync(req.file.path); } catch { }
+          res.status(400).json({ error: 'OpenAI API key is required. Provide it in the form or set OPENAI_API_KEY env variable.' });
+          return;
+        }
+      } else if (provider === 'anthropic') {
+        if (!apiKey && !process.env.ANTHROPIC_API_KEY) {
+          try { fs.unlinkSync(req.file.path); } catch { }
+          res.status(400).json({ error: 'Anthropic API key is required. Provide it in the form or set ANTHROPIC_API_KEY env variable.' });
+          return;
+        }
+      } else if (provider === 'gemini') {
+        if (!apiKey && !process.env.GEMINI_API_KEY) {
+          try { fs.unlinkSync(req.file.path); } catch { }
+          res.status(400).json({ error: 'Gemini API key is required. Provide it in the form or set GEMINI_API_KEY env variable.' });
+          return;
+        }
+      } else if (provider === 'mistral') {
+        if (!apiKey && !process.env.MISTRAL_API_KEY) {
+          try { fs.unlinkSync(req.file.path); } catch { }
+          res.status(400).json({ error: 'Mistral API key is required. Provide it in the form or set MISTRAL_API_KEY env variable.' });
+          return;
+        }
       }
 
       // Parse the uploaded file
