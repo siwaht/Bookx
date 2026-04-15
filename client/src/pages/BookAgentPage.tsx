@@ -118,6 +118,8 @@ export function BookAgentPage() {
   const [model, setModel] = useState('gpt-4o');
   const [apiKey, setApiKey] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
+  const [accountId, setAccountId] = useState('');
+  const [gatewayId, setGatewayId] = useState('');
   const [outputFormat, setOutputFormat] = useState('epub');
   const [temperature, setTemperature] = useState(0.7);
   const [uploading, setUploading] = useState(false);
@@ -190,6 +192,8 @@ export function BookAgentPage() {
         model,
         api_key: apiKey || undefined,
         base_url: baseUrl || undefined,
+        account_id: accountId || undefined,
+        gateway_id: gatewayId || undefined,
         output_format: outputFormat,
         temperature,
       });
@@ -430,6 +434,19 @@ export function BookAgentPage() {
               <div style={styles.formGroup}>
                 <label style={styles.label}>Custom API Base URL</label>
                 <input value={baseUrl} onChange={e => setBaseUrl(e.target.value)} placeholder="http://localhost:11434/v1/chat/completions" style={styles.input} />
+              </div>
+            )}
+
+            {provider === 'cloudflare' && (
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Account ID</label>
+                  <input value={accountId} onChange={e => setAccountId(e.target.value)} placeholder="Your Cloudflare Account ID" style={styles.input} />
+                </div>
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Gateway ID <span style={{ fontSize: 11, color: 'var(--text-tertiary)', fontWeight: 400 }}>(optional)</span></label>
+                  <input value={gatewayId} onChange={e => setGatewayId(e.target.value)} placeholder="e.g. moltbot-gateway" style={styles.input} />
+                </div>
               </div>
             )}
 

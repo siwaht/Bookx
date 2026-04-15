@@ -24,6 +24,8 @@ interface AgentConfig {
   baseUrl?: string;
   temperature?: number;
   maxTokens?: number;
+  accountId?: string;
+  gatewayId?: string;
 }
 
 async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: string): Promise<string> {
@@ -71,6 +73,26 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
       model,
       system: systemPrompt,
       messages: [{ role: 'user', content: userPrompt }],
+      temperature,
+      max_tokens: maxTokens,
+    };
+  } else if (provider === 'cloudflare') {
+    // Cloudflare Workers AI — OpenAI-compatible endpoint
+    const accountId = config.accountId || process.env.CLOUDFLARE_ACCOUNT_ID || '';
+    const gatewayId = config.gatewayId || process.env.CLOUDFLARE_GATEWAY_ID || '';
+    const token = apiKey || process.env.CLOUDFLARE_API_TOKEN || '';
+    if (gatewayId) {
+      url = baseUrl || `https://gateway.ai.cloudflare.com/v1/${accountId}/${gatewayId}/openai/chat/completions`;
+    } else {
+      url = baseUrl || `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1/chat/completions`;
+    }
+    headers['Authorization'] = `Bearer ${token}`;
+    body = {
+      model,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
       temperature,
       max_tokens: maxTokens,
     };
@@ -938,6 +960,8 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
       const model = req.body.model || 'gpt-4o';
       const apiKey = req.body.api_key || '';
       const baseUrl = req.body.base_url || '';
+      const accountId = req.body.account_id || '';
+      const gatewayId = req.body.gateway_id || '';
       const outputFormat = req.body.output_format || ext.replace('.', '') || 'epub';
       const temperature = parseFloat(req.body.temperature) || 0.7;
 
@@ -982,10 +1006,10 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
 
       withTransaction(db, () => {
         run(db, `INSERT INTO book_agent_jobs (id, original_filename, original_format, output_format, instructions,
-          provider, model, api_key, base_url, temperature, status, total_chapters, total_words)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
+          provider, model, api_key, base_url, account_id, gateway_id, temperature, status, total_chapters, total_words)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?)`,
           [jobId, req.file!.originalname, ext.replace('.', ''), outputFormat, instructions,
-           provider, model, apiKey, baseUrl, temperature, chapters.length, totalWords]);
+           provider, model, apiKey, baseUrl, accountId, gatewayId, temperature, chapters.length, totalWords]);
 
         for (let i = 0; i < chapters.length; i++) {
           run(db, `INSERT INTO book_agent_chapters (id, job_id, sort_order, title, original_text) VALUES (?, ?, ?, ?, ?)`,
@@ -999,7 +1023,7 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
       });
 
       // Start processing in background
-      const agentConfig: AgentConfig = { provider, model, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, temperature };
+      const agentConfig: AgentConfig = { provider, model, apiKey: apiKey || undefined, baseUrl: baseUrl || undefined, temperature, accountId: accountId || undefined, gatewayId: gatewayId || undefined };
       activeJobs.set(jobId, { cancel: false });
       processAgentJob(db, jobId, agentConfig).catch(err => {
         console.error('[BookAgent] Job failed:', err);
@@ -1044,6 +1068,8 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
         apiKey: api_key || job.api_key || undefined,
         baseUrl: base_url || job.base_url || undefined,
         temperature: job.temperature || 0.7,
+        accountId: job.account_id || undefined,
+        gatewayId: job.gateway_id || undefined,
       };
 
       activeJobs.set(followUpId, { cancel: false });
@@ -1166,6 +1192,24 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
           requires_key: true,
           supports_base_url: true,
           description: 'Any OpenAI-compatible API (Ollama, LM Studio, vLLM, etc.)',
+        },
+        {
+          id: 'cloudflare',
+          name: 'Cloudflare Workers AI',
+          models: [
+            '@cf/moonshotai/kimi-k2.5',
+            '@cf/meta/llama-3.3-70b-instruct-fp8-fast',
+            '@cf/meta/llama-4-scout-17b-16e-instruct',
+            '@cf/qwen/qwen2.5-coder-32b-instruct',
+            '@cf/deepseek-ai/deepseek-r1-distill-qwen-32b',
+            '@cf/google/gemma-3-12b-it',
+            '@cf/mistralai/mistral-small-3.1-24b-instruct',
+          ],
+          requires_key: true,
+          env_key: 'CLOUDFLARE_API_TOKEN',
+          supports_account_id: true,
+          supports_gateway_id: true,
+          description: 'Cloudflare Workers AI with optional AI Gateway. Requires Account ID and API Token.',
         },
       ],
     });

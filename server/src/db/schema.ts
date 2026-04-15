@@ -351,6 +351,8 @@ export function initializeSchema(database: SqlJsDatabase): void {
       model TEXT DEFAULT 'gpt-4o',
       api_key TEXT,
       base_url TEXT,
+      account_id TEXT,
+      gateway_id TEXT,
       temperature REAL DEFAULT 0.7,
       status TEXT DEFAULT 'queued',
       progress INTEGER DEFAULT 0,

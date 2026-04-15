@@ -603,6 +603,8 @@ export const bookAgent = {
     model: string;
     api_key?: string;
     base_url?: string;
+    account_id?: string;
+    gateway_id?: string;
     output_format?: string;
     temperature?: number;
   }) => {
@@ -613,6 +615,8 @@ export const bookAgent = {
     formData.append('model', data.model);
     if (data.api_key) formData.append('api_key', data.api_key);
     if (data.base_url) formData.append('base_url', data.base_url);
+    if (data.account_id) formData.append('account_id', data.account_id);
+    if (data.gateway_id) formData.append('gateway_id', data.gateway_id);
     if (data.output_format) formData.append('output_format', data.output_format);
     if (data.temperature !== undefined) formData.append('temperature', String(data.temperature));
 
