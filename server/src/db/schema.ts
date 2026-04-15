@@ -446,6 +446,15 @@ export function initializeSchema(database: SqlJsDatabase): void {
     )
   `);
 
+  // Migration: add account_id and gateway_id to book_agent_jobs if missing
+  const agentJobCols = queryAll(database, "PRAGMA table_info(book_agent_jobs)").map((c: any) => c.name);
+  if (!agentJobCols.includes('account_id')) {
+    database.run("ALTER TABLE book_agent_jobs ADD COLUMN account_id TEXT");
+  }
+  if (!agentJobCols.includes('gateway_id')) {
+    database.run("ALTER TABLE book_agent_jobs ADD COLUMN gateway_id TEXT");
+  }
+
   // Migrations: add speed column to clips if missing
   const clipCols = queryAll(database, "PRAGMA table_info(clips)").map((c: any) => c.name);
   if (!clipCols.includes('speed')) {
