@@ -1047,6 +1047,31 @@ export function bookAgentRouter(db: SqlJsDatabase): Router {
         }
       }
 
+      // Preflight check: verify credentials work with a tiny test request
+      try {
+        const testConfig: AgentConfig = {
+          provider, model,
+          apiKey: apiKey || undefined,
+          baseUrl: baseUrl || undefined,
+          temperature: 0.1,
+          maxTokens: 5,
+          accountId: accountId || undefined,
+          gatewayId: gatewayId || undefined,
+        };
+        await callLLM(testConfig, 'Reply with OK.', 'Say OK');
+      } catch (preflightErr: any) {
+        try { fs.unlinkSync(req.file.path); } catch { }
+        const msg = preflightErr.message || 'Unknown error';
+        if (msg.includes('401') || msg.includes('Unauthorized') || msg.includes('403') || msg.includes('Forbidden')) {
+          res.status(401).json({ error: `API authentication failed. Your ${provider} API key or token is invalid, expired, or lacks the required permissions. Details: ${msg}` });
+        } else if (msg.includes('404')) {
+          res.status(400).json({ error: `Model "${model}" not found for provider "${provider}". Check the model name and try again. Details: ${msg}` });
+        } else {
+          res.status(400).json({ error: `Failed to connect to ${provider} API. Please check your credentials and try again. Details: ${msg}` });
+        }
+        return;
+      }
+
       // Parse the uploaded file
       let chapters: Array<{ title: string; text: string }> = [];
       if (ext === '.epub') {
