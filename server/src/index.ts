@@ -27,6 +27,7 @@ import { ttsProvidersRouter } from './routes/tts-providers.js';
 import { libraryRouter } from './routes/library.js';
 import { backgroundBoostRouter } from './routes/background-boost.js';
 import { generationRouter } from './routes/generation.js';
+import { bookAgentRouter } from './routes/book-agent.js';
 import { initStorageFromSettings } from './storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -219,6 +220,7 @@ async function main() {
   app.use('/api/library', libraryRouter(db));
   app.use('/api/books/:bookId/background-boost', backgroundBoostRouter(db));
   app.use('/api/books/:bookId/generation', generationRouter(db));
+  app.use('/api/book-agent', bookAgentRouter(db));
 
   // ── Save DB explicitly ──
   app.post('/api/save', (_req, res) => {

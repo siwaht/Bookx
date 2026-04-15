@@ -339,6 +339,102 @@ export function initializeSchema(database: SqlJsDatabase): void {
   `);
   database.run('CREATE INDEX IF NOT EXISTS idx_gen_jobs_book ON generation_jobs(book_id, created_at)');
 
+  // ── Book Editor Agent ──
+  database.run(`
+    CREATE TABLE IF NOT EXISTS book_agent_jobs (
+      id TEXT PRIMARY KEY,
+      original_filename TEXT,
+      original_format TEXT,
+      output_format TEXT DEFAULT 'epub',
+      instructions TEXT NOT NULL,
+      provider TEXT DEFAULT 'openai',
+      model TEXT DEFAULT 'gpt-4o',
+      api_key TEXT,
+      base_url TEXT,
+      temperature REAL DEFAULT 0.7,
+      status TEXT DEFAULT 'queued',
+      progress INTEGER DEFAULT 0,
+      current_phase TEXT,
+      current_chapter INTEGER DEFAULT 0,
+      total_chapters INTEGER DEFAULT 0,
+      completed_chapters INTEGER DEFAULT 0,
+      total_words INTEGER DEFAULT 0,
+      pre_edit_rating TEXT,
+      post_edit_rating TEXT,
+      report TEXT,
+      output_path TEXT,
+      error_message TEXT,
+      author TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS book_agent_chapters (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES book_agent_jobs(id) ON DELETE CASCADE,
+      sort_order INTEGER NOT NULL,
+      title TEXT,
+      original_text TEXT NOT NULL,
+      edited_text TEXT,
+      changes_summary TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_agent_chapters_job ON book_agent_chapters(job_id, sort_order)');
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS book_agent_tasks (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES book_agent_jobs(id) ON DELETE CASCADE,
+      chapter_index INTEGER,
+      sort_order INTEGER NOT NULL,
+      title TEXT,
+      status TEXT DEFAULT 'pending',
+      result_summary TEXT,
+      error_message TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_agent_tasks_job ON book_agent_tasks(job_id)');
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS book_agent_logs (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES book_agent_jobs(id) ON DELETE CASCADE,
+      task_id TEXT,
+      level TEXT DEFAULT 'info',
+      message TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_agent_logs_job ON book_agent_logs(job_id, created_at)');
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS book_agent_followups (
+      id TEXT PRIMARY KEY,
+      job_id TEXT NOT NULL REFERENCES book_agent_jobs(id) ON DELETE CASCADE,
+      instructions TEXT NOT NULL,
+      re_rate INTEGER DEFAULT 1,
+      status TEXT DEFAULT 'queued',
+      progress INTEGER DEFAULT 0,
+      current_chapter INTEGER DEFAULT 0,
+      output_path TEXT,
+      result_rating TEXT,
+      error_message TEXT,
+      started_at TEXT,
+      completed_at TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_agent_followups_job ON book_agent_followups(job_id)');
+
   // API keys / settings store
   database.run(`
     CREATE TABLE IF NOT EXISTS settings (

@@ -587,3 +587,49 @@ export const library = {
   convertToAudiobook: (id: string) => request<{ ok: boolean; book_id: string; title: string; chapters_created: number; message: string }>(`/library/${id}/convert-to-audiobook`, { method: 'POST' }),
   downloadAllUrl: () => `${API_BASE}/library/download-all`,
 };
+
+
+// ── Book Editor Agent ──
+export const bookAgent = {
+  promptGuide: () => request<any>('/book-agent/prompt-guide'),
+  models: () => request<{ providers: any[] }>('/book-agent/models'),
+  jobs: () => request<any[]>('/book-agent/jobs'),
+  job: (jobId: string) => request<any>(`/book-agent/jobs/${jobId}`),
+  logs: (jobId: string, limit = 100) => request<any[]>(`/book-agent/jobs/${jobId}/logs?limit=${limit}`),
+  chapter: (jobId: string, chapterIndex: number) => request<any>(`/book-agent/jobs/${jobId}/chapters/${chapterIndex}`),
+  upload: async (file: File, data: {
+    instructions: string;
+    provider: string;
+    model: string;
+    api_key?: string;
+    base_url?: string;
+    output_format?: string;
+    temperature?: number;
+  }) => {
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('instructions', data.instructions);
+    formData.append('provider', data.provider);
+    formData.append('model', data.model);
+    if (data.api_key) formData.append('api_key', data.api_key);
+    if (data.base_url) formData.append('base_url', data.base_url);
+    if (data.output_format) formData.append('output_format', data.output_format);
+    if (data.temperature !== undefined) formData.append('temperature', String(data.temperature));
+
+    const res = await fetch(`${API_BASE}/book-agent/upload`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${authToken}` },
+      body: formData,
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(err.error);
+    }
+    return res.json();
+  },
+  followUp: (jobId: string, data: { instructions: string; re_rate?: boolean; provider?: string; model?: string; api_key?: string }) =>
+    request<any>(`/book-agent/jobs/${jobId}/followup`, { method: 'POST', body: JSON.stringify(data) }),
+  cancel: (jobId: string) => request<any>(`/book-agent/jobs/${jobId}/cancel`, { method: 'POST' }),
+  delete: (jobId: string) => request<void>(`/book-agent/jobs/${jobId}`, { method: 'DELETE' }),
+  downloadUrl: (jobId: string) => `${API_BASE}/book-agent/jobs/${jobId}/download`,
+};

@@ -1,12 +1,13 @@
 import React from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Headphones, LayoutGrid, BookMarked, Settings, LogOut, Sun, Moon } from 'lucide-react';
+import { Headphones, LayoutGrid, BookMarked, Settings, LogOut, Sun, Moon, BookOpen } from 'lucide-react';
 import { useAppStore } from '../stores/appStore';
 import { clearToken } from '../services/api';
 
 const NAV_ITEMS = [
   { path: '/', label: 'Projects', icon: LayoutGrid },
   { path: '/library', label: 'Library', icon: BookMarked },
+  { path: '/book-agent', label: 'Book Agent', icon: BookOpen },
   { path: '/settings', label: 'Settings', icon: Settings },
 ];
 

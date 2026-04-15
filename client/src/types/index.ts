@@ -299,3 +299,129 @@ export interface BoostGenerateResult {
   errors: string[];
   tracks: Track[];
 }
+
+
+// ── Book Editor Agent ──
+
+export interface BookAgentJob {
+  id: string;
+  original_filename: string;
+  original_format: string;
+  output_format: string;
+  instructions: string;
+  provider: string;
+  model: string;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  current_phase: string | null;
+  current_chapter: number;
+  total_chapters: number;
+  completed_chapters: number;
+  total_words: number;
+  pre_edit_rating: BookRating | null;
+  post_edit_rating: BookRating | null;
+  report: BookAgentReport | null;
+  error_message: string | null;
+  chapters?: BookAgentChapterSummary[];
+  tasks?: BookAgentTask[];
+  followups?: BookAgentFollowUp[];
+  created_at: string;
+  updated_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface BookRating {
+  ratings: Record<string, { score: number; comment: string }>;
+  summary?: string;
+  strengths?: string[];
+  weaknesses?: string[];
+  improvements_from_original?: string[];
+  remaining_suggestions?: string[];
+}
+
+export interface BookAgentChapterSummary {
+  id: string;
+  title: string;
+  sort_order: number;
+  changes_summary: string | null;
+  original_length: number;
+  edited_length: number;
+}
+
+export interface BookAgentTask {
+  id: string;
+  job_id: string;
+  chapter_index: number;
+  title: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  result_summary: string | null;
+  error_message: string | null;
+  started_at: string | null;
+  completed_at: string | null;
+}
+
+export interface BookAgentFollowUp {
+  id: string;
+  job_id: string;
+  instructions: string;
+  re_rate: number;
+  status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  current_chapter: number;
+  output_path: string | null;
+  result_rating: BookRating | null;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+}
+
+export interface BookAgentReport {
+  job_id: string;
+  book_title: string;
+  total_chapters: number;
+  chapters_edited: number;
+  chapters_failed: number;
+  instructions: string;
+  pre_edit_rating: BookRating | null;
+  post_edit_rating: BookRating | null;
+  chapter_summaries: Array<{
+    title: string;
+    original_length: number;
+    edited_length: number;
+    changes: string;
+  }>;
+  completed_at: string;
+}
+
+export interface BookAgentLog {
+  id: string;
+  job_id: string;
+  task_id: string | null;
+  level: 'info' | 'warn' | 'error';
+  message: string;
+  created_at: string;
+}
+
+export interface BookAgentPromptGuide {
+  guide: {
+    title: string;
+    description: string;
+    templates: Array<{
+      name: string;
+      prompt: string;
+      category: string;
+    }>;
+    tips: string[];
+  };
+}
+
+export interface BookAgentProvider {
+  id: string;
+  name: string;
+  models: string[];
+  requires_key: boolean;
+  env_key?: string;
+  supports_base_url?: boolean;
+  description?: string;
+}

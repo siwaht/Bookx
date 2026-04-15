@@ -21,6 +21,7 @@ import { UsagePage } from './pages/UsagePage';
 import { LibraryPage } from './pages/LibraryPage';
 import { BackgroundBoostPage } from './pages/BackgroundBoostPage';
 import { GenerationPage } from './pages/GenerationPage';
+import { BookAgentPage } from './pages/BookAgentPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -72,6 +73,7 @@ function AppLayout() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/library" element={<LibraryPage />} />
+          <Route path="/book-agent" element={<BookAgentPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/book/:bookId" element={<BookEditor />}>
             <Route index element={<ManuscriptPage />} />
