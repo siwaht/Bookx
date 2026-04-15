@@ -460,9 +460,15 @@ export function BookAgentPage() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end', alignItems: 'center' }}>
+            {(!file || !instructions.trim()) && (
+              <span style={{ fontSize: 12, color: '#fb923c' }}>
+                {!file && !instructions.trim() ? '⚠ Upload a file and enter instructions' : !file ? '⚠ Upload a file first' : '⚠ Enter editing instructions'}
+              </span>
+            )}
             <button onClick={() => setShowUpload(false)} style={styles.btnSecondary}>Cancel</button>
-            <button onClick={handleUpload} disabled={!file || !instructions.trim() || uploading} style={styles.btnPrimary}>
+            <button onClick={handleUpload} disabled={!file || !instructions.trim() || uploading}
+              style={{ ...styles.btnPrimary, opacity: (!file || !instructions.trim()) ? 0.5 : 1 }}>
               {uploading ? <><Loader size={14} style={{ animation: 'spin 1s linear infinite' }} /> Starting...</> : <><Zap size={14} /> Start Agent</>}
             </button>
           </div>

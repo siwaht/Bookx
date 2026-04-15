@@ -29,7 +29,7 @@ interface AgentConfig {
 }
 
 async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: string): Promise<string> {
-  const { provider, model, apiKey, baseUrl, temperature = 0.7, maxTokens = 4096 } = config;
+  const { provider, model, apiKey, baseUrl, temperature = 0.7, maxTokens = 8192 } = config;
 
   let url = '';
   let headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -119,7 +119,9 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
   } else if (provider === 'anthropic') {
     return data.content?.[0]?.text || '';
   } else {
-    return data.choices?.[0]?.message?.content || '';
+    // OpenAI-compatible: check content first, then reasoning_content for reasoning models (e.g. kimi-k2.5, deepseek-r1)
+    const msg = data.choices?.[0]?.message;
+    return msg?.content || msg?.reasoning_content || msg?.reasoning || '';
   }
 }
 
