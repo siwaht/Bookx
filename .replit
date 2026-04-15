@@ -10,6 +10,7 @@ packages = ["ffmpeg"]
 
 [userenv.shared]
 DATA_DIR = "./data"
+APP_PASSWORD = "hola"
 
 [userenv.development]
 PORT = "3001"
