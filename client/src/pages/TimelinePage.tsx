@@ -113,6 +113,19 @@ export function TimelinePage() {
   const autoScrollRef = useRef(true);
   const inspSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const gainDebounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Playback session token — incremented on every play/pause/seek/unmount so that
+  // stale RAF ticks and in-flight playFromPosition awaits no-op when superseded.
+  // Without this, rapid play/pause/seek can leave multiple concurrent ticks alive
+  // and cause overlapping audio.
+  const playSessionRef = useRef(0);
+  // Tracks ref kept in sync with state so async handlers (drag mouseup, debounced
+  // saves) read the live clip rather than a stale closure-captured snapshot.
+  const tracksRef = useRef<Track[]>([]);
+  // Monotonic id for loadTracks to discard out-of-order responses.
+  const loadReqIdRef = useRef(0);
+  // Active drag/scrub listener removers tracked here so we can clean up on unmount
+  // even mid-gesture (otherwise we leak window-level mouse listeners).
+  const activeGestureCleanupRef = useRef<Array<() => void>>([]);
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -161,7 +174,11 @@ export function TimelinePage() {
   // ── Data Loading ──
   const loadTracks = useCallback(async () => {
     if (!bookId) return;
+    // Sequence guard: an older response arriving after a newer one used to clobber
+    // state. We tag each request and drop stale results.
+    const reqId = ++loadReqIdRef.current;
     const data = await timelineApi.tracks(bookId);
+    if (reqId !== loadReqIdRef.current) return;
     setTracks(data);
     if (!skipSnap.current) pushSnapshot(data);
     skipSnap.current = false;
@@ -196,11 +213,21 @@ export function TimelinePage() {
   // Keep DOM-sync refs up to date without causing re-renders
   useEffect(() => { pxPerMsRef.current = pxPerMs; }, [pxPerMs]);
   useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
+  useEffect(() => { tracksRef.current = tracks; }, [tracks]);
 
   // Cleanup playback timer and audio context on unmount
   useEffect(() => {
     return () => {
+      // Invalidate any in-flight playback session so RAF ticks/awaits no-op
+      playSessionRef.current++;
       if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
+      // Tear down any pending debounced saves to avoid setState-after-unmount
+      if (inspSaveDebounceRef.current) clearTimeout(inspSaveDebounceRef.current);
+      gainDebounceRef.current.forEach(t => clearTimeout(t));
+      gainDebounceRef.current.clear();
+      // Drop any active drag/scrub window listeners
+      activeGestureCleanupRef.current.forEach(fn => { try { fn(); } catch {} });
+      activeGestureCleanupRef.current = [];
       stopAllAudio();
       if (audioCtxRef.current) {
         audioCtxRef.current.close().catch(() => {});
@@ -306,7 +333,15 @@ export function TimelinePage() {
         }
         const arrayBuf = await res.arrayBuffer();
         const audioBuf = await ctx.decodeAudioData(arrayBuf);
-        audioBuffersRef.current.set(assetId, audioBuf);
+        // Bounded LRU: drop oldest entries beyond cap to prevent unbounded growth
+        // on large/long sessions. 64 buffers is plenty for ~typical books.
+        const MAX_BUFFERS = 64;
+        const map = audioBuffersRef.current;
+        if (map.size >= MAX_BUFFERS) {
+          const oldestKey = map.keys().next().value;
+          if (oldestKey) map.delete(oldestKey);
+        }
+        map.set(assetId, audioBuf);
         return audioBuf;
       } catch (err) {
         console.error(`Failed to load audio ${assetId}:`, err);
@@ -324,15 +359,23 @@ export function TimelinePage() {
     activeSourcesRef.current = [];
   };
 
-  const playFromPosition = async (startMs: number) => {
+  // Session-aware: caller passes the current playSessionRef value. After every
+  // await we verify the session is still current; if the user paused/seeked while
+  // we were loading buffers, we abort before scheduling any more sources. Without
+  // this guard, a stale builder could keep `source.start()`-ing after stopAllAudio
+  // already ran for the new session, causing overlapping/zombie audio.
+  const playFromPosition = async (startMs: number, session?: number) => {
+    const mySession = session ?? playSessionRef.current;
     const ctx = getAudioCtx();
     if (ctx.state === 'suspended') await ctx.resume();
+    if (mySession !== playSessionRef.current) return;
     stopAllAudio();
     playStartTimeRef.current = ctx.currentTime;
     playStartMsRef.current = startMs;
 
     for (const track of tracks) {
       if (track.muted) continue;
+      if (mySession !== playSessionRef.current) return;
       const trackAutomation = automationByTrack.get(track.id);
       for (const clip of track.clips) {
         const clipDur = getClipDuration(clip);
@@ -340,6 +383,7 @@ export function TimelinePage() {
         if (clipEnd <= startMs) continue;
 
         const buffer = await loadAudioBuffer(clip.audio_asset_id);
+        if (mySession !== playSessionRef.current) return;
         if (!buffer) continue;
 
         const source = ctx.createBufferSource();
@@ -422,28 +466,35 @@ export function TimelinePage() {
 
   const togglePlay = async () => {
     if (playing) {
+      // Bumping the session invalidates any pending tick/playFromPosition awaits
+      playSessionRef.current++;
       if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
       stopAllAudio();
       setPlaying(false);
     } else {
+      const session = ++playSessionRef.current;
       setPlaying(true);
-      await playFromPosition(playheadMs);
+      await playFromPosition(playheadMs, session);
+      // If user paused/seeked while we were awaiting, abort
+      if (session !== playSessionRef.current) return;
       let startMs = playheadMs;
       let startWall = performance.now();
       let lastStateUpdate = startWall;
       const tick = (now: number) => {
+        if (session !== playSessionRef.current) return;
         const elapsed = now - startWall;
         let currentMs = startMs + elapsed;
 
-        // Loop region: when enabled and playhead crosses loopOut, jump back to loopIn
+        // Loop region: when enabled and playhead crosses loopOut, jump back to loopIn.
+        // Require ≥50ms loop window to avoid runaway restart storms on tiny regions.
         const loop = loopRef.current;
-        if (loop.enabled && loop.inMs !== null && loop.outMs !== null && loop.outMs > loop.inMs && currentMs >= loop.outMs) {
+        if (loop.enabled && loop.inMs !== null && loop.outMs !== null && loop.outMs - loop.inMs >= 50 && currentMs >= loop.outMs) {
           currentMs = loop.inMs;
           startMs = loop.inMs;
           startWall = now;
           lastStateUpdate = now;
           stopAllAudio();
-          playFromPosition(loop.inMs);
+          playFromPosition(loop.inMs, session);
           setPlayheadMs(currentMs);
         }
 
@@ -482,24 +533,28 @@ export function TimelinePage() {
       playheadElRef.current.style.left = (newMs * pxPerMsRef.current) + 'px';
     }
     if (playing) {
+      // New session — any prior tick/await from the previous play call is invalidated
+      const session = ++playSessionRef.current;
       if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
       stopAllAudio();
-      await playFromPosition(newMs);
+      await playFromPosition(newMs, session);
+      if (session !== playSessionRef.current) return;
       let startMs = newMs;
       let startWall = performance.now();
       let lastStateUpdate = startWall;
       const tick = (now: number) => {
+        if (session !== playSessionRef.current) return;
         const elapsed = now - startWall;
         let currentMs = startMs + elapsed;
         // Same loop wrap-around behaviour as togglePlay's tick
         const loop = loopRef.current;
-        if (loop.enabled && loop.inMs !== null && loop.outMs !== null && loop.outMs > loop.inMs && currentMs >= loop.outMs) {
+        if (loop.enabled && loop.inMs !== null && loop.outMs !== null && loop.outMs - loop.inMs >= 50 && currentMs >= loop.outMs) {
           currentMs = loop.inMs;
           startMs = loop.inMs;
           startWall = now;
           lastStateUpdate = now;
           stopAllAudio();
-          playFromPosition(loop.inMs);
+          playFromPosition(loop.inMs, session);
           setPlayheadMs(currentMs);
         }
         if (playheadElRef.current) {
@@ -686,6 +741,10 @@ export function TimelinePage() {
 
   const findClip = useCallback((clipId: string): Clip | null => clipMap.get(clipId) ?? null, [clipMap]);
 
+  // Stable callback identity so ClipWaveform's React.memo isn't defeated by a
+  // fresh inline function on every parent render (was causing waveform redraws).
+  const onWaveformLoaded = useCallback(() => setBufferLoadTick(t => t + 1), []);
+
   // Lock-enforcement helper. The drag/trim handler and inspector buttons already
   // gate locked tracks at the UI level; this guard hardens every mutation boundary
   // so keyboard shortcuts, context-menu actions and batch ops cannot bypass it.
@@ -849,26 +908,40 @@ export function TimelinePage() {
     const handleMouseUp = async () => {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      // Remove from active gesture list so unmount cleanup doesn't double-remove
+      activeGestureCleanupRef.current = activeGestureCleanupRef.current.filter(fn => fn !== removeListeners);
       if (!dragRef.current || !bookId) return;
       const draggedClipId = dragRef.current.clipId;
       const dragMode = dragRef.current.mode;
       dragRef.current = null;
 
-      const foundClip = findClip(draggedClipId);
-      if (!foundClip) return;
-      pushSnapshot(tracks);
-
-      if (dragMode === 'move' && snapEnabled) {
-        foundClip.position_ms = snapPosition(foundClip.position_ms, draggedClipId);
+      // Read live clip from refs (not the stale closure-captured `tracks`/`findClip`).
+      // The drag handler mutated `tracks` via setTracks during mousemove — those
+      // updates are only reflected in tracksRef.current, not in our captured values.
+      const liveTracks = tracksRef.current;
+      let foundClip: Clip | undefined;
+      for (const t of liveTracks) {
+        const c = t.clips.find(cl => cl.id === draggedClipId);
+        if (c) { foundClip = c; break; }
       }
+      if (!foundClip) return;
+      pushSnapshot(liveTracks);
 
-      await timelineApi.updateClip(bookId, foundClip.id, {
-        position_ms: Math.round(foundClip.position_ms),
+      let posMs = foundClip.position_ms;
+      if (dragMode === 'move' && snapEnabled) posMs = snapPosition(posMs, draggedClipId);
+
+      await timelineApi.updateClip(bookId, draggedClipId, {
+        position_ms: Math.round(posMs),
         trim_start_ms: Math.round(foundClip.trim_start_ms),
         trim_end_ms: Math.round(foundClip.trim_end_ms),
       });
     };
 
+    const removeListeners = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+    activeGestureCleanupRef.current.push(removeListeners);
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   };
@@ -920,8 +993,7 @@ export function TimelinePage() {
       }
     };
     const onUp = (ev: MouseEvent) => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      cleanup();
       const finalMs = Math.max(0, (ev.clientX - rect.left + (scrollContainerRef.current?.scrollLeft || 0)) / pxPerMs);
       if (isLoopGesture) {
         if (Math.abs(finalMs - startMs) < 50) {
@@ -933,8 +1005,22 @@ export function TimelinePage() {
         seekTo(finalMs);
       }
     };
+    // Window blur (alt-tab while dragging) used to leave scrubbing=true and
+    // listeners hanging — recover the gesture here.
+    const onBlur = () => {
+      cleanup();
+      if (!isLoopGesture) setScrubbing(false);
+    };
+    const cleanup = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onBlur);
+      activeGestureCleanupRef.current = activeGestureCleanupRef.current.filter(fn => fn !== cleanup);
+    };
+    activeGestureCleanupRef.current.push(cleanup);
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('blur', onBlur);
   };
 
   const handleClipContextMenu = (e: React.MouseEvent, clip: Clip, track: Track) => {
@@ -949,7 +1035,8 @@ export function TimelinePage() {
     const handler = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
       if (e.key === ' ') { e.preventDefault(); togglePlay(); }
-      if (e.key === 'Delete' && selectedClipId) deleteClip(selectedClipId);
+      // Delete handled below in the multi-select-aware branch — single-binding here
+      // would fire twice and is removed.
       if (e.key === 'Home') seekTo(0);
       if (e.key === 'ArrowLeft') seekTo(playheadMs - 1000);
       if (e.key === 'ArrowRight') seekTo(playheadMs + 1000);
@@ -971,8 +1058,10 @@ export function TimelinePage() {
         for (const t of tracks) for (const c of t.clips) allIds.add(c.id);
         setSelectedClipIds(allIds);
       }
-      if (e.key === 'Delete' && selectedClipIds.size > 1) handleBatchDelete();
-      else if (e.key === 'Delete' && selectedClipId) deleteClip(selectedClipId);
+      if (e.key === 'Delete') {
+        if (selectedClipIds.size > 1) handleBatchDelete();
+        else if (selectedClipId) deleteClip(selectedClipId);
+      }
       if (e.key === '?') setShowHelp(p => !p);
     };
     window.addEventListener('keydown', handler);
@@ -1425,7 +1514,7 @@ export function TimelinePage() {
                             trimEndMs={clip.trim_end_ms || 0}
                             audioBuffersRef={audioBuffersRef}
                             requestLoad={loadAudioBuffer}
-                            onLoaded={() => setBufferLoadTick(t => t + 1)}
+                            onLoaded={onWaveformLoaded}
                           />
                         )}
 
@@ -2071,7 +2160,11 @@ const timelineStyles2 = `
   display: flex;
   flex: 1;
   overflow: hidden;
+  min-width: 0;
 }
+/* Ensure middle scroll area can shrink below intrinsic content size when the
+   inspector is docked, otherwise narrow viewports cause horizontal page overflow. */
+.tl-body > .tl-scroll-container, .tl-body > div[class*="tl-scroll"] { min-width: 0; }
 
 /* ── Track Headers ── */
 .tl-headers {
