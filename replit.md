@@ -4,6 +4,12 @@
 A professional audiobook production tool powered by ElevenLabs API. Users can import manuscripts, assign voices, generate audio, edit on a multi-track timeline, and export ACX/Audible-ready packages.
 
 ## Recent Changes
+- 2026-05-03: Major timeline redesign in `client/src/pages/TimelinePage.tsx`:
+  - Visual polish: refined playhead, vertical grid lines, top-accent stripes on clips, hover lift, gradient ruler, marker pins.
+  - New features: track lock (with hatched lane pattern, blocked drag/trim and mutation guards across delete/split/duplicate/cut/paste/inspector/crossfade/batch ops), loop region (Shift+drag on ruler, wrap-around in both togglePlay and seekTo ticks).
+  - Better waveform/playback: per-clip canvas waveform from cached AudioBuffer with in-flight load dedupe; drag-to-scrub on ruler.
+  - Layout: docked clip inspector as flex sibling instead of floating overlay.
+  - Perf: load dedupe map prevents redundant fetch/decode for shared audio assets.
 - 2026-02-12: Initial Replit setup - configured Vite on port 5000 with proxy to backend on 3001, installed ffmpeg
 
 ## Project Architecture
