@@ -109,6 +109,12 @@ export function TimelinePage() {
   const timelineRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const playTimerRef = useRef<number | null>(null);
+  // Perf: DOM refs avoid React re-renders during playback
+  const playheadElRef = useRef<HTMLDivElement>(null);
+  const pxPerMsRef = useRef(0.05);
+  const autoScrollRef = useRef(true);
+  const inspSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gainDebounceRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const [saving, setSaving] = useState(false);
   const [rendering, setRendering] = useState(false);
   const [importing, setImporting] = useState(false);
@@ -182,6 +188,10 @@ export function TimelinePage() {
 
   useEffect(() => { loadTracks(); loadMarkers(); }, [loadTracks, loadMarkers]);
   useEffect(() => { loadAutomation(); }, [loadAutomation]);
+
+  // Keep DOM-sync refs up to date without causing re-renders
+  useEffect(() => { pxPerMsRef.current = pxPerMs; }, [pxPerMs]);
+  useEffect(() => { autoScrollRef.current = autoScroll; }, [autoScroll]);
 
   // Cleanup playback timer and audio context on unmount
   useEffect(() => {
@@ -403,14 +413,20 @@ export function TimelinePage() {
       setPlaying(true);
       await playFromPosition(playheadMs);
       const startMs = playheadMs;
-      const startTime = performance.now();
+      const startWall = performance.now();
+      let lastStateUpdate = startWall;
       const tick = (now: number) => {
-        const elapsed = now - startTime;
+        const elapsed = now - startWall;
         const currentMs = startMs + elapsed;
-        setPlayheadMs(currentMs);
-        // Auto-scroll to keep playhead visible
-        if (autoScroll && scrollContainerRef.current) {
-          const playheadPx = currentMs * pxPerMs;
+
+        // Move playhead directly in DOM — zero React re-renders during playback
+        if (playheadElRef.current) {
+          playheadElRef.current.style.left = (currentMs * pxPerMsRef.current) + 'px';
+        }
+
+        // Auto-scroll via DOM API (no state needed)
+        if (autoScrollRef.current && scrollContainerRef.current) {
+          const playheadPx = currentMs * pxPerMsRef.current;
           const container = scrollContainerRef.current;
           const viewLeft = container.scrollLeft;
           const viewRight = viewLeft + container.clientWidth;
@@ -418,6 +434,13 @@ export function TimelinePage() {
             container.scrollLeft = playheadPx - container.clientWidth * 0.3;
           }
         }
+
+        // Throttle React state updates to ~10fps — only for time display & progress bar
+        if (now - lastStateUpdate >= 100) {
+          setPlayheadMs(currentMs);
+          lastStateUpdate = now;
+        }
+
         playTimerRef.current = requestAnimationFrame(tick);
       };
       playTimerRef.current = requestAnimationFrame(tick);
@@ -427,14 +450,34 @@ export function TimelinePage() {
   const seekTo = async (ms: number) => {
     const newMs = Math.max(0, ms);
     setPlayheadMs(newMs);
+    if (playheadElRef.current) {
+      playheadElRef.current.style.left = (newMs * pxPerMsRef.current) + 'px';
+    }
     if (playing) {
       if (playTimerRef.current) cancelAnimationFrame(playTimerRef.current);
       stopAllAudio();
       await playFromPosition(newMs);
-      const startTime = performance.now();
+      const startWall = performance.now();
+      let lastStateUpdate = startWall;
       const tick = (now: number) => {
-        const elapsed = now - startTime;
-        setPlayheadMs(newMs + elapsed);
+        const elapsed = now - startWall;
+        const currentMs = newMs + elapsed;
+        if (playheadElRef.current) {
+          playheadElRef.current.style.left = (currentMs * pxPerMsRef.current) + 'px';
+        }
+        if (autoScrollRef.current && scrollContainerRef.current) {
+          const playheadPx = currentMs * pxPerMsRef.current;
+          const container = scrollContainerRef.current;
+          const viewLeft = container.scrollLeft;
+          const viewRight = viewLeft + container.clientWidth;
+          if (playheadPx > viewRight - 100 || playheadPx < viewLeft) {
+            container.scrollLeft = playheadPx - container.clientWidth * 0.3;
+          }
+        }
+        if (now - lastStateUpdate >= 100) {
+          setPlayheadMs(currentMs);
+          lastStateUpdate = now;
+        }
         playTimerRef.current = requestAnimationFrame(tick);
       };
       playTimerRef.current = requestAnimationFrame(tick);
@@ -462,15 +505,22 @@ export function TimelinePage() {
     if (!bookId) return;
     const track = tracks.find((t) => t.id === trackId);
     if (!track) return;
-    await timelineApi.updateTrack(bookId, trackId, { muted: track.muted ? 0 : 1 });
-    skipSnap.current = true;
-    loadTracks();
+    const newMuted = track.muted ? 0 : 1;
+    // Optimistic local update — no round-trip needed for UI
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, muted: newMuted } : t));
+    await timelineApi.updateTrack(bookId, trackId, { muted: newMuted });
   };
-  const updateTrackGain = async (trackId: string, gain: number) => {
+  const updateTrackGain = (trackId: string, gain: number) => {
     if (!bookId) return;
-    await timelineApi.updateTrack(bookId, trackId, { gain });
-    skipSnap.current = true;
-    loadTracks();
+    // Optimistic local update immediately (smooth slider)
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, gain } : t));
+    // Debounce server write — don't hit API on every px of slider drag
+    const existing = gainDebounceRef.current.get(trackId);
+    if (existing) clearTimeout(existing);
+    gainDebounceRef.current.set(trackId, setTimeout(() => {
+      timelineApi.updateTrack(bookId, trackId, { gain });
+      gainDebounceRef.current.delete(trackId);
+    }, 300));
   };
 
   // ── Clip Actions ──
@@ -544,19 +594,31 @@ export function TimelinePage() {
     skipSnap.current = true;
     loadTracks();
   };
-  const updateClipProperty = async (clipId: string, props: Partial<Clip>) => {
+  const updateClipProperty = useCallback((clipId: string, props: Partial<Clip>) => {
     if (!bookId) return;
-    pushSnapshot(tracks);
-    await timelineApi.updateClip(bookId, clipId, props);
-    skipSnap.current = true;
-    loadTracks();
-  };
+    // Optimistic local update — slider moves feel instant
+    setTracks(prev => prev.map(t => ({
+      ...t,
+      clips: t.clips.map(c => c.id === clipId ? { ...c, ...props } : c),
+    })));
+    // Debounce server write — avoid API call on every px of range slider drag
+    if (inspSaveDebounceRef.current) clearTimeout(inspSaveDebounceRef.current);
+    inspSaveDebounceRef.current = setTimeout(async () => {
+      pushSnapshot(tracks);
+      await timelineApi.updateClip(bookId, clipId, props);
+    }, 300);
+  }, [bookId, tracks]);
 
   // ── Helpers ──
-  const findClip = (clipId: string): Clip | null => {
-    for (const t of tracks) { const c = t.clips.find((c) => c.id === clipId); if (c) return c; }
-    return null;
-  };
+  // Perf: O(1) lookup instead of O(N*M) linear scan
+  const clipMap = useMemo(() => {
+    const map = new Map<string, Clip>();
+    for (const t of tracks) for (const c of t.clips) map.set(c.id, c);
+    return map;
+  }, [tracks]);
+
+  const findClip = useCallback((clipId: string): Clip | null => clipMap.get(clipId) ?? null, [clipMap]);
+
   const getClipDuration = (clip: Clip) => {
     const assetDur = (clip as any).asset_duration_ms;
     if (assetDur && assetDur > 0) {
@@ -659,11 +721,14 @@ export function TimelinePage() {
     } catch (err: any) { toast.error(`Batch adjust failed: ${err.message}`); }
   };
 
-  const totalDuration = () => {
+  // Perf: memoized — recomputes when tracks change or when audio buffers finish loading
+  const totalDurationMs = useMemo(() => {
     let max = 10000;
     for (const t of tracks) for (const c of t.clips) max = Math.max(max, c.position_ms + getClipDuration(c));
     return max + 5000;
-  };
+  // bufferLoadTick triggers recompute when audio buffer durations become available
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tracks, bufferLoadTick]);
 
   // ── Drag handling for clips ──
   const handleClipMouseDown = (e: React.MouseEvent, clip: Clip, track: Track, mode: DragMode) => {
@@ -857,19 +922,19 @@ export function TimelinePage() {
 
   const selectedClip = selectedClipId ? findClip(selectedClipId) : null;
   const selectedTrack = selectedClip ? tracks.find(t => t.clips.some(c => c.id === selectedClipId)) : null;
-  const timelineWidth = totalDuration() * pxPerMs;
+  const timelineWidth = totalDurationMs * pxPerMs;
 
-  // ── Ruler tick generation ──
-  const rulerTicks = () => {
+  // Perf: memoized — only recomputes when duration or zoom changes
+  const rulerTicks = useMemo(() => {
     const ticks: { ms: number; label: string; major: boolean }[] = [];
     const stepMs = pxPerMs > 0.1 ? 1000 : pxPerMs > 0.02 ? 5000 : 10000;
-    for (let ms = 0; ms < totalDuration(); ms += stepMs) {
+    for (let ms = 0; ms < totalDurationMs; ms += stepMs) {
       const sec = ms / 1000;
       const label = sec >= 60 ? `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}` : `${sec.toFixed(sec < 10 ? 1 : 0)}s`;
       ticks.push({ ms, label, major: ms % (stepMs * 5) === 0 });
     }
     return ticks;
-  };
+  }, [totalDurationMs, pxPerMs]);
 
   // ── RENDER ──
   return (
@@ -884,7 +949,7 @@ export function TimelinePage() {
             <button className="tl-btn tl-btn-secondary" onClick={() => seekTo(0)} title="Home (Go to start)"><SkipBack size={16} /></button>
             <div className="tl-time-display">
               <div className="tl-time-current">{formatTimeExtended(playheadMs, timeFormat)}</div>
-              <div className="tl-time-total">/ {formatTimeExtended(totalDuration(), timeFormat)}</div>
+              <div className="tl-time-total">/ {formatTimeExtended(totalDurationMs, timeFormat)}</div>
             </div>
           </div>
           
@@ -953,10 +1018,10 @@ export function TimelinePage() {
               const rect = e.currentTarget.getBoundingClientRect();
               const clickX = e.clientX - rect.left;
               const percentage = clickX / rect.width;
-              seekTo(totalDuration() * percentage);
+              seekTo(totalDurationMs * percentage);
             }}>
-              <div className="tl-progress-fill" style={{ width: `${(playheadMs / totalDuration()) * 100}%` }} />
-              <div className="tl-progress-playhead" style={{ left: `${(playheadMs / totalDuration()) * 100}%` }} />
+              <div className="tl-progress-fill" style={{ width: `${(playheadMs / totalDurationMs) * 100}%` }} />
+              <div className="tl-progress-playhead" style={{ left: `${(playheadMs / totalDurationMs) * 100}%` }} />
             </div>
           </div>
         </div>
@@ -1123,7 +1188,7 @@ export function TimelinePage() {
           <div className="tl-timeline" ref={timelineRef} style={{ width: timelineWidth }} onClick={handleTimelineClick}>
             {/* Ruler */}
             <div className="tl-ruler" onClick={handleRulerClick} style={{ width: timelineWidth }}>
-              {rulerTicks().map(tick => (
+              {rulerTicks.map(tick => (
                 <div key={tick.ms} className={`tl-tick ${tick.major ? 'major' : ''}`} style={{ left: tick.ms * pxPerMs }}>
                   <div className="tl-tick-line" />
                   <span className="tl-tick-label">{tick.label}</span>
@@ -1201,8 +1266,8 @@ export function TimelinePage() {
               );
             })}
 
-            {/* Playhead */}
-            <div className="tl-playhead" style={{ left: playheadMs * pxPerMs }}>
+            {/* Playhead — position driven by DOM ref during playback to skip React re-renders */}
+            <div className="tl-playhead" ref={playheadElRef} style={{ left: playheadMs * pxPerMs }}>
               <div className="tl-playhead-head" />
               <div className="tl-playhead-line" style={{ height: RULER_H + tracks.length * TRACK_H }} />
             </div>

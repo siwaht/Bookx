@@ -3,7 +3,7 @@ import { v4 as uuid } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
-import { queryAll, queryOne, run } from '../db/helpers.js';
+import { queryAll, queryOne, run, withTransaction } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
@@ -164,7 +164,7 @@ export function timelineRouter(db: SqlJsDatabase): Router {
         chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
       }
 
-      // Ensure a narration track exists
+      // Ensure a narration track exists (outside transaction so we can read it back)
       let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]);
       if (!narrationTrack) {
         const trackId = uuid();
@@ -172,46 +172,55 @@ export function timelineRouter(db: SqlJsDatabase): Router {
         narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
       }
 
+      // Pre-fetch all existing clips for this track in one query to avoid N+1 pattern
+      const existingClips = queryAll(db, 'SELECT segment_id, position_ms FROM clips WHERE track_id = ?', [narrationTrack.id]);
+      const existingBySegment = new Map<string, { position_ms: number }>(
+        existingClips.map((c: any) => [c.segment_id, { position_ms: c.position_ms }])
+      );
+
       let currentPositionMs = 0;
       const clipsCreated: any[] = [];
       const markersCreated: any[] = [];
 
-      // Clear existing chapter markers for this book if repopulating
-      run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
+      // Wrap all writes in a single transaction — dramatically faster for large books
+      withTransaction(db, () => {
+        // Clear existing chapter markers for this book if repopulating
+        run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
 
-      for (const chapter of chapters) {
-        // Create chapter marker at current position
-        const markerId = uuid();
-        run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
-          [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
-        markersCreated.push({ id: markerId, chapter_id: chapter.id, position_ms: currentPositionMs, label: chapter.title });
+        for (const chapter of chapters) {
+          // Create chapter marker at current position
+          const markerId = uuid();
+          run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
+            [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
+          markersCreated.push({ id: markerId, chapter_id: chapter.id, position_ms: currentPositionMs, label: chapter.title });
 
-        // Get segments with audio for this chapter
-        const segments = queryAll(db,
-          `SELECT s.*, a.duration_ms, a.file_path FROM segments s
-           JOIN audio_assets a ON s.audio_asset_id = a.id
-           WHERE s.chapter_id = ? ORDER BY s.sort_order`,
-          [chapter.id]);
+          // Get segments with audio for this chapter
+          const segments = queryAll(db,
+            `SELECT s.*, a.duration_ms, a.file_path FROM segments s
+             JOIN audio_assets a ON s.audio_asset_id = a.id
+             WHERE s.chapter_id = ? ORDER BY s.sort_order`,
+            [chapter.id]);
 
-        for (const seg of segments) {
-          // Check if clip already exists for this segment on this track
-          const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
-          if (existing) {
-            currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
-            continue;
+          for (const seg of segments) {
+            // Use pre-fetched map instead of per-segment query
+            const existing = existingBySegment.get(seg.id);
+            if (existing) {
+              currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
+              continue;
+            }
+
+            const clipId = uuid();
+            const durationMs = seg.duration_ms || 3000;
+            run(db,
+              `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+              [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
+            clipsCreated.push({ id: clipId, segment_id: seg.id, position_ms: currentPositionMs, duration_ms: durationMs });
+            currentPositionMs += durationMs + gapBetweenSegmentsMs;
           }
 
-          const clipId = uuid();
-          const durationMs = seg.duration_ms || 3000;
-          run(db,
-            `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
-          clipsCreated.push({ id: clipId, segment_id: seg.id, position_ms: currentPositionMs, duration_ms: durationMs });
-          currentPositionMs += durationMs + gapBetweenSegmentsMs;
+          currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
         }
-
-        currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
-      }
+      });
 
       // Return full track state
       const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [bookId]);
