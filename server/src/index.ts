@@ -345,13 +345,13 @@ async function main() {
 
   // ── Scheduled tasks ──
   // Auto-backup every 6 hours
-  setInterval(() => {
+  const autoBackupInterval = setInterval(() => {
     const result = createBackup();
     if (result) log.info('Auto-backup created', { size: result.size });
   }, 6 * 60 * 60 * 1000);
 
   // Auto-cleanup old exports/renders weekly (every 7 days)
-  setInterval(() => {
+  const autoCleanupInterval = setInterval(() => {
     const result = runCleanup(db, 30);
     if (result.bytes_freed > 0) {
       log.info('Auto-cleanup completed', result);
@@ -362,6 +362,8 @@ async function main() {
   // ── Graceful shutdown ──
   const shutdown = (signal: string) => {
     log.info(`${signal} received, shutting down gracefully...`);
+    clearInterval(autoBackupInterval);
+    clearInterval(autoCleanupInterval);
     stopAutoSave();
     saveDb();
     server.close(() => {
