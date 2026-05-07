@@ -76,12 +76,16 @@ function recordAttempt(ip: string): void {
 }
 
 // Clean up old entries periodically
-setInterval(() => {
+const authCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of loginAttempts) {
     if (now - entry.lastAttempt > WINDOW_MS) loginAttempts.delete(ip);
   }
 }, 60_000);
+
+export function clearAuthIntervals(): void {
+  clearInterval(authCleanupInterval);
+}
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
