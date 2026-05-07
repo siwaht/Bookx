@@ -306,6 +306,11 @@ async function main() {
     }
   });
 
+  // ── 404 handler for API routes ──
+  app.use('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+  });
+
   // ── Serve static client in production ──
   const clientDist = path.join(__dirname, '../../client/dist');
   if (fs.existsSync(clientDist)) {
@@ -320,11 +325,6 @@ async function main() {
   } else {
     log.warn('Client dist not found, static serving disabled', { path: clientDist });
   }
-
-  // ── 404 handler for API routes ──
-  app.use('/api/*', (_req, res) => {
-    res.status(404).json({ error: 'Endpoint not found' });
-  });
 
   // ── Global error handler ──
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
