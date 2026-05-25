@@ -288,6 +288,7 @@ async function generateSegmentAudioInternal(
   }
 
   const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [segment.chapter_id]) as any;
+  if (!chapter) throw new Error('Chapter not found - it may have been deleted');
 
   let buffer: Buffer;
   let requestId: string | null = null;

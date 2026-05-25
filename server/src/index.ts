@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { getDb, initializeSchema, saveDb, startAutoSave, stopAutoSave } from './db/schema.js';
 import { queryAll, queryOne } from './db/helpers.js';
 import { authMiddleware, loginHandler } from './middleware/auth.js';
-import { apiRateLimit } from './middleware/rate-limit.js';
+import { apiRateLimit, ttsRateLimit } from './middleware/rate-limit.js';
 import { createBackup, listBackups, restoreBackup } from './db/backup.js';
 import { runCleanup, getDiskUsage } from './db/cleanup.js';
 import { booksRouter } from './routes/books.js';
@@ -159,6 +159,8 @@ async function main() {
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     if (IS_PROD) {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      // connect-src 'self' is correct here: the frontend uses relative /api paths
+      // and is served from the same origin, so no external connections are needed.
       res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'");
     }
     next();
@@ -206,7 +208,7 @@ async function main() {
   app.use('/api/books', booksRouter(db));
   app.use('/api/books/:bookId/chapters', chaptersRouter(db));
   app.use('/api/books/:bookId/characters', charactersRouter(db));
-  app.use('/api/chapters/:chapterId/segments', segmentsRouter(db));
+  app.use('/api/chapters/:chapterId/segments', ttsRateLimit, segmentsRouter(db));
   app.use('/api/elevenlabs', elevenlabsRouter(db));
   app.use('/api/books/:bookId', timelineRouter(db));
   app.use('/api/books/:bookId/import', importRouter(db));
@@ -219,7 +221,8 @@ async function main() {
   app.use('/api/tts', ttsProvidersRouter(db));
   app.use('/api/library', libraryRouter(db));
   app.use('/api/books/:bookId/background-boost', backgroundBoostRouter(db));
-  app.use('/api/books/:bookId/generation', generationRouter(db));
+  // Apply stricter TTS rate limit to generation endpoints (expensive API calls)
+  app.use('/api/books/:bookId/generation', ttsRateLimit, generationRouter(db));
   app.use('/api/book-agent', bookAgentRouter(db));
 
   // ── Save DB explicitly ──
@@ -345,13 +348,13 @@ async function main() {
 
   // ── Scheduled tasks ──
   // Auto-backup every 6 hours
-  setInterval(() => {
+  const autoBackupInterval = setInterval(() => {
     const result = createBackup();
     if (result) log.info('Auto-backup created', { size: result.size });
   }, 6 * 60 * 60 * 1000);
 
   // Auto-cleanup old exports/renders weekly (every 7 days)
-  setInterval(() => {
+  const autoCleanupInterval = setInterval(() => {
     const result = runCleanup(db, 30);
     if (result.bytes_freed > 0) {
       log.info('Auto-cleanup completed', result);
@@ -362,6 +365,8 @@ async function main() {
   // ── Graceful shutdown ──
   const shutdown = (signal: string) => {
     log.info(`${signal} received, shutting down gracefully...`);
+    clearInterval(autoBackupInterval);
+    clearInterval(autoCleanupInterval);
     stopAutoSave();
     saveDb();
     server.close(() => {
