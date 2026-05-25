@@ -74,7 +74,7 @@ export function renderRouter(db: SqlJsDatabase): Router {
     // Prevent directory traversal
     const resolved = path.resolve(job.output_path);
     const dataDir = path.resolve(DATA_DIR);
-    if (!resolved.startsWith(dataDir) || !fs.existsSync(resolved)) {
+    if ((!resolved.startsWith(dataDir + path.sep) && resolved !== dataDir) || !fs.existsSync(resolved)) {
       res.status(404).json({ error: 'File not found' });
       return;
     }

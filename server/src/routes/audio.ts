@@ -7,6 +7,7 @@ import { queryAll, queryOne, run } from '../db/helpers.js';
 import { getStorageProvider } from '../storage/index.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 export function audioRouter(db: SqlJsDatabase): Router {
   const router = Router();
@@ -39,7 +40,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
         fs.createReadStream(filePath).pipe(res);
       }
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to stream audio', detail: err.message });
+      res.status(500).json({ error: 'Failed to stream audio', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -48,7 +49,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const assets = queryAll(db, 'SELECT * FROM audio_assets WHERE book_id = ? ORDER BY created_at DESC', [req.params.bookId]);
       res.json(assets);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to list audio assets', detail: err.message });
+      res.status(500).json({ error: 'Failed to list audio assets', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -60,7 +61,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
         [req.params.bookId]);
       res.json(assets);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to list audio library', detail: err.message });
+      res.status(500).json({ error: 'Failed to list audio library', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -89,7 +90,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
         fs.createReadStream(asset.file_path).pipe(res);
       }
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to download audio', detail: err.message });
+      res.status(500).json({ error: 'Failed to download audio', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -109,7 +110,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const updated = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to update audio asset', detail: err.message });
+      res.status(500).json({ error: 'Failed to update audio asset', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -131,7 +132,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       run(db, 'DELETE FROM audio_assets WHERE id = ?', [req.params.assetId]);
       res.status(204).send();
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to delete audio asset', detail: err.message });
+      res.status(500).json({ error: 'Failed to delete audio asset', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 

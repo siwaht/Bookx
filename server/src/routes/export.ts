@@ -76,7 +76,7 @@ export function exportRouter(db: SqlJsDatabase): Router {
     // Prevent directory traversal
     const resolved = path.resolve(exp.output_path);
     const dataDir = path.resolve(DATA_DIR);
-    if (!resolved.startsWith(dataDir)) {
+    if (!resolved.startsWith(dataDir + path.sep) && resolved !== dataDir) {
       res.status(404).json({ error: 'Export file not found' });
       return;
     }

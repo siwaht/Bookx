@@ -8,6 +8,7 @@ import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
 import { applyPronunciationRules } from '../utils/pronunciation.js';
+import { ttsRateLimit } from '../middleware/rate-limit.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -293,10 +294,30 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   });
 
   // ── Generate TTS + Populate Timeline (combined two-step) ──
-  router.post('/generate-and-populate', async (req: Request, res: Response) => {
+  router.post('/generate-and-populate', ttsRateLimit, async (req: Request, res: Response) => {
     try {
       const bookId = req.params.bookId;
       const { chapter_ids, gap_ms, chapter_gap_ms: reqChapterGapMs } = req.body;
+
+      // Input validation (same as /populate)
+      if (chapter_ids !== undefined) {
+        if (!Array.isArray(chapter_ids) || !chapter_ids.every((id: any) => typeof id === 'string')) {
+          res.status(400).json({ error: 'chapter_ids must be an array of strings' });
+          return;
+        }
+      }
+      if (gap_ms !== undefined) {
+        if (typeof gap_ms !== 'number' || gap_ms < 0 || gap_ms > 30000) {
+          res.status(400).json({ error: 'gap_ms must be a number between 0 and 30000' });
+          return;
+        }
+      }
+      if (reqChapterGapMs !== undefined) {
+        if (typeof reqChapterGapMs !== 'number' || reqChapterGapMs < 0 || reqChapterGapMs > 60000) {
+          res.status(400).json({ error: 'chapter_gap_ms must be a number between 0 and 60000' });
+          return;
+        }
+      }
 
       // Get book-level pacing defaults
       const book = queryOne(db, 'SELECT default_gap_ms, chapter_gap_ms, default_speed FROM books WHERE id = ?', [bookId]);
@@ -675,7 +696,7 @@ async function generateSegmentAudioForTimeline(
     });
     buffer = result.buffer;
     requestId = result.requestId;
-    durationMs = result.durationMs || Math.round((buffer.length / 24000) * 1000);
+    durationMs = result.durationMs || Math.round((buffer.length / 16000) * 1000);
   }
 
   const assetId = uuid();
