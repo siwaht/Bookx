@@ -269,6 +269,8 @@ export const timeline = {
 };
 
 // ── Import ──
+// No explicit Content-Type header needed: the browser sets it automatically
+// with the correct multipart boundary when using FormData as the body.
 export const importManuscript = async (bookId: string, file: File) => {
   const formData = new FormData();
   formData.append('file', file);

@@ -65,6 +65,9 @@ export function renderRouter(db: SqlJsDatabase): Router {
 
 async function processRenderJob(db: SqlJsDatabase, jobId: string): Promise<void> {
   const job = queryOne(db, 'SELECT * FROM render_jobs WHERE id = ?', [jobId]);
+  if (!job) {
+    throw new Error(`Render job ${jobId} not found`);
+  }
   const bookId = job.book_id;
 
   const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);

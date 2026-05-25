@@ -411,7 +411,6 @@ export function audioRouter(db: SqlJsDatabase): Router {
       }
 
       const assetId = uuid();
-      const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
 
       // Use storage provider
       const storage = getStorageProvider();

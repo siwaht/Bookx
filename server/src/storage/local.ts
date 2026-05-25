@@ -8,7 +8,7 @@ const DATA_DIR = process.env.DATA_DIR || './data';
 export class LocalStorageProvider implements StorageProvider {
   name = 'local';
 
-  async write(key: string, data: Buffer): Promise<string> {
+  async write(key: string, data: Buffer, metadata?: Record<string, string>): Promise<string> {
     const filePath = this.resolvePath(key);
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
     fs.writeFileSync(filePath, data);

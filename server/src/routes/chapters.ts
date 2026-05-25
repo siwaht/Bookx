@@ -123,7 +123,7 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
       const textAfter = text.slice(split_at).trimStart();
 
       // Update original chapter with first half
-      withTransaction(db, () => {
+      const result = withTransaction(db, () => {
         run(db, `UPDATE chapters SET raw_text = ?, cleaned_text = NULL, updated_at = datetime('now') WHERE id = ?`,
           [textBefore, chapter.id]);
 
@@ -141,8 +141,9 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
 
         const original = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [chapter.id]);
         const newChapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [newId]);
-        res.json({ original, new_chapter: newChapter });
+        return { original, new_chapter: newChapter };
       });
+      res.json(result);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

@@ -5,6 +5,9 @@ import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run, withTransaction } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
+import { generateWithProvider } from '../tts/registry.js';
+import type { TTSProviderName } from '../tts/provider.js';
+import { applyPronunciationRules } from '../utils/pronunciation.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -36,9 +39,13 @@ export function timelineRouter(db: SqlJsDatabase): Router {
       const id = uuid();
       const { name, type, color } = req.body;
       if (!name || typeof name !== 'string') { res.status(400).json({ error: 'name is required' }); return; }
+      const allowedTypes = ['narration', 'dialogue', 'sfx', 'music', 'imported'];
+      if (type && !allowedTypes.includes(type)) {
+        res.status(400).json({ error: `Invalid track type. Allowed: ${allowedTypes.join(', ')}` }); return;
+      }
       const maxOrder = queryOne(db, 'SELECT MAX(sort_order) as max_order FROM tracks WHERE book_id = ?', [req.params.bookId]);
       run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, req.params.bookId, name, type, (maxOrder?.max_order ?? -1) + 1, color || '#4A90D9']);
+        [id, req.params.bookId, name, type || 'narration', (maxOrder?.max_order ?? -1) + 1, color || '#4A90D9']);
       const track = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [id]);
       res.status(201).json(track);
     } catch (err: any) {
@@ -576,12 +583,16 @@ async function generateSegmentAudioForTimeline(
   let voiceId = 'default';
   let voiceSettings = { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true };
   let modelId = 'eleven_v3';
+  let ttsProvider: TTSProviderName = 'elevenlabs';
+  let speed = 1.0;
 
   if (segment.character_id) {
     const char = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [segment.character_id]);
     if (char?.voice_id) {
       voiceId = char.voice_id;
       modelId = char.model_id || 'eleven_v3';
+      ttsProvider = char.tts_provider || 'elevenlabs';
+      speed = char.speed || 1.0;
       voiceSettings = {
         stability: char.stability ?? 0.5,
         similarity_boost: char.similarity_boost ?? 0.75,
@@ -595,7 +606,10 @@ async function generateSegmentAudioForTimeline(
     throw new Error('No voice assigned. Assign a character with a voice first.');
   }
 
-  const hashParams = { text: segment.text, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
+  // Apply pronunciation rules before generating audio
+  const processedText = applyPronunciationRules(db, segment.text, segment.chapter_id, segment.character_id);
+
+  const hashParams = { provider: ttsProvider, text: processedText, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
   const promptHash = computePromptHash(hashParams);
 
   // Check cache
@@ -607,24 +621,50 @@ async function generateSegmentAudioForTimeline(
 
   const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [segment.chapter_id]);
 
-  const { buffer, requestId } = await generateTTS({
-    text: segment.text,
-    voice_id: voiceId,
-    model_id: modelId,
-    voice_settings: voiceSettings,
-    output_format: 'mp3_44100_192',
-  });
+  let buffer: Buffer;
+  let requestId: string | null = null;
+  let durationMs: number;
+
+  if (ttsProvider === 'elevenlabs') {
+    const prevSegment = queryOne(db,
+      'SELECT previous_request_id FROM segments WHERE chapter_id = ? AND sort_order < ? AND previous_request_id IS NOT NULL ORDER BY sort_order DESC LIMIT 1',
+      [segment.chapter_id, segment.sort_order]);
+
+    const result = await generateTTS({
+      text: processedText,
+      voice_id: voiceId,
+      model_id: modelId,
+      voice_settings: voiceSettings,
+      previous_request_ids: prevSegment?.previous_request_id ? [prevSegment.previous_request_id] : undefined,
+      output_format: 'mp3_44100_192',
+    });
+    buffer = result.buffer;
+    requestId = result.requestId;
+    durationMs = Math.round((buffer.length / 24000) * 1000);
+  } else {
+    const result = await generateWithProvider(ttsProvider, {
+      text: processedText,
+      voiceId,
+      modelId,
+      speed,
+      stability: voiceSettings.stability,
+      similarityBoost: voiceSettings.similarity_boost,
+      style: voiceSettings.style,
+      speakerBoost: voiceSettings.use_speaker_boost,
+    });
+    buffer = result.buffer;
+    requestId = result.requestId;
+    durationMs = result.durationMs || Math.round((buffer.length / 24000) * 1000);
+  }
 
   const assetId = uuid();
   const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
   fs.writeFileSync(filePath, buffer);
 
-  const estimatedDurationMs = Math.round((buffer.length / 24000) * 1000);
-
   run(db,
     `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
      VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
-    [assetId, chapter.book_id, filePath, estimatedDurationMs, promptHash, requestId, JSON.stringify(hashParams), buffer.length]);
+    [assetId, chapter.book_id, filePath, durationMs, promptHash, requestId, JSON.stringify({ ...hashParams, provider: ttsProvider }), buffer.length]);
 
   run(db, `UPDATE segments SET audio_asset_id = ?, previous_request_id = ?, updated_at = datetime('now') WHERE id = ?`,
     [assetId, requestId, segment.id]);

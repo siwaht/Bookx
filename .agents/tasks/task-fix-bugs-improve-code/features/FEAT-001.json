@@ -1,0 +1,37 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Fix bugs and code quality issues across the server and client codebase",
+  "status": "in_progress",
+  "steps": [
+    "1. Fix LocalStorageProvider.write() in server/src/storage/local.ts: Add the missing optional `metadata` parameter to match the StorageProvider interface signature. The interface requires `write(key: string, data: Buffer, metadata?: Record<string, string>): Promise<string>` but LocalStorageProvider omits `metadata`.",
+    "2. Fix unused variable in server/src/routes/audio.ts: The `filePath` variable on line ~240 (`const filePath = path.join(DATA_DIR, 'audio', ...)`) in the upload route is declared but never used (the code uses `storedPath` from storage.write instead). Remove it.",
+    "3. Fix unused variable in server/src/routes/segments.ts: The `cleanedTextVal` variable in the chapter PUT handler is assigned but not used as expected (it's from the chapters route, but segments.ts also has dead code). Also the `ttsRateLimit` import in server/src/index.ts is imported but never used - remove it.",
+    "4. Fix the `withTransaction` missing from the chapters split handler: In server/src/routes/chapters.ts, the `/:id/split` endpoint calls `withTransaction(db, () => {...})` but after the transaction function, `res.json(...)` is called INSIDE the transaction callback. This means the response is sent before the transaction commits (since withTransaction returns the result of fn). Move the response outside the transaction.",
+    "5. Fix potential memory leak in server/src/middleware/auth.ts: The `loginAttempts` Map cleanup interval (setInterval every 60s) runs indefinitely with no way to clear it. While acceptable for a server process, add a comment documenting this is intentional for the process lifetime.",
+    "6. Fix the duplicate function `applyPronunciationRules` that exists in both server/src/routes/segments.ts and server/src/routes/generation.ts: Extract it to a shared utility in server/src/db/helpers.ts or a new file like server/src/utils/pronunciation.ts to eliminate duplication.",
+    "7. Fix the `generateSegmentAudioForTimeline` function in server/src/routes/timeline.ts which duplicates logic from `generateSegmentAudio` in segments.ts but lacks provider support (only uses ElevenLabs). It should use the same multi-provider logic via the registry.",
+    "8. Fix the DeepgramTTSProvider duration estimation: In server/src/tts/deepgram-provider.ts, duration is estimated as `(buffer.length / 16000) * 1000` which is wrong for MP3 at standard bitrates. Use a more accurate estimate based on common MP3 bitrate (128kbps = 16000 bytes/sec is actually correct for that bitrate, but the comment says 128kbps while the result is requested at default encoding). Add a clarifying comment.",
+    "9. Fix missing error handling in server/src/routes/render.ts: The `processRenderJob` function accesses `job.book_id` without checking if `job` is null first (queryOne can return undefined).",
+    "10. Fix the 404 handler placement in server/src/index.ts: The catch-all `app.get('*', ...)` for serving client dist is placed BEFORE the `/api/*` 404 handler. Since Express matches routes in order and the catch-all uses `*`, API requests to non-existent endpoints will get the index.html instead of a 404 JSON. Reorder so the `/api/*` 404 handler comes before the client catch-all.",
+    "11. Fix missing input sanitization in server/src/routes/render.ts download endpoint: Validate that the resolved output_path is within the DATA_DIR to prevent directory traversal (already partially done but the `dataDir` variable uses the default DATA_DIR, which might differ from the actual configured one).",
+    "12. Add missing `type` field validation in timeline track creation (server/src/routes/timeline.ts POST /tracks): The `type` field from req.body is inserted directly without validation. Add validation against allowed values.",
+    "13. Fix the client api.ts `importManuscript` function: It does not set Content-Type header (correct for FormData), but it has an inconsistency where other upload functions read the raw body manually while this one uses FormData. This is fine for the client but document why no Content-Type is needed.",
+    "14. Fix rate limit cleanup: Both server/src/middleware/rate-limit.ts and server/src/middleware/auth.ts have setInterval cleanup that cannot be cleared. This is acceptable for a long-running server process but should be documented."
+  ],
+  "acceptance_criteria": [
+    "npm run build succeeds without errors for both client and server",
+    "npm run lint (tsc --noEmit) passes for both workspaces",
+    "The LocalStorageProvider.write signature matches the StorageProvider interface",
+    "The duplicate applyPronunciationRules is extracted to a shared module",
+    "The generateSegmentAudioForTimeline function uses the TTS registry for multi-provider support",
+    "The API 404 handler is correctly ordered before the client SPA catch-all",
+    "Track creation validates the type field"
+  ],
+  "verification": [
+    "source ~/.nvm/nvm.sh && nvm use 22 && npm run build",
+    "source ~/.nvm/nvm.sh && nvm use 22 && npm run lint"
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
