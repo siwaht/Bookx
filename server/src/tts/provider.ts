@@ -6,11 +6,16 @@
  * - openai: OpenAI TTS (gpt-4o-mini-tts, tts-1, tts-1-hd)
  * - google: Google Cloud TTS
  * - amazon: Amazon Polly
+ * - deepgram: Deepgram Aura
+ * - cartesia: Cartesia Sonic
  * 
- * Each provider implements the TTSProvider interface.
+ * Each provider implements the TTSProvider interface. This is the plug point
+ * for adding cheaper/alternative TTS vendors without touching any calling code -
+ * everything upstream (characters, segments, generation jobs, casting) only
+ * ever talks to `TTSProviderName` + this interface.
  */
 
-export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon' | 'deepgram';
+export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon' | 'deepgram' | 'cartesia';
 
 export interface TTSGenerateRequest {
   text: string;

@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { characters as charsApi, elevenlabs, ttsProviders } from '../services/api';
+import { characters as charsApi, elevenlabs, ttsProviders, castings as castingsApi } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import { toast } from '../components/Toast';
-import type { Character, ElevenLabsVoice, TTSProviderName } from '../types';
-import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, X, Zap, Wand2 } from 'lucide-react';
+import type { Character, ElevenLabsVoice, TTSProviderName, VoiceCasting } from '../types';
+import { Plus, Search, Play, Trash2, Mic, CheckCircle, Hash, Loader, Globe, X, Zap, Wand2, BookmarkPlus, FolderOpen, Save } from 'lucide-react';
 
 const PROVIDER_LABELS: Record<TTSProviderName, string> = {
   elevenlabs: 'ElevenLabs',
@@ -12,6 +12,7 @@ const PROVIDER_LABELS: Record<TTSProviderName, string> = {
   google: 'Google Cloud TTS',
   amazon: 'Amazon Polly',
   deepgram: 'Deepgram Aura',
+  cartesia: 'Cartesia',
 };
 
 const PROVIDER_COLORS: Record<TTSProviderName, string> = {
@@ -20,6 +21,7 @@ const PROVIDER_COLORS: Record<TTSProviderName, string> = {
   google: '#4285f4',
   amazon: '#ff9900',
   deepgram: '#13ef93',
+  cartesia: '#ff6b6b',
 };
 
 export function VoicesPage() {
@@ -54,6 +56,13 @@ export function VoicesPage() {
 
   // Auto-assign voices
   const [autoAssigning, setAutoAssigning] = useState(false);
+
+  // Voice casting: save this book's cast for reuse, or load a saved cast onto this book
+  const [castingList, setCastingList] = useState<VoiceCasting[]>([]);
+  const [showCastingPanel, setShowCastingPanel] = useState(false);
+  const [savingCasting, setSavingCasting] = useState(false);
+  const [newCastingName, setNewCastingName] = useState('');
+  const [applyingCastingId, setApplyingCastingId] = useState<string | null>(null);
 
   const loadCharacters = async () => {
     if (!bookId) return;
@@ -91,7 +100,14 @@ export function VoicesPage() {
     }
   };
 
-  useEffect(() => { loadCharacters(); loadVoices(); loadProviders(); }, [bookId]);
+  const loadCastings = async () => {
+    try {
+      const data = await castingsApi.list();
+      setCastingList(Array.isArray(data) ? data : []);
+    } catch (err) { console.error('Failed to load castings:', err); }
+  };
+
+  useEffect(() => { loadCharacters(); loadVoices(); loadProviders(); loadCastings(); }, [bookId]);
 
   useEffect(() => {
     if (activeProvider !== 'elevenlabs') loadProviderVoices(activeProvider);
@@ -133,6 +149,41 @@ export function VoicesPage() {
       toast.error(`Auto-assign failed: ${err.message}`);
     } finally {
       setAutoAssigning(false);
+    }
+  };
+
+  const handleSaveCasting = async () => {
+    if (!bookId || !newCastingName.trim()) return;
+    setSavingCasting(true);
+    try {
+      const casting = await castingsApi.syncFromBook(bookId, { name: newCastingName.trim() });
+      toast.success(`Saved "${casting.name}" with ${casting.members?.length || 0} character voice${casting.members?.length === 1 ? '' : 's'}. Reuse it from any book or podcast episode.`);
+      setNewCastingName('');
+      await loadCastings();
+    } catch (err: any) {
+      toast.error(`Failed to save cast: ${err.message}`);
+    } finally {
+      setSavingCasting(false);
+    }
+  };
+
+  const handleApplyCasting = async (castingId: string) => {
+    if (!bookId) return;
+    setApplyingCastingId(castingId);
+    try {
+      const result = await castingsApi.applyToBook(castingId, bookId);
+      toast.success(`Applied casting: ${result.updated} character${result.updated === 1 ? '' : 's'} updated, ${result.created} created.`);
+      const refreshed = await charsApi.list(bookId);
+      const list = Array.isArray(refreshed) ? refreshed : [];
+      setCharacterList(list);
+      if (selectedChar) {
+        const updated = list.find((c: any) => c.id === selectedChar.id);
+        if (updated) setSelectedChar(updated);
+      }
+    } catch (err: any) {
+      toast.error(`Failed to apply casting: ${err.message}`);
+    } finally {
+      setApplyingCastingId(null);
     }
   };
 
@@ -232,10 +283,54 @@ export function VoicesPage() {
           <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
             <button onClick={handleAutoAssignVoices} disabled={autoAssigning}
               style={{ ...styles.autoAssignBtn, opacity: autoAssigning ? 0.6 : 1 }}
-              title="Automatically assign distinct voices to all characters without one">
+              title="Automatically assign distinct voices to all characters without one. Recalls a remembered voice first (from this book's cast, its series, or any saved casting) before picking a fresh one.">
               {autoAssigning ? <Loader size={12} /> : <Wand2 size={12} />}
               {autoAssigning ? 'Assigning...' : `Auto-assign ${charsWithoutVoice.length} voice${charsWithoutVoice.length > 1 ? 's' : ''}`}
             </button>
+          </div>
+        )}
+        {characterList.length > 0 && (
+          <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border-subtle)' }}>
+            <button onClick={() => setShowCastingPanel(!showCastingPanel)}
+              style={{ ...styles.autoAssignBtn, background: showCastingPanel ? 'var(--accent-subtle)' : 'var(--bg-elevated)', color: showCastingPanel ? 'var(--accent)' : 'var(--text-secondary)' }}>
+              <FolderOpen size={12} /> Voice Casting (save / reuse cast)
+            </button>
+            {showCastingPanel && (
+              <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input value={newCastingName} onChange={(e) => setNewCastingName(e.target.value)}
+                    placeholder="Name this cast (e.g. 'My Podcast Hosts')" style={{ ...styles.input, flex: 1, fontSize: 11, padding: '6px 10px' }}
+                    aria-label="New casting name" />
+                  <button onClick={handleSaveCasting} disabled={savingCasting || !newCastingName.trim()}
+                    style={{ ...styles.tinyBtn, opacity: (savingCasting || !newCastingName.trim()) ? 0.5 : 1 }}
+                    title="Save this book's character voices as a reusable cast">
+                    {savingCasting ? <Loader size={11} /> : <Save size={11} />} Save
+                  </button>
+                </div>
+                {castingList.length > 0 && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 140, overflow: 'auto' }}>
+                    <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>REUSE A SAVED CAST</span>
+                    {castingList.map((c) => (
+                      <div key={c.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, padding: '5px 8px', background: 'var(--bg-elevated)', borderRadius: 6 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 11, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {c.name} {c.is_series_default ? <span style={{ color: 'var(--purple)', fontSize: 9 }}>(series)</span> : null}
+                          </div>
+                          <div style={{ fontSize: 9, color: 'var(--text-muted)' }}>{c.voiced_count ?? 0} voice{(c.voiced_count ?? 0) === 1 ? '' : 's'} saved</div>
+                        </div>
+                        <button onClick={() => handleApplyCasting(c.id)} disabled={applyingCastingId === c.id}
+                          style={{ ...styles.tinyBtn, flexShrink: 0 }} title={`Apply "${c.name}" to this book's characters`}>
+                          {applyingCastingId === c.id ? <Loader size={11} /> : <BookmarkPlus size={11} />} Apply
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {castingList.length === 0 && (
+                  <p style={{ fontSize: 10, color: 'var(--text-muted)', margin: 0 }}>No saved casts yet. Assign voices, then save them here to reuse on the next book, series volume, or podcast episode.</p>
+                )}
+              </div>
+            )}
           </div>
         )}
         {showCreate && (

@@ -27,10 +27,12 @@ export function renderRouter(db: SqlJsDatabase): Router {
 
       res.json({ job_id: jobId, status: 'running' });
 
-      // Process with a timeout to prevent hanging jobs
-      const RENDER_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+      // Process with a generous timeout so very long audiobooks (hundreds of
+      // chapters, large combined file sizes) don't get killed mid-render.
+      // Override via RENDER_TIMEOUT_MINUTES if an even longer book needs it.
+      const RENDER_TIMEOUT_MS = (parseInt(process.env.RENDER_TIMEOUT_MINUTES || '60', 10)) * 60 * 1000;
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Render job timed out after 10 minutes')), RENDER_TIMEOUT_MS)
+        setTimeout(() => reject(new Error(`Render job timed out after ${RENDER_TIMEOUT_MS / 60000} minutes. For extremely long books, increase RENDER_TIMEOUT_MINUTES.`)), RENDER_TIMEOUT_MS)
       );
 
       Promise.race([processRenderJob(db, jobId), timeoutPromise]).catch((err) => {

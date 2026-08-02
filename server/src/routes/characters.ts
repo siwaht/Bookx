@@ -3,54 +3,7 @@ import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
 import { z } from 'zod/v4';
-
-// Helper: score a voice for a character based on role/name heuristics
-function findBestVoice(
-  character: any,
-  voices: Array<{ voiceId: string; name: string; provider: string; gender?: string; category?: string; labels?: Record<string, string> }>,
-  alreadyAssigned: Set<string>
-): typeof voices[0] | null {
-  const available = voices.filter((v) => !alreadyAssigned.has(v.voiceId));
-  if (available.length === 0) return null;
-
-  const role = (character.role || '').toLowerCase();
-  const charName = (character.name || '').toLowerCase();
-
-  // Score each voice
-  const scored = available.map((voice) => {
-    let score = 0;
-    const vName = (voice.name || '').toLowerCase();
-    const vCategory = (voice.category || '').toLowerCase();
-    const labels = voice.labels || {};
-    const labelValues = Object.values(labels).map((l) => l.toLowerCase());
-    const labelKeys = Object.keys(labels).map((k) => k.toLowerCase());
-
-    // Narrator role prefers voices with narrator/storyteller labels
-    if (role === 'narrator') {
-      if (vName.includes('narrator') || vName.includes('storytell')) score += 10;
-      if (vCategory === 'professional' || vCategory === 'narration') score += 5;
-      if (labelValues.some((l) => l.includes('narrat') || l.includes('storytell') || l.includes('audiobook'))) score += 8;
-      if (labelKeys.includes('use case') && labelValues.some((l) => l.includes('narrat'))) score += 6;
-    }
-
-    // Character role prefers expressive/conversational voices
-    if (role === 'character') {
-      if (vCategory === 'conversational' || vCategory === 'characters') score += 3;
-      if (labelValues.some((l) => l.includes('character') || l.includes('conversational'))) score += 4;
-    }
-
-    // Bonus for name similarity (e.g., character "Alice" matching voice "Alice")
-    if (vName.includes(charName) || charName.includes(vName)) score += 15;
-
-    // Slight randomization to distribute voices more naturally
-    score += Math.random() * 2;
-
-    return { voice, score };
-  });
-
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.voice || null;
-}
+import { autoAssignWithMemory, findRememberedVoice, rememberCharacterVoice, normalizeName } from '../lib/voice-casting.js';
 
 const CreateCharacterSchema = z.object({
   name: z.string().min(1).max(200),
@@ -87,19 +40,45 @@ export function charactersRouter(db: SqlJsDatabase): Router {
         res.status(400).json({ error: 'Invalid input', details: parsed.error.issues });
         return;
       }
-      const { name, role, voice_id, voice_name, tts_provider, model_id,
+      let { name, role, voice_id, voice_name, tts_provider, model_id,
               stability, similarity_boost, style, speed, speaker_boost } = parsed.data;
+
+      // Multi-cast memory: if the caller didn't specify a voice, check whether this
+      // book's casting / series / global memory already knows this character's voice.
+      const bookIdParam = String(req.params.bookId);
+      let castingMemberId: string | null = null;
+      if (!voice_id) {
+        const remembered = findRememberedVoice(db, name, { bookId: bookIdParam });
+        if (remembered) {
+          voice_id = remembered.voice_id || undefined;
+          voice_name = remembered.voice_name || undefined;
+          tts_provider = remembered.tts_provider as any;
+          model_id = remembered.model_id;
+          stability = remembered.stability;
+          similarity_boost = remembered.similarity_boost;
+          style = remembered.style;
+          speed = remembered.speed;
+          speaker_boost = !!remembered.speaker_boost;
+          castingMemberId = remembered.id;
+        }
+      }
 
       const id = uuid();
       run(db,
-        `INSERT INTO characters (id, book_id, name, role, voice_id, voice_name, tts_provider, model_id, stability, similarity_boost, style, speed, speaker_boost)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, req.params.bookId, name, role || 'character', voice_id || null, voice_name || null,
-         tts_provider || 'elevenlabs', model_id || 'eleven_v3', stability ?? 0.5, similarity_boost ?? 0.75, style ?? 0.0, speed ?? 1.0, speaker_boost ?? 1]
+        `INSERT INTO characters (id, book_id, name, role, voice_id, voice_name, tts_provider, model_id, stability, similarity_boost, style, speed, speaker_boost, casting_member_id, normalized_name)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, bookIdParam, name, role || 'character', voice_id || null, voice_name || null,
+         tts_provider || 'elevenlabs', model_id || 'eleven_v3', stability ?? 0.5, similarity_boost ?? 0.75, style ?? 0.0, speed ?? 1.0, speaker_boost ?? 1,
+         castingMemberId, normalizeName(name)]
       );
 
+      // If a voice was explicitly supplied on create, remember it for next time too.
+      if (voice_id && !castingMemberId) {
+        rememberCharacterVoice(db, bookIdParam, { name, role, voice_id, voice_name, tts_provider, model_id, stability, similarity_boost, style, speed, speaker_boost });
+      }
+
       const character = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [id]);
-      res.status(201).json(character);
+      res.status(201).json({ ...character, remembered: !!castingMemberId });
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to create character' });
     }
@@ -123,13 +102,24 @@ export function charactersRouter(db: SqlJsDatabase): Router {
           values.push((parsed.data as any)[field]);
         }
       }
+      if (parsed.data.name !== undefined) {
+        updates.push('normalized_name = ?');
+        values.push(normalizeName(parsed.data.name));
+      }
 
       if (updates.length > 0) {
         values.push(req.params.id, req.params.bookId);
         run(db, `UPDATE characters SET ${updates.join(', ')} WHERE id = ? AND book_id = ?`, values);
       }
 
-      const character = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [req.params.id]);
+      const character = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [req.params.id]) as any;
+
+      // Whenever a voice gets (re)assigned, persist it into this book's casting/series
+      // memory so it's remembered next time this character shows up.
+      if (character?.voice_id && parsed.data.voice_id !== undefined) {
+        rememberCharacterVoice(db, String(req.params.bookId), character);
+      }
+
       res.json(character);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to update character' });
@@ -150,7 +140,7 @@ export function charactersRouter(db: SqlJsDatabase): Router {
   // so each character gets a unique voice. Supports optional hints for smarter matching.
   router.post('/auto-assign-voices', async (req: Request, res: Response) => {
     try {
-      const bookId = req.params.bookId;
+      const bookId = String(req.params.bookId);
       const characters = queryAll(db, 'SELECT * FROM characters WHERE book_id = ?', [bookId]);
       if (characters.length === 0) {
         res.json({ assigned: 0, message: 'No characters found' });
@@ -180,60 +170,18 @@ export function charactersRouter(db: SqlJsDatabase): Router {
         return;
       }
 
-      // Build a set of already-used voice IDs in this book to avoid duplicates
-      const usedVoiceIds = new Set(
-        characters.filter((c: any) => c.voice_id).map((c: any) => c.voice_id)
-      );
-
-      // Filter out already-used voices
-      let candidateVoices = availableVoices.filter((v) => !usedVoiceIds.has(v.voiceId));
-      if (candidateVoices.length === 0) {
-        // If all voices are used, allow reuse but still try to distribute
-        candidateVoices = [...availableVoices];
-      }
-
-      // Smart assignment: try to match narrator roles to voices labeled as "narrator" or "storyteller"
-      // and distribute character voices to be distinct
-      const assignments: Array<{ character_id: string; character_name: string; voice_id: string; voice_name: string; provider: string }> = [];
-      const assignedInThisRound = new Set<string>();
-
-      // Sort: narrators first, then characters
-      const sortedUnassigned = [...unassigned].sort((a: any, b: any) => {
-        if (a.role === 'narrator' && b.role !== 'narrator') return -1;
-        if (a.role !== 'narrator' && b.role === 'narrator') return 1;
-        return 0;
-      });
-
-      for (const char of sortedUnassigned) {
-        const c = char as any;
-        // Find best matching voice
-        let bestVoice = findBestVoice(c, candidateVoices, assignedInThisRound);
-        if (!bestVoice && assignedInThisRound.size > 0) {
-          // Relax: allow reuse if we ran out
-          bestVoice = findBestVoice(c, candidateVoices, new Set());
-        }
-        if (!bestVoice) continue;
-
-        // Update the character in DB
-        run(db,
-          `UPDATE characters SET voice_id = ?, voice_name = ?, tts_provider = ? WHERE id = ? AND book_id = ?`,
-          [bestVoice.voiceId, bestVoice.name, bestVoice.provider, c.id, bookId]
-        );
-
-        assignedInThisRound.add(bestVoice.voiceId);
-        assignments.push({
-          character_id: c.id,
-          character_name: c.name,
-          voice_id: bestVoice.voiceId,
-          voice_name: bestVoice.name,
-          provider: bestVoice.provider,
-        });
-      }
+      // Multi-cast assignment: recall a remembered voice for each character from this
+      // book's casting / series / global memory first, and only pick a fresh voice
+      // when there's no memory hit. Every assignment (remembered or fresh) is written
+      // back into the casting so it's remembered for the next book/volume/episode.
+      const assignments = autoAssignWithMemory(db, bookId, characters, availableVoices);
+      const rememberedCount = assignments.filter((a) => a.source === 'memory').length;
 
       res.json({
         assigned: assignments.length,
         total_characters: characters.length,
         unassigned_remaining: unassigned.length - assignments.length,
+        remembered_from_casting: rememberedCount,
         assignments,
       });
     } catch (err: any) {

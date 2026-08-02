@@ -81,6 +81,7 @@ export function BackgroundBoostPage() {
   const [loading, setLoading] = useState(true);
   const [analyzing, setAnalyzing] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [autoBoosting, setAutoBoosting] = useState(false);
   const [confirmingClear, setConfirmingClear] = useState(false);
 
   /* ── Derived ── */
@@ -186,6 +187,39 @@ export function BackgroundBoostPage() {
     }
   };
 
+  // One-click "fully automatic" path: analyze every chapter, then immediately
+  // generate + place every detected cue, no manual review step required.
+  // Long books just take longer — the underlying /generate call already
+  // processes cues with bounded concurrency server-side.
+  const handleAutoBoost = async () => {
+    if (!bookId || autoBoosting) return;
+    setAutoBoosting(true);
+    try {
+      const analyzeResult = await backgroundBoost.analyze(bookId, {
+        provider: provider || undefined,
+        model: model || undefined,
+      });
+      await loadScenes();
+      toast.success(`Analyzed ${analyzeResult.chapters_analyzed} chapter${analyzeResult.chapters_analyzed !== 1 ? 's' : ''} → ${analyzeResult.total_scenes} scenes. Generating audio...`);
+
+      const generateResult = await backgroundBoost.generate(bookId, {
+        generate_music: generateMusic,
+        generate_ambience: generateAmbience,
+        generate_sfx: generateSfx,
+      });
+      const totalGenerated = generateResult.music_generated + generateResult.ambience_generated + generateResult.sfx_generated;
+      toast.success(`Auto Boost complete: ${totalGenerated} clips generated and placed on the timeline.`);
+      if (generateResult.errors?.length) {
+        toast.error(`${generateResult.errors.length} error${generateResult.errors.length !== 1 ? 's' : ''} during generation`);
+      }
+      await loadScenes();
+    } catch (err: any) {
+      toast.error(err.message ?? 'Auto Boost failed');
+    } finally {
+      setAutoBoosting(false);
+    }
+  };
+
   const handleClear = async () => {
     if (!bookId) return;
     if (!confirmingClear) {
@@ -269,20 +303,33 @@ export function BackgroundBoostPage() {
               AI-powered cinematic sound design — music, ambience, SFX, transitions, and ducking crafted from your scenes
             </p>
           </div>
-          {scenes.length > 0 && (
-            <button
-              onClick={handleClear}
-              onBlur={() => setConfirmingClear(false)}
-              style={{
-                ...S.clearBtn,
-                background: confirmingClear ? 'var(--danger)' : 'var(--danger-subtle)',
-                color: confirmingClear ? '#fff' : 'var(--danger)',
-              }}
-              aria-label="Clear all scenes and clips"
-            >
-              <RotateCcw size={13} /> {confirmingClear ? 'Confirm Reset' : 'Reset'}
-            </button>
-          )}
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            {chapters.length > 0 && (
+              <button
+                onClick={handleAutoBoost}
+                disabled={autoBoosting || analyzing || generating}
+                style={{ ...S.autoBoostBtn, opacity: (autoBoosting || analyzing || generating) ? 0.6 : 1 }}
+                title="Analyze the whole book and generate + place all music/ambience/SFX automatically, no review step"
+              >
+                {autoBoosting ? <Loader2 size={13} className="spinner" /> : <Zap size={13} />}
+                {autoBoosting ? 'Auto Boosting...' : 'Auto Boost (1-click)'}
+              </button>
+            )}
+            {scenes.length > 0 && (
+              <button
+                onClick={handleClear}
+                onBlur={() => setConfirmingClear(false)}
+                style={{
+                  ...S.clearBtn,
+                  background: confirmingClear ? 'var(--danger)' : 'var(--danger-subtle)',
+                  color: confirmingClear ? '#fff' : 'var(--danger)',
+                }}
+                aria-label="Clear all scenes and clips"
+              >
+                <RotateCcw size={13} /> {confirmingClear ? 'Confirm Reset' : 'Reset'}
+              </button>
+            )}
+          </div>
         </div>
 
         {scenes.length > 0 && (
@@ -1111,6 +1158,20 @@ const S: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     flexShrink: 0,
     transition: 'background 150ms ease, color 150ms ease',
+  },
+  autoBoostBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '7px 14px',
+    border: 'none',
+    borderRadius: 'var(--radius-sm)',
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: 'pointer',
+    flexShrink: 0,
+    background: 'linear-gradient(135deg, var(--accent), #8B5CF6)',
+    color: '#fff',
   },
 
   /* Step cards */

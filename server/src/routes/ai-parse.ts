@@ -178,7 +178,7 @@ Rules:
   return router;
 }
 
-function detectAvailableProvider(db: SqlJsDatabase): string | null {
+export function detectAvailableProvider(db: SqlJsDatabase): string | null {
   for (const p of ['openai', 'claude', 'mistral', 'gemini', 'cloudflare']) {
     const key = p === 'claude' ? getSetting(db, 'claude_api_key')
       : p === 'cloudflare' ? getSetting(db, 'cloudflare_api_token')
@@ -194,7 +194,14 @@ function detectAvailableProvider(db: SqlJsDatabase): string | null {
   return null;
 }
 
-function buildSystemPrompt(projectType: string, format: string): string {
+/** Resolve the API key for an LLM provider from DB settings, falling back to env vars. */
+export function getLLMApiKey(db: SqlJsDatabase, provider: string): string | undefined {
+  if (provider === 'claude') return getSetting(db, 'claude_api_key') || process.env.ANTHROPIC_API_KEY || undefined;
+  if (provider === 'cloudflare') return getSetting(db, 'cloudflare_api_token') || process.env.CLOUDFLARE_API_TOKEN || undefined;
+  return getSetting(db, `${provider}_api_key`) || process.env[`${provider.toUpperCase()}_API_KEY`] || undefined;
+}
+
+export function buildSystemPrompt(projectType: string, format: string): string {
   const formatDesc: Record<string, string> = {
     single_narrator: 'A single narrator reads everything.',
     two_person_conversation: 'Two people having a conversation (Speaker A and Speaker B).',
@@ -250,7 +257,7 @@ Rules:
 - Limit to the most impactful SFX/music suggestions (don't over-annotate).`;
 }
 
-async function callLLM(provider: string, apiKey: string, system: string, user: string, opts?: { cloudflareAccountId?: string; cloudflareGatewayId?: string }): Promise<string> {
+export async function callLLM(provider: string, apiKey: string, system: string, user: string, opts?: { cloudflareAccountId?: string; cloudflareGatewayId?: string }): Promise<string> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 120000); // 2 min timeout
 

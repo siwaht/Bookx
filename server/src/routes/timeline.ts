@@ -147,85 +147,17 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   // Auto-populate timeline from generated segments
   router.post('/populate', (req: Request, res: Response) => {
     try {
-      const bookId = req.params.bookId;
-      const { chapter_ids, gap_ms, chapter_gap_ms: reqChapterGapMs } = req.body;
+      const bookId = String(req.params.bookId);
+      const { chapter_ids, gap_ms, chapter_gap_ms } = req.body;
+      const result = populateTimelineForBook(db, bookId, { chapterIds: chapter_ids, gapMs: gap_ms, chapterGapMs: chapter_gap_ms });
 
-      // Get book-level pacing defaults
-      const book = queryOne(db, 'SELECT default_gap_ms, chapter_gap_ms, default_speed FROM books WHERE id = ?', [bookId]);
-      const gapBetweenSegmentsMs = gap_ms ?? book?.default_gap_ms ?? 300;
-      const gapBetweenChaptersMs = reqChapterGapMs ?? book?.chapter_gap_ms ?? 2000;
-
-      // Get chapters
-      let chapters;
-      if (chapter_ids?.length) {
-        const placeholders = chapter_ids.map(() => '?').join(',');
-        chapters = queryAll(db, `SELECT * FROM chapters WHERE book_id = ? AND id IN (${placeholders}) ORDER BY sort_order`, [bookId, ...chapter_ids]);
-      } else {
-        chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
-      }
-
-      // Ensure a narration track exists
-      let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]);
-      if (!narrationTrack) {
-        const trackId = uuid();
-        run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, 'Narration', 'narration', 0, '#4A90D9')`, [trackId, bookId]);
-        narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
-      }
-
-      let currentPositionMs = 0;
-      const clipsCreated: any[] = [];
-      const markersCreated: any[] = [];
-
-      // Clear existing chapter markers for this book if repopulating
-      run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
-
-      for (const chapter of chapters) {
-        // Create chapter marker at current position
-        const markerId = uuid();
-        run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
-          [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
-        markersCreated.push({ id: markerId, chapter_id: chapter.id, position_ms: currentPositionMs, label: chapter.title });
-
-        // Get segments with audio for this chapter
-        const segments = queryAll(db,
-          `SELECT s.*, a.duration_ms, a.file_path FROM segments s
-           JOIN audio_assets a ON s.audio_asset_id = a.id
-           WHERE s.chapter_id = ? ORDER BY s.sort_order`,
-          [chapter.id]);
-
-        for (const seg of segments) {
-          // Check if clip already exists for this segment on this track
-          const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
-          if (existing) {
-            currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
-            continue;
-          }
-
-          const clipId = uuid();
-          const durationMs = seg.duration_ms || 3000;
-          run(db,
-            `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
-          clipsCreated.push({ id: clipId, segment_id: seg.id, position_ms: currentPositionMs, duration_ms: durationMs });
-          currentPositionMs += durationMs + gapBetweenSegmentsMs;
-        }
-
-        currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
-      }
-
-      // Return full track state
       const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [bookId]);
       const tracksWithClips = tracks.map((track: any) => {
         const clips = queryAll(db, 'SELECT * FROM clips WHERE track_id = ? ORDER BY position_ms', [track.id]);
         return { ...track, clips };
       });
 
-      res.json({
-        tracks: tracksWithClips,
-        clips_created: clipsCreated.length,
-        markers_created: markersCreated.length,
-        total_duration_ms: currentPositionMs,
-      });
+      res.json({ tracks: tracksWithClips, ...result });
     } catch (err: any) {
       console.error('[Populate Timeline Error]', err);
       res.status(500).json({ error: err.message });
@@ -257,17 +189,16 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   });
 
   // ── Generate TTS + Populate Timeline (combined two-step) ──
+  // NOTE: for whole-book generation on very long manuscripts, prefer
+  // POST /api/books/:bookId/generation/start with auto_populate:true instead —
+  // that runs as a resumable background job with progress polling and no
+  // request timeout. This endpoint stays synchronous for small/quick jobs
+  // (a chapter or two) where callers want the result inline.
   router.post('/generate-and-populate', async (req: Request, res: Response) => {
     try {
-      const bookId = req.params.bookId;
-      const { chapter_ids, gap_ms, chapter_gap_ms: reqChapterGapMs } = req.body;
+      const bookId = String(req.params.bookId);
+      const { chapter_ids, gap_ms, chapter_gap_ms } = req.body;
 
-      // Get book-level pacing defaults
-      const book = queryOne(db, 'SELECT default_gap_ms, chapter_gap_ms, default_speed FROM books WHERE id = ?', [bookId]);
-      const gapBetweenSegmentsMs = gap_ms ?? book?.default_gap_ms ?? 300;
-      const gapBetweenChaptersMs = reqChapterGapMs ?? book?.chapter_gap_ms ?? 2000;
-
-      // 1. Get chapters
       let chapters;
       if (chapter_ids?.length) {
         const placeholders = chapter_ids.map(() => '?').join(',');
@@ -276,7 +207,6 @@ export function timelineRouter(db: SqlJsDatabase): Router {
         chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
       }
 
-      // 2. Generate TTS for all segments missing audio
       let ttsGenerated = 0;
       let ttsCached = 0;
       let ttsFailed = 0;
@@ -286,7 +216,6 @@ export function timelineRouter(db: SqlJsDatabase): Router {
       for (const chapter of chapters) {
         const segments = queryAll(db, 'SELECT * FROM segments WHERE chapter_id = ? ORDER BY sort_order', [chapter.id]);
         for (const seg of segments) {
-          // Skip if already has audio
           if (seg.audio_asset_id) {
             const existing = queryOne(db, 'SELECT id FROM audio_assets WHERE id = ?', [seg.audio_asset_id]);
             if (existing) { ttsSkipped++; continue; }
@@ -302,53 +231,11 @@ export function timelineRouter(db: SqlJsDatabase): Router {
         }
       }
 
-      // 3. Now populate timeline (same logic as /populate)
-      let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]);
-      if (!narrationTrack) {
-        const trackId = uuid();
-        run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, 'Narration', 'narration', 0, '#4A90D9')`, [trackId, bookId]);
-        narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
-      }
-
-      let currentPositionMs = 0;
-      let clipsCreated = 0;
-      let markersCreated = 0;
-
-      run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
-
-      for (const chapter of chapters) {
-        const markerId = uuid();
-        run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
-          [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
-        markersCreated++;
-
-        const segments = queryAll(db,
-          `SELECT s.*, a.duration_ms FROM segments s
-           JOIN audio_assets a ON s.audio_asset_id = a.id
-           WHERE s.chapter_id = ? ORDER BY s.sort_order`,
-          [chapter.id]);
-
-        for (const seg of segments) {
-          const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
-          if (existing) {
-            currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
-            continue;
-          }
-
-          const clipId = uuid();
-          const durationMs = seg.duration_ms || 3000;
-          run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-            [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
-          clipsCreated++;
-          currentPositionMs += durationMs + gapBetweenSegmentsMs;
-        }
-
-        currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
-      }
+      const timelineResult = populateTimelineForBook(db, bookId, { chapterIds: chapter_ids, gapMs: gap_ms, chapterGapMs: chapter_gap_ms });
 
       res.json({
         tts: { generated: ttsGenerated, cached: ttsCached, skipped: ttsSkipped, failed: ttsFailed, errors },
-        timeline: { clips_created: clipsCreated, markers_created: markersCreated, total_duration_ms: currentPositionMs },
+        timeline: timelineResult,
       });
     } catch (err: any) {
       console.error('[Generate+Populate Error]', err);
@@ -560,6 +447,84 @@ export function timelineRouter(db: SqlJsDatabase): Router {
 
   return router;
 }
+
+/**
+ * Lays out every chapter's segments (that already have audio) onto the
+ * narration track back-to-back, with configurable gaps, and drops a chapter
+ * marker at the start of each chapter. Shared by /populate, /generate-and-populate,
+ * and the long-running generation job (generation.ts) so "generate audio" and
+ * "arrange on timeline" always produce identical results regardless of entry point.
+ */
+export function populateTimelineForBook(
+  db: SqlJsDatabase,
+  bookId: string,
+  opts: { chapterIds?: string[]; gapMs?: number; chapterGapMs?: number } = {}
+): { clips_created: number; markers_created: number; total_duration_ms: number } {
+  const book = queryOne(db, 'SELECT default_gap_ms, chapter_gap_ms FROM books WHERE id = ?', [bookId]);
+  const gapBetweenSegmentsMs = opts.gapMs ?? book?.default_gap_ms ?? 300;
+  const gapBetweenChaptersMs = opts.chapterGapMs ?? book?.chapter_gap_ms ?? 2000;
+
+  let chapters;
+  if (opts.chapterIds?.length) {
+    const placeholders = opts.chapterIds.map(() => '?').join(',');
+    chapters = queryAll(db, `SELECT * FROM chapters WHERE book_id = ? AND id IN (${placeholders}) ORDER BY sort_order`, [bookId, ...opts.chapterIds]);
+  } else {
+    chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
+  }
+
+  let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]);
+  if (!narrationTrack) {
+    const trackId = uuid();
+    run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, 'Narration', 'narration', 0, '#4A90D9')`, [trackId, bookId]);
+    narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
+  }
+
+  let currentPositionMs = 0;
+  let clipsCreated = 0;
+  let markersCreated = 0;
+
+  // Only clear markers for the chapters being (re)populated so a partial/incremental
+  // populate on a long book doesn't wipe markers for chapters left untouched.
+  if (opts.chapterIds?.length) {
+    const placeholders = opts.chapterIds.map(() => '?').join(',');
+    run(db, `DELETE FROM chapter_markers WHERE book_id = ? AND chapter_id IN (${placeholders})`, [bookId, ...opts.chapterIds]);
+  } else {
+    run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
+  }
+
+  for (const chapter of chapters) {
+    const markerId = uuid();
+    run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
+      [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
+    markersCreated++;
+
+    const segments = queryAll(db,
+      `SELECT s.*, a.duration_ms FROM segments s
+       JOIN audio_assets a ON s.audio_asset_id = a.id
+       WHERE s.chapter_id = ? ORDER BY s.sort_order`,
+      [chapter.id]);
+
+    for (const seg of segments) {
+      const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
+      if (existing) {
+        currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
+        continue;
+      }
+
+      const clipId = uuid();
+      const durationMs = seg.duration_ms || 3000;
+      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+        [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
+      clipsCreated++;
+      currentPositionMs += durationMs + gapBetweenSegmentsMs;
+    }
+
+    currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
+  }
+
+  return { clips_created: clipsCreated, markers_created: markersCreated, total_duration_ms: currentPositionMs };
+}
+
 async function generateSegmentAudioForTimeline(
   db: SqlJsDatabase,
   segment: any

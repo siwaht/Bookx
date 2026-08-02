@@ -48,7 +48,13 @@ export function getToken(): string | null {
   return authToken;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+interface RequestOptions extends RequestInit {
+  /** Override the default 60s abort timeout. Use for calls known to run long
+   * (LLM-based script/manuscript analysis on large books, etc). */
+  timeoutMs?: number;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
@@ -76,10 +82,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return doRequest<T>(path, { ...options, headers });
 }
 
-async function doRequest<T>(path: string, options: RequestInit): Promise<T> {
-  // Add a timeout to prevent hanging requests
+async function doRequest<T>(path: string, options: RequestOptions): Promise<T> {
+  // Add a timeout to prevent hanging requests. Long-running analysis calls
+  // (AI script/manuscript parsing on big books) pass a longer timeoutMs.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000);
 
   try {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -341,6 +348,13 @@ export const saveProject = () => request<{ ok: boolean; saved_at: string }>('/sa
 // ── Download Project ──
 export const downloadProjectUrl = (bookId: string) => `${API_BASE}/books/${bookId}/download-project`;
 
+// LLM-based analysis on a full manuscript/script can legitimately take a
+// couple of minutes on long books — give these calls a longer leash than the
+// default 60s so they aren't aborted client-side while the server is still
+// working (the server's own LLM call timeouts are the real ceiling; see
+// ai-parse.ts / background-boost.ts / podcast.ts for those).
+const LONG_ANALYSIS_TIMEOUT_MS = 5 * 60 * 1000;
+
 // ── AI Parse ──
 export const aiParse = {
   parse: (bookId: string, chapterIds?: string[]) =>
@@ -349,7 +363,7 @@ export const aiParse = {
       sfx_cues: number; music_cues: number;
       provider: string; format: string; project_type: string;
     }>(`/books/${bookId}/ai-parse`, {
-      method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }),
+      method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS,
     }),
   suggestV3Tags: (bookId: string, text: string) =>
     request<{ tagged_text: string; tags_used: string[]; provider: string }>(
@@ -484,7 +498,7 @@ export const generation = {
       totals: { total_segments: number; with_audio: number; ready_to_generate: number; missing_audio: number };
       jobs: any[];
     }>(`/books/${bookId}/generation/status`),
-  start: (bookId: string, data: { scope: 'book' | 'chapter' | 'segment'; scope_ids?: string[]; regenerate?: boolean }) =>
+  start: (bookId: string, data: { scope: 'book' | 'chapter' | 'segment'; scope_ids?: string[]; regenerate?: boolean; auto_populate?: boolean }) =>
     request<{ job_id: string; total_segments: number }>(`/books/${bookId}/generation/start`, {
       method: 'POST', body: JSON.stringify(data),
     }),
@@ -495,16 +509,73 @@ export const generation = {
       cached_segments: number; failed_segments: number; skipped_segments: number;
       errors: string[]; current_chapter: string | null; current_segment: string | null;
       started_at: string | null; completed_at: string | null;
+      clips_created?: number; markers_created?: number; total_duration_ms?: number;
     }>(`/books/${bookId}/generation/jobs/${jobId}`),
   cancel: (bookId: string, jobId: string) =>
     request<{ ok: boolean }>(`/books/${bookId}/generation/cancel/${jobId}`, { method: 'POST' }),
+  resume: (bookId: string, jobId: string) =>
+    request<{ job_id: string; resumed: boolean; remaining_segments: number }>(`/books/${bookId}/generation/resume/${jobId}`, { method: 'POST' }),
+};
+
+// ── Series (multi-volume voice memory) ──
+export const series = {
+  list: () => request<any[]>('/series'),
+  get: (id: string) => request<any>(`/series/${id}`),
+  create: (data: { name: string; author?: string; description?: string }) =>
+    request<any>('/series', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: any) => request<any>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/series/${id}`, { method: 'DELETE' }),
+  attachBook: (seriesId: string, bookId: string, volume?: number) =>
+    request<any>(`/series/${seriesId}/books/${bookId}`, { method: 'POST', body: JSON.stringify({ volume }) }),
+  detachBook: (seriesId: string, bookId: string) =>
+    request<void>(`/series/${seriesId}/books/${bookId}`, { method: 'DELETE' }),
+};
+
+// ── Voice Castings (reusable, persistent character casts) ──
+export const castings = {
+  list: (projectType?: 'audiobook' | 'podcast') =>
+    request<any[]>(`/castings${projectType ? `?project_type=${projectType}` : ''}`),
+  get: (id: string) => request<any>(`/castings/${id}`),
+  create: (data: { name: string; description?: string; project_type?: 'audiobook' | 'podcast' | 'any' }) =>
+    request<any>('/castings', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: any) => request<any>(`/castings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/castings/${id}`, { method: 'DELETE' }),
+  addMember: (castingId: string, member: any) =>
+    request<any>(`/castings/${castingId}/members`, { method: 'POST', body: JSON.stringify(member) }),
+  updateMember: (castingId: string, memberId: string, data: any) =>
+    request<any>(`/castings/${castingId}/members/${memberId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMember: (castingId: string, memberId: string) =>
+    request<void>(`/castings/${castingId}/members/${memberId}`, { method: 'DELETE' }),
+  syncFromBook: (bookId: string, opts?: { castingId?: string; name?: string; description?: string; projectType?: string }) =>
+    request<any>('/castings/sync-from-book', {
+      method: 'POST',
+      body: JSON.stringify({ book_id: bookId, casting_id: opts?.castingId, name: opts?.name, description: opts?.description, project_type: opts?.projectType }),
+    }),
+  applyToBook: (castingId: string, bookId: string) =>
+    request<{ updated: number; created: number; characters: any[] }>(`/castings/${castingId}/apply-to-book/${bookId}`, { method: 'POST' }),
+};
+
+// ── Podcast (script -> auto-cast episode) ──
+export const podcast = {
+  parseScript: (scriptText: string) =>
+    request<{ method: 'tags' | 'llm'; speakers: string[]; segments: Array<{ speaker: string; text: string }>; provider?: string }>(
+      '/podcast/parse-script', { method: 'POST', body: JSON.stringify({ script_text: scriptText }), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS }),
+  createEpisode: (data: {
+    title: string; author?: string; script_text?: string;
+    segments?: Array<{ speaker: string; text: string }>; speakers?: string[];
+    casting_id?: string; save_as_casting_name?: string;
+  }) => request<{
+    book: any; chapter_id: string; characters: any[]; segments_created: number;
+    speakers_detected: string[]; casting_applied: { updated: number; created: number } | null;
+    voice_assignments: any[]; saved_casting_id?: string;
+  }>('/podcast/episodes', { method: 'POST', body: JSON.stringify(data), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS }),
 };
 
 // ── Background Boost ──
 export const backgroundBoost = {
   analyze: (bookId: string, opts?: { chapterIds?: string[]; provider?: string; model?: string }) =>
     request<any>(`/books/${bookId}/background-boost/analyze`, {
-      method: 'POST', body: JSON.stringify({ chapter_ids: opts?.chapterIds, provider: opts?.provider, model: opts?.model }),
+      method: 'POST', body: JSON.stringify({ chapter_ids: opts?.chapterIds, provider: opts?.provider, model: opts?.model }), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS,
     }),
   models: (bookId: string, refresh?: boolean) =>
     request<{ providers: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }>; currentProvider: string | null; currentModel: string | null }>(`/books/${bookId}/background-boost/models${refresh ? '?refresh=true' : ''}`),

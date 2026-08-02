@@ -339,6 +339,74 @@ export function initializeSchema(database: SqlJsDatabase): void {
   `);
   database.run('CREATE INDEX IF NOT EXISTS idx_gen_jobs_book ON generation_jobs(book_id, created_at)');
 
+  // Migrations: long-running job support (auto-populate timeline when generation finishes, resumability reporting)
+  const genJobCols = queryAll(database, "PRAGMA table_info(generation_jobs)").map((c: any) => c.name);
+  if (!genJobCols.includes('auto_populate')) {
+    database.run("ALTER TABLE generation_jobs ADD COLUMN auto_populate INTEGER DEFAULT 0");
+  }
+  if (!genJobCols.includes('clips_created')) {
+    database.run("ALTER TABLE generation_jobs ADD COLUMN clips_created INTEGER DEFAULT 0");
+  }
+  if (!genJobCols.includes('markers_created')) {
+    database.run("ALTER TABLE generation_jobs ADD COLUMN markers_created INTEGER DEFAULT 0");
+  }
+  if (!genJobCols.includes('total_duration_ms')) {
+    database.run("ALTER TABLE generation_jobs ADD COLUMN total_duration_ms INTEGER DEFAULT 0");
+  }
+
+  // ── Series (groups multiple books/volumes so character voices carry across them) ──
+  database.run(`
+    CREATE TABLE IF NOT EXISTS series (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      author TEXT,
+      description TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  // ── Voice Castings (reusable, persistent character -> voice memory) ──
+  // A casting can be linked to a series (auto-managed voice memory across volumes)
+  // or stand alone as a named, reusable "cast" (e.g. for a podcast) that can be
+  // applied to any book/episode.
+  database.run(`
+    CREATE TABLE IF NOT EXISTS voice_castings (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT,
+      project_type TEXT DEFAULT 'any',
+      series_id TEXT REFERENCES series(id) ON DELETE SET NULL,
+      is_series_default INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_castings_series ON voice_castings(series_id)');
+
+  database.run(`
+    CREATE TABLE IF NOT EXISTS voice_casting_members (
+      id TEXT PRIMARY KEY,
+      casting_id TEXT NOT NULL REFERENCES voice_castings(id) ON DELETE CASCADE,
+      character_name TEXT NOT NULL,
+      normalized_name TEXT NOT NULL,
+      role TEXT DEFAULT 'character',
+      voice_id TEXT,
+      voice_name TEXT,
+      tts_provider TEXT DEFAULT 'elevenlabs',
+      model_id TEXT DEFAULT 'eleven_v3',
+      stability REAL DEFAULT 0.5,
+      similarity_boost REAL DEFAULT 0.75,
+      style REAL DEFAULT 0.0,
+      speed REAL DEFAULT 1.0,
+      speaker_boost INTEGER DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      updated_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+  database.run('CREATE INDEX IF NOT EXISTS idx_casting_members_casting ON voice_casting_members(casting_id)');
+  database.run('CREATE INDEX IF NOT EXISTS idx_casting_members_name ON voice_casting_members(casting_id, normalized_name)');
+
   // ── Book Editor Agent ──
   database.run(`
     CREATE TABLE IF NOT EXISTS book_agent_jobs (
@@ -556,6 +624,36 @@ export function initializeSchema(database: SqlJsDatabase): void {
   if (!trackCols.includes('ducking_enabled')) {
     database.run("ALTER TABLE tracks ADD COLUMN ducking_enabled INTEGER DEFAULT 0");
   }
+
+  // Migration: link books to a series (multi-volume voice memory) and to the
+  // voice casting used to seed/persist character voices for that book.
+  const bookCols4 = queryAll(database, "PRAGMA table_info(books)").map((c: any) => c.name);
+  if (!bookCols4.includes('series_id')) {
+    database.run("ALTER TABLE books ADD COLUMN series_id TEXT REFERENCES series(id) ON DELETE SET NULL");
+  }
+  if (!bookCols4.includes('series_volume')) {
+    database.run("ALTER TABLE books ADD COLUMN series_volume INTEGER");
+  }
+  if (!bookCols4.includes('casting_id')) {
+    database.run("ALTER TABLE books ADD COLUMN casting_id TEXT REFERENCES voice_castings(id) ON DELETE SET NULL");
+  }
+  database.run('CREATE INDEX IF NOT EXISTS idx_books_series ON books(series_id)');
+
+  // Migration: link characters to the casting member they were seeded from / should sync back to.
+  const charCols2 = queryAll(database, "PRAGMA table_info(characters)").map((c: any) => c.name);
+  if (!charCols2.includes('casting_member_id')) {
+    database.run("ALTER TABLE characters ADD COLUMN casting_member_id TEXT REFERENCES voice_casting_members(id) ON DELETE SET NULL");
+  }
+  if (!charCols2.includes('normalized_name')) {
+    database.run("ALTER TABLE characters ADD COLUMN normalized_name TEXT");
+    // Backfill normalized_name for existing rows
+    const existingChars = queryAll(database, 'SELECT id, name FROM characters');
+    for (const c of existingChars as any[]) {
+      const norm = String(c.name || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      database.run('UPDATE characters SET normalized_name = ? WHERE id = ?', [norm, c.id]);
+    }
+  }
+  database.run('CREATE INDEX IF NOT EXISTS idx_characters_norm_name ON characters(normalized_name)');
 
   saveDb();
 }

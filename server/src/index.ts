@@ -26,8 +26,11 @@ import { pronunciationRouter } from './routes/pronunciation.js';
 import { ttsProvidersRouter } from './routes/tts-providers.js';
 import { libraryRouter } from './routes/library.js';
 import { backgroundBoostRouter } from './routes/background-boost.js';
-import { generationRouter } from './routes/generation.js';
+import { generationRouter, reconcileInterruptedGenerationJobs } from './routes/generation.js';
 import { bookAgentRouter } from './routes/book-agent.js';
+import { seriesRouter } from './routes/series.js';
+import { castingsRouter } from './routes/castings.js';
+import { podcastRouter } from './routes/podcast.js';
 import { initStorageFromSettings } from './storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -82,6 +85,15 @@ async function main() {
   initializeSchema(db);
   log.info('Database initialized', { path: DATA_DIR });
 
+  // Long-running generation jobs checkpoint their progress to the DB, but the
+  // in-memory worker doesn't survive a restart. Mark anything still 'running'
+  // from a previous process lifetime as 'interrupted' so it's visibly
+  // resumable (POST /generation/resume/:jobId) instead of silently stuck.
+  const interruptedCount = reconcileInterruptedGenerationJobs(db);
+  if (interruptedCount > 0) {
+    log.warn('Marked generation jobs as interrupted after restart', { count: interruptedCount });
+  }
+
   // Load API keys from settings into env — DB values always take priority
   const storedElKey = getSetting(db, 'elevenlabs_api_key');
   if (storedElKey) {
@@ -92,7 +104,7 @@ async function main() {
   } else {
     log.warn('No ElevenLabs API key found. Set it in Settings page.');
   }
-  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key', 'deepgram']) {
+  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key', 'deepgram', 'cartesia']) {
     const settingKey = `${provider}_api_key`;
     const envKey = provider === 'google_tts' ? 'GOOGLE_TTS_API_KEY'
       : provider === 'aws_access_key' ? 'AWS_ACCESS_KEY_ID'
@@ -221,6 +233,9 @@ async function main() {
   app.use('/api/books/:bookId/background-boost', backgroundBoostRouter(db));
   app.use('/api/books/:bookId/generation', generationRouter(db));
   app.use('/api/book-agent', bookAgentRouter(db));
+  app.use('/api/series', seriesRouter(db));
+  app.use('/api/castings', castingsRouter(db));
+  app.use('/api/podcast', podcastRouter(db));
 
   // ── Save DB explicitly ──
   app.post('/api/save', (_req, res) => {

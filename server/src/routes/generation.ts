@@ -7,11 +7,36 @@ import { queryAll, queryOne, run } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
+import { runWithConcurrency } from '../utils/concurrency.js';
+import { populateTimelineForBook } from './timeline.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
+// How many segments to synthesize in parallel. Keeps very long books moving
+// without hammering a TTS provider's rate limits. Override with
+// GENERATION_CONCURRENCY if a provider can take more (or needs less).
+const GENERATION_CONCURRENCY = parseInt(process.env.GENERATION_CONCURRENCY || '4', 10);
 
-// In-memory map of running jobs so we can cancel them
+// In-memory map of running jobs so we can cancel them. Jobs also persist
+// their progress to the `generation_jobs` table on every segment, so a job
+// survives a server restart in the sense that its progress isn't lost — it
+// just needs to be explicitly resumed (see POST /resume/:jobId) since the
+// in-process worker itself doesn't survive a restart.
 const runningJobs = new Map<string, { cancelled: boolean }>();
+
+/**
+ * Mark any job left in 'running' state from a previous process lifetime as
+ * 'interrupted' rather than silently stuck. Call this once at server boot
+ * (see index.ts) before any new job can start, so long books that were
+ * mid-generation when the server restarted (deploy, crash, etc.) show up as
+ * resumable instead of appearing to hang forever.
+ */
+export function reconcileInterruptedGenerationJobs(db: SqlJsDatabase): number {
+  const stuck = queryAll(db, "SELECT id FROM generation_jobs WHERE status = 'running'") as any[];
+  for (const job of stuck) {
+    run(db, `UPDATE generation_jobs SET status = 'interrupted' WHERE id = ?`, [job.id]);
+  }
+  return stuck.length;
+}
 
 export function generationRouter(db: SqlJsDatabase): Router {
   const router = Router({ mergeParams: true });
@@ -73,13 +98,18 @@ export function generationRouter(db: SqlJsDatabase): Router {
   });
 
   // ── Start a generation job ──
+  // Designed to handle books of any length: segments are queued into a
+  // durable DB row (not just memory), processed with bounded concurrency,
+  // and progress is checkpointed after every segment so GET /jobs/:jobId
+  // always reflects real state even for a job running for hours.
   router.post('/start', async (req: Request, res: Response) => {
     try {
       const bookId = req.params.bookId;
-      const { scope, scope_ids, regenerate } = req.body;
+      const { scope, scope_ids, regenerate, auto_populate } = req.body;
       // scope: 'book' | 'chapter' | 'segment'
       // scope_ids: string[] (chapter IDs or segment IDs depending on scope)
       // regenerate: boolean - if true, regenerate even if audio exists
+      // auto_populate: boolean - if true, automatically arrange finished audio onto the timeline when the job completes
 
       const jobId = uuid();
       const jobScope = scope || 'book';
@@ -128,9 +158,9 @@ export function generationRouter(db: SqlJsDatabase): Router {
 
       // Create job record
       run(db,
-        `INSERT INTO generation_jobs (id, book_id, scope, scope_ids, status, total_segments, started_at)
-         VALUES (?, ?, ?, ?, 'running', ?, datetime('now'))`,
-        [jobId, bookId, jobScope, scope_ids ? JSON.stringify(scope_ids) : null, segments.length]);
+        `INSERT INTO generation_jobs (id, book_id, scope, scope_ids, status, total_segments, started_at, auto_populate)
+         VALUES (?, ?, ?, ?, 'running', ?, datetime('now'), ?)`,
+        [jobId, bookId, jobScope, scope_ids ? JSON.stringify(scope_ids) : null, segments.length, auto_populate ? 1 : 0]);
 
       // Return immediately, process in background
       res.json({ job_id: jobId, total_segments: segments.length });
@@ -139,12 +169,70 @@ export function generationRouter(db: SqlJsDatabase): Router {
       const jobControl = { cancelled: false };
       runningJobs.set(jobId, jobControl);
 
-      processGeneration(db, jobId, segments, !!regenerate, jobControl).catch((err) => {
+      processGeneration(db, jobId, segments, !!regenerate, jobControl, !!auto_populate).catch((err) => {
         console.error('[Generation Job Error]', err);
         run(db,
           `UPDATE generation_jobs SET status = 'failed', errors = ?, completed_at = datetime('now') WHERE id = ?`,
           [JSON.stringify([err.message]), jobId]);
         runningJobs.delete(jobId);
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // ── Resume a job left 'interrupted' by a server restart ──
+  // Long books can take hours; if the server restarts mid-job (deploy,
+  // crash, etc.) the job's progress is safely checkpointed in the DB, but
+  // the in-memory worker is gone. This re-scans for segments still missing
+  // audio within that job's original scope and continues from there,
+  // rather than starting over from segment 1.
+  router.post('/resume/:jobId', async (req: Request, res: Response) => {
+    try {
+      const job = queryOne(db, 'SELECT * FROM generation_jobs WHERE id = ?', [req.params.jobId]) as any;
+      if (!job) { res.status(404).json({ error: 'Job not found' }); return; }
+      if (job.status === 'running') { res.status(400).json({ error: 'Job is already running' }); return; }
+      if (job.status === 'completed') { res.status(400).json({ error: 'Job already completed' }); return; }
+
+      const bookId = job.book_id;
+      const scopeIds = job.scope_ids ? JSON.parse(job.scope_ids) : null;
+
+      let segments: any[] = [];
+      if (job.scope === 'segment' && scopeIds?.length) {
+        const placeholders = scopeIds.map(() => '?').join(',');
+        segments = queryAll(db,
+          `SELECT s.*, ch.book_id, ch.title as chapter_title FROM segments s
+           JOIN chapters ch ON s.chapter_id = ch.id
+           WHERE s.id IN (${placeholders}) AND ch.book_id = ? ORDER BY ch.sort_order, s.sort_order`,
+          [...scopeIds, bookId]);
+      } else if (job.scope === 'chapter' && scopeIds?.length) {
+        const placeholders = scopeIds.map(() => '?').join(',');
+        segments = queryAll(db,
+          `SELECT s.*, ch.book_id, ch.title as chapter_title FROM segments s
+           JOIN chapters ch ON s.chapter_id = ch.id
+           WHERE ch.id IN (${placeholders}) AND ch.book_id = ? ORDER BY ch.sort_order, s.sort_order`,
+          [...scopeIds, bookId]);
+      } else {
+        segments = queryAll(db,
+          `SELECT s.*, ch.book_id, ch.title as chapter_title FROM segments s
+           JOIN chapters ch ON s.chapter_id = ch.id
+           WHERE ch.book_id = ? ORDER BY ch.sort_order, s.sort_order`,
+          [bookId]);
+      }
+
+      // Only the segments still missing audio need to be (re)done.
+      const remaining = segments.filter((s: any) => !s.audio_asset_id);
+
+      run(db, `UPDATE generation_jobs SET status = 'running', errors = '[]' WHERE id = ?`, [job.id]);
+      res.json({ job_id: job.id, resumed: true, remaining_segments: remaining.length });
+
+      const jobControl = { cancelled: false };
+      runningJobs.set(job.id, jobControl);
+      processGeneration(db, job.id, remaining, false, jobControl, !!job.auto_populate).catch((err) => {
+        console.error('[Generation Job Resume Error]', err);
+        run(db, `UPDATE generation_jobs SET status = 'failed', errors = ?, completed_at = datetime('now') WHERE id = ?`,
+          [JSON.stringify([err.message]), job.id]);
+        runningJobs.delete(job.id);
       });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -188,12 +276,18 @@ export function generationRouter(db: SqlJsDatabase): Router {
 
 
 // ── Background generation processor ──
+// Processes segments with bounded concurrency (GENERATION_CONCURRENCY workers)
+// so a book with thousands of segments doesn't take thousands of sequential
+// round-trips to a TTS provider. Progress is checkpointed to the DB after
+// every segment regardless of which worker finishes it, so long-running
+// jobs (hours-long books) always have accurate, pollable progress.
 async function processGeneration(
   db: SqlJsDatabase,
   jobId: string,
   segments: any[],
   regenerate: boolean,
   control: { cancelled: boolean },
+  autoPopulate = false,
 ) {
   let completed = 0;
   let cached = 0;
@@ -201,30 +295,25 @@ async function processGeneration(
   let skipped = 0;
   const errors: string[] = [];
 
-  for (const segment of segments) {
-    if (control.cancelled) break;
+  async function processOne(segment: any) {
+    if (control.cancelled) return;
 
-    // Skip segments without a voice-assigned character
     if (!segment.character_id) {
       skipped++;
-      updateJobProgress(db, jobId, completed, cached, failed, skipped, errors, segment.chapter_title, segment.text?.slice(0, 50));
-      continue;
+      return;
     }
 
     const char = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [segment.character_id]) as any;
     if (!char?.voice_id) {
       skipped++;
-      updateJobProgress(db, jobId, completed, cached, failed, skipped, errors, segment.chapter_title, segment.text?.slice(0, 50));
-      continue;
+      return;
     }
 
-    // Skip if already has audio and not regenerating
     if (!regenerate && segment.audio_asset_id) {
       const existing = queryOne(db, 'SELECT id FROM audio_assets WHERE id = ?', [segment.audio_asset_id]);
       if (existing) {
         skipped++;
-        updateJobProgress(db, jobId, completed, cached, failed, skipped, errors, segment.chapter_title, segment.text?.slice(0, 50));
-        continue;
+        return;
       }
     }
 
@@ -237,14 +326,41 @@ async function processGeneration(
       errors.push(`Ch "${segment.chapter_title}" seg ${segment.sort_order}: ${err.message}`);
       if (errors.length > 50) errors.splice(0, errors.length - 50); // keep last 50
     }
+  }
 
+  await runWithConcurrency(segments, GENERATION_CONCURRENCY, async (segment) => {
+    if (control.cancelled) return;
+    await processOne(segment);
+    // Checkpoint progress every segment. sql.js is in-process/single-threaded so
+    // this is safe to call from concurrent workers without locking.
     updateJobProgress(db, jobId, completed, cached, failed, skipped, errors, segment.chapter_title, segment.text?.slice(0, 50));
+  });
+
+  let clipsCreated = 0;
+  let markersCreated = 0;
+  let totalDurationMs = 0;
+
+  if (!control.cancelled && autoPopulate) {
+    try {
+      const job = queryOne(db, 'SELECT * FROM generation_jobs WHERE id = ?', [jobId]) as any;
+      const scopeIds = job?.scope_ids ? JSON.parse(job.scope_ids) : undefined;
+      const chapterIds = job?.scope === 'chapter' ? scopeIds : undefined;
+      const bookId = segments[0]?.book_id;
+      if (bookId) {
+        const populateResult = populateTimelineForBook(db, bookId, { chapterIds });
+        clipsCreated = populateResult.clips_created;
+        markersCreated = populateResult.markers_created;
+        totalDurationMs = populateResult.total_duration_ms;
+      }
+    } catch (err: any) {
+      errors.push(`Auto-populate timeline failed: ${err.message}`);
+    }
   }
 
   const finalStatus = control.cancelled ? 'cancelled' : (failed > 0 && completed === 0 && cached === 0 ? 'failed' : 'completed');
   run(db,
-    `UPDATE generation_jobs SET status = ?, completed_segments = ?, cached_segments = ?, failed_segments = ?, skipped_segments = ?, errors = ?, completed_at = datetime('now'), current_chapter = NULL, current_segment = NULL WHERE id = ?`,
-    [finalStatus, completed, cached, failed, skipped, JSON.stringify(errors), jobId]);
+    `UPDATE generation_jobs SET status = ?, completed_segments = ?, cached_segments = ?, failed_segments = ?, skipped_segments = ?, errors = ?, completed_at = datetime('now'), current_chapter = NULL, current_segment = NULL, clips_created = ?, markers_created = ?, total_duration_ms = ? WHERE id = ?`,
+    [finalStatus, completed, cached, failed, skipped, JSON.stringify(errors), clipsCreated, markersCreated, totalDurationMs, jobId]);
 
   runningJobs.delete(jobId);
 }
