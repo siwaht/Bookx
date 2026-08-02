@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
+import { saveDb } from '../db/schema.js';
 import { z } from 'zod/v4';
 import { syncCastingFromBook, applyCastingToBook, upsertCastingMember, normalizeName } from '../lib/voice-casting.js';
 
@@ -185,6 +186,7 @@ export function castingsRouter(db: SqlJsDatabase): Router {
       const id = syncCastingFromBook(db, book_id, { castingId: casting_id, name, description, projectType: project_type });
       const casting = queryOne(db, 'SELECT * FROM voice_castings WHERE id = ?', [id]);
       const members = queryAll(db, 'SELECT * FROM voice_casting_members WHERE casting_id = ? ORDER BY character_name', [id]);
+      saveDb(); // a saved cast is meant to survive restarts — flush now
       res.json({ ...casting, members });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to sync casting from book' });
@@ -200,6 +202,7 @@ export function castingsRouter(db: SqlJsDatabase): Router {
       if (!book) { res.status(404).json({ error: 'Book not found' }); return; }
       const result = applyCastingToBook(db, String(req.params.bookId), String(req.params.id));
       const characters = queryAll(db, 'SELECT * FROM characters WHERE book_id = ?', [req.params.bookId]);
+      saveDb();
       res.json({ ...result, characters });
     } catch (err: any) {
       res.status(500).json({ error: err.message || 'Failed to apply casting to book' });

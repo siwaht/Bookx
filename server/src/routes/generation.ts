@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
+import { saveDb } from '../db/schema.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
@@ -16,6 +17,27 @@ const DATA_DIR = process.env.DATA_DIR || './data';
 // without hammering a TTS provider's rate limits. Override with
 // GENERATION_CONCURRENCY if a provider can take more (or needs less).
 const GENERATION_CONCURRENCY = parseInt(process.env.GENERATION_CONCURRENCY || '4', 10);
+
+// The database lives in memory (sql.js) and is normally flushed to disk on a
+// 15s timer. For a job that can run for hours that's too coarse: an abrupt
+// crash would lose the job row itself, leaving nothing for
+// reconcileInterruptedGenerationJobs() to rescue. So during a job we flush at
+// most once every JOB_CHECKPOINT_INTERVAL_MS (plus unconditionally at job
+// start and finish), which bounds worst-case lost work to a few seconds
+// without paying a full DB serialization on every single segment.
+const JOB_CHECKPOINT_INTERVAL_MS = parseInt(process.env.JOB_CHECKPOINT_INTERVAL_MS || '5000', 10);
+
+/** Flush the in-memory DB to disk, throttled. Returns the new "last saved" timestamp. */
+function checkpointToDisk(lastSavedAt: number, force = false): number {
+  const now = Date.now();
+  if (!force && now - lastSavedAt < JOB_CHECKPOINT_INTERVAL_MS) return lastSavedAt;
+  try {
+    saveDb();
+  } catch (err) {
+    console.warn('[Generation] Checkpoint save failed:', (err as Error).message);
+  }
+  return now;
+}
 
 // In-memory map of running jobs so we can cancel them. Jobs also persist
 // their progress to the `generation_jobs` table on every segment, so a job
@@ -163,6 +185,10 @@ export function generationRouter(db: SqlJsDatabase): Router {
          VALUES (?, ?, ?, ?, 'running', ?, datetime('now'), ?)`,
         [jobId, bookId, jobScope, scope_ids ? JSON.stringify(scope_ids) : null, segments.length, auto_populate ? 1 : 0]);
 
+      // Flush immediately so the job is crash-recoverable from the very first
+      // segment rather than only after the next 15s autosave tick.
+      checkpointToDisk(0, true);
+
       // Return immediately, process in background
       res.json({ job_id: jobId, total_segments: segments.length });
 
@@ -225,6 +251,7 @@ export function generationRouter(db: SqlJsDatabase): Router {
       const remaining = segments.filter((s: any) => !s.audio_asset_id);
 
       run(db, `UPDATE generation_jobs SET status = 'running', errors = '[]' WHERE id = ?`, [job.id]);
+      checkpointToDisk(0, true);
       res.json({ job_id: job.id, resumed: true, remaining_segments: remaining.length });
 
       const jobControl = { cancelled: false };
@@ -329,12 +356,15 @@ async function processGeneration(
     }
   }
 
+  let lastSavedAt = Date.now();
   await runWithConcurrency(segments, GENERATION_CONCURRENCY, async (segment) => {
     if (control.cancelled) return;
     await processOne(segment);
     // Checkpoint progress every segment. sql.js is in-process/single-threaded so
     // this is safe to call from concurrent workers without locking.
     updateJobProgress(db, jobId, completed, cached, failed, skipped, errors, segment.chapter_title, segment.text?.slice(0, 50));
+    // Flush to disk on a time throttle so a crash loses seconds of work, not the job.
+    lastSavedAt = checkpointToDisk(lastSavedAt);
   });
 
   let clipsCreated = 0;
@@ -362,6 +392,10 @@ async function processGeneration(
   run(db,
     `UPDATE generation_jobs SET status = ?, completed_segments = ?, cached_segments = ?, failed_segments = ?, skipped_segments = ?, errors = ?, completed_at = datetime('now'), current_chapter = NULL, current_segment = NULL, clips_created = ?, markers_created = ?, total_duration_ms = ? WHERE id = ?`,
     [finalStatus, completed, cached, failed, skipped, JSON.stringify(errors), clipsCreated, markersCreated, totalDurationMs, jobId]);
+
+  // Always flush the terminal state — a finished hours-long job must never be
+  // left looking "running" just because the process died before the next tick.
+  checkpointToDisk(0, true);
 
   runningJobs.delete(jobId);
 }

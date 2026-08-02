@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run, withTransaction } from '../db/helpers.js';
+import { saveDb } from '../db/schema.js';
 import { detectAvailableProvider, getLLMApiKey, callLLM, buildSystemPrompt } from './ai-parse.js';
 import { autoAssignWithMemory, applyCastingToBook, syncCastingFromBook, normalizeName } from '../lib/voice-casting.js';
 import { listAllVoices } from '../tts/registry.js';
@@ -207,14 +208,19 @@ export function podcastRouter(db: SqlJsDatabase): Router {
       const characters = queryAll(db, 'SELECT * FROM characters WHERE book_id = ?', [bookId]);
       const stillUnassigned = characters.filter((c: any) => !c.voice_id);
       if (stillUnassigned.length > 0) {
+        // Fetching the live voice catalog is best-effort: it's only needed to
+        // pick *new* voices. Recalling a recurring speaker's remembered voice
+        // needs nothing but the database, so we still run the assignment pass
+        // even if the provider list is empty or the lookup fails — otherwise a
+        // rate-limited or unconfigured provider would silently break voice
+        // memory for hosts/guests we already know.
+        let availableVoices: any[] = [];
         try {
-          const availableVoices = await listAllVoices();
-          if (availableVoices.length > 0) {
-            assignments = autoAssignWithMemory(db, bookId, characters, availableVoices);
-          }
+          availableVoices = await listAllVoices();
         } catch (err) {
-          console.warn('[Podcast] Voice auto-assign skipped:', (err as Error).message);
+          console.warn('[Podcast] Voice catalog lookup failed, continuing with memory only:', (err as Error).message);
         }
+        assignments = autoAssignWithMemory(db, bookId, characters, availableVoices);
       }
 
       let savedCastingId: string | undefined;
@@ -224,6 +230,11 @@ export function podcastRouter(db: SqlJsDatabase): Router {
 
       const finalCharacters = queryAll(db, 'SELECT * FROM characters WHERE book_id = ?', [bookId]);
       const book = queryOne(db, 'SELECT * FROM books WHERE id = ?', [bookId]);
+
+      // Persist immediately — the user just pasted a script and had a cast
+      // assigned; that shouldn't be lost if the process dies before the
+      // next autosave tick.
+      saveDb();
 
       res.status(201).json({
         book,

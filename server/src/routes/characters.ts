@@ -165,17 +165,22 @@ export function charactersRouter(db: SqlJsDatabase): Router {
         availableVoices = await listAllVoices();
       }
 
-      if (availableVoices.length === 0) {
-        res.status(400).json({ error: 'No voices available from any configured provider. Check your API keys in Settings.' });
-        return;
-      }
-
       // Multi-cast assignment: recall a remembered voice for each character from this
       // book's casting / series / global memory first, and only pick a fresh voice
       // when there's no memory hit. Every assignment (remembered or fresh) is written
       // back into the casting so it's remembered for the next book/volume/episode.
+      //
+      // Note we deliberately do NOT bail out when the provider catalog is empty:
+      // recall works purely off the database, so an unconfigured or rate-limited
+      // provider must not cost us the voices we already remember. We only report
+      // the "no voices available" error if nothing at all could be assigned.
       const assignments = autoAssignWithMemory(db, bookId, characters, availableVoices);
       const rememberedCount = assignments.filter((a) => a.source === 'memory').length;
+
+      if (assignments.length === 0 && availableVoices.length === 0) {
+        res.status(400).json({ error: 'No voices available from any configured provider, and none of these characters have a remembered voice yet. Add a TTS API key in Settings.' });
+        return;
+      }
 
       res.json({
         assigned: assignments.length,

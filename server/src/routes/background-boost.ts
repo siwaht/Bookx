@@ -4,6 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
+import { saveDb } from '../db/schema.js';
 import { getSetting } from './settings.js';
 import { generateSFX, generateMusic, computePromptHash } from '../elevenlabs/client.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
@@ -1019,8 +1020,12 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
           });
         }
 
-        // Mark scene as generated
+        // Mark scene as generated, then flush: the SFX/music we just generated
+        // cost real API credits, so those audio_asset rows must not be lost to
+        // a crash before the next autosave (the files would be orphaned on disk
+        // and the user would pay to generate them again).
         run(db, "UPDATE background_boost_scenes SET status = 'generated' WHERE id = ?", [scene.id]);
+        saveDb();
 
         // Generate transition sting SFX if transition type is 'sting'
         if (scene.transition_to_next === 'sting') {

@@ -212,19 +212,50 @@ export function findRememberedVoice(
 export function rememberCharacterVoice(
   db: SqlJsDatabase,
   bookId: string,
-  character: { name: string; role?: string; voice_id?: string | null; voice_name?: string | null; tts_provider?: string; model_id?: string; stability?: number; similarity_boost?: number; style?: number; speed?: number; speaker_boost?: number | boolean }
+  character: { name?: string; character_name?: string; role?: string; voice_id?: string | null; voice_name?: string | null; tts_provider?: string; model_id?: string; stability?: number; similarity_boost?: number; style?: number; speed?: number; speaker_boost?: number | boolean }
 ): void {
   if (!character.voice_id) return;
+  const member = characterRowToMember(character);
+  if (!member.character_name) return;
+
   const book = queryOne(db, 'SELECT casting_id, series_id FROM books WHERE id = ?', [bookId]) as any;
   if (!book) return;
 
   if (book.casting_id) {
-    upsertCastingMember(db, book.casting_id, { character_name: character.name, ...character });
+    upsertCastingMember(db, book.casting_id, member);
   }
   if (book.series_id) {
     const seriesCastingId = getOrCreateSeriesCasting(db, book.series_id);
-    upsertCastingMember(db, seriesCastingId, { character_name: character.name, ...character });
+    upsertCastingMember(db, seriesCastingId, member);
   }
+}
+
+/**
+ * Voice IDs already claimed by *other* characters that share this book's
+ * casting/series memory. Used so a newly-cast character in Volume 2 doesn't
+ * get handed the voice that already belongs to someone in Volume 1 — the
+ * "every character has its own unique voice" guarantee has to hold across
+ * the whole series, not just within a single book.
+ */
+export function getClaimedVoiceIds(db: SqlJsDatabase, bookId: string, excludeNormalizedName?: string): Set<string> {
+  const claimed = new Set<string>();
+  const book = queryOne(db, 'SELECT casting_id, series_id FROM books WHERE id = ?', [bookId]) as any;
+  if (!book) return claimed;
+
+  const castingIds: string[] = [];
+  if (book.casting_id) castingIds.push(book.casting_id);
+  if (book.series_id) castingIds.push(getOrCreateSeriesCasting(db, book.series_id));
+  if (castingIds.length === 0) return claimed;
+
+  const placeholders = castingIds.map(() => '?').join(',');
+  const rows = queryAll(db,
+    `SELECT normalized_name, voice_id FROM voice_casting_members WHERE casting_id IN (${placeholders}) AND voice_id IS NOT NULL`,
+    castingIds) as any[];
+  for (const r of rows) {
+    if (excludeNormalizedName && r.normalized_name === excludeNormalizedName) continue;
+    claimed.add(r.voice_id);
+  }
+  return claimed;
 }
 
 export interface AutoAssignResult {
@@ -251,7 +282,12 @@ export function autoAssignWithMemory(
   availableVoices: CandidateVoice[]
 ): AutoAssignResult[] {
   const results: AutoAssignResult[] = [];
+  // Voices taken by characters already voiced in THIS book...
   const usedVoiceIds = new Set(characters.filter((c) => c.voice_id).map((c) => c.voice_id));
+  // ...plus voices already owned by other characters anywhere in this book's
+  // casting/series memory, so Volume 2's new characters don't collide with
+  // voices that already belong to Volume 1's cast.
+  for (const claimed of getClaimedVoiceIds(db, bookId)) usedVoiceIds.add(claimed);
   const assignedInThisRound = new Set<string>();
 
   const unassigned = characters.filter((c) => !c.voice_id);
@@ -309,6 +345,25 @@ export function autoAssignWithMemory(
   return results;
 }
 
+/** Convert a `characters` table row into the shape upsertCastingMember expects.
+ * The two tables name this column differently (`characters.name` vs
+ * `voice_casting_members.character_name`), so every caller must map it. */
+function characterRowToMember(character: any) {
+  return {
+    character_name: character.character_name ?? character.name,
+    role: character.role,
+    voice_id: character.voice_id,
+    voice_name: character.voice_name,
+    tts_provider: character.tts_provider,
+    model_id: character.model_id,
+    stability: character.stability,
+    similarity_boost: character.similarity_boost,
+    style: character.style,
+    speed: character.speed,
+    speaker_boost: character.speaker_boost,
+  };
+}
+
 /** Snapshot a book's current characters into a casting (creating it if `castingId` is omitted). */
 export function syncCastingFromBook(
   db: SqlJsDatabase,
@@ -331,7 +386,7 @@ export function syncCastingFromBook(
 
   for (const c of characters as any[]) {
     if (!c.voice_id) continue;
-    upsertCastingMember(db, castingId, c);
+    upsertCastingMember(db, castingId, characterRowToMember(c));
   }
 
   run(db, 'UPDATE books SET casting_id = ? WHERE id = ?', [castingId, bookId]);
