@@ -9,6 +9,7 @@ import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
 import { populateTimelineForBook } from './timeline.js';
+import { applyPronunciationRules } from '../utils/pronunciation.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 // How many segments to synthesize in parallel. Keeps very long books moving
@@ -375,36 +376,6 @@ function updateJobProgress(
     [completed, cached, failed, skipped, JSON.stringify(errors), currentChapter, currentSegment, jobId]);
 }
 
-function applyPronunciationRules(db: SqlJsDatabase, text: string, chapterId: string, characterId: string | null): string {
-  const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [chapterId]);
-  if (!chapter) return text;
-
-  let rules;
-  if (characterId) {
-    rules = queryAll(db,
-      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND (character_id = ? OR character_id IS NULL) ORDER BY length(word) DESC',
-      [chapter.book_id, characterId]);
-  } else {
-    rules = queryAll(db,
-      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND character_id IS NULL ORDER BY length(word) DESC',
-      [chapter.book_id]);
-  }
-
-  if (!rules || rules.length === 0) return text;
-
-  let result = text;
-  for (const rule of rules as any[]) {
-    const escaped = rule.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
-    if (rule.alias) {
-      result = result.replace(regex, rule.alias);
-    } else if (rule.phoneme) {
-      result = result.replace(regex, `<phoneme alphabet="ipa" ph="${rule.phoneme}">${rule.word}</phoneme>`);
-    }
-  }
-  return result;
-}
-
 async function generateSegmentAudioInternal(
   db: SqlJsDatabase,
   segment: any,
@@ -433,6 +404,7 @@ async function generateSegmentAudioInternal(
   }
 
   const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [segment.chapter_id]) as any;
+  if (!chapter) throw new Error('Chapter not found - it may have been deleted');
 
   let buffer: Buffer;
   let requestId: string | null = null;

@@ -3,8 +3,12 @@ import { v4 as uuid } from 'uuid';
 import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
-import { queryAll, queryOne, run } from '../db/helpers.js';
+import { queryAll, queryOne, run, withTransaction } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
+import { generateWithProvider } from '../tts/registry.js';
+import type { TTSProviderName } from '../tts/provider.js';
+import { applyPronunciationRules } from '../utils/pronunciation.js';
+import { ttsRateLimit } from '../middleware/rate-limit.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -36,9 +40,13 @@ export function timelineRouter(db: SqlJsDatabase): Router {
       const id = uuid();
       const { name, type, color } = req.body;
       if (!name || typeof name !== 'string') { res.status(400).json({ error: 'name is required' }); return; }
+      const allowedTypes = ['narration', 'dialogue', 'sfx', 'music', 'imported'];
+      if (type && !allowedTypes.includes(type)) {
+        res.status(400).json({ error: `Invalid track type. Allowed: ${allowedTypes.join(', ')}` }); return;
+      }
       const maxOrder = queryOne(db, 'SELECT MAX(sort_order) as max_order FROM tracks WHERE book_id = ?', [req.params.bookId]);
       run(db, `INSERT INTO tracks (id, book_id, name, type, sort_order, color) VALUES (?, ?, ?, ?, ?, ?)`,
-        [id, req.params.bookId, name, type, (maxOrder?.max_order ?? -1) + 1, color || '#4A90D9']);
+        [id, req.params.bookId, name, type || 'narration', (maxOrder?.max_order ?? -1) + 1, color || '#4A90D9']);
       const track = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [id]);
       res.status(201).json(track);
     } catch (err: any) {
@@ -149,6 +157,10 @@ export function timelineRouter(db: SqlJsDatabase): Router {
     try {
       const bookId = String(req.params.bookId);
       const { chapter_ids, gap_ms, chapter_gap_ms } = req.body;
+
+      const validationError = validatePopulateInput(chapter_ids, gap_ms, chapter_gap_ms);
+      if (validationError) { res.status(400).json({ error: validationError }); return; }
+
       const result = populateTimelineForBook(db, bookId, { chapterIds: chapter_ids, gapMs: gap_ms, chapterGapMs: chapter_gap_ms });
 
       const tracks = queryAll(db, 'SELECT * FROM tracks WHERE book_id = ? ORDER BY sort_order', [bookId]);
@@ -194,10 +206,13 @@ export function timelineRouter(db: SqlJsDatabase): Router {
   // that runs as a resumable background job with progress polling and no
   // request timeout. This endpoint stays synchronous for small/quick jobs
   // (a chapter or two) where callers want the result inline.
-  router.post('/generate-and-populate', async (req: Request, res: Response) => {
+  router.post('/generate-and-populate', ttsRateLimit, async (req: Request, res: Response) => {
     try {
       const bookId = String(req.params.bookId);
       const { chapter_ids, gap_ms, chapter_gap_ms } = req.body;
+
+      const validationError = validatePopulateInput(chapter_ids, gap_ms, chapter_gap_ms);
+      if (validationError) { res.status(400).json({ error: validationError }); return; }
 
       let chapters;
       if (chapter_ids?.length) {
@@ -449,11 +464,39 @@ export function timelineRouter(db: SqlJsDatabase): Router {
 }
 
 /**
+ * Validates the shared input shape for /populate and /generate-and-populate.
+ * Returns an error message string if invalid, or null if the input is fine.
+ */
+function validatePopulateInput(chapterIds: unknown, gapMs: unknown, chapterGapMs: unknown): string | null {
+  if (chapterIds !== undefined) {
+    if (!Array.isArray(chapterIds) || !chapterIds.every((id: any) => typeof id === 'string')) {
+      return 'chapter_ids must be an array of strings';
+    }
+  }
+  if (gapMs !== undefined) {
+    if (typeof gapMs !== 'number' || gapMs < 0 || gapMs > 30000) {
+      return 'gap_ms must be a number between 0 and 30000';
+    }
+  }
+  if (chapterGapMs !== undefined) {
+    if (typeof chapterGapMs !== 'number' || chapterGapMs < 0 || chapterGapMs > 60000) {
+      return 'chapter_gap_ms must be a number between 0 and 60000';
+    }
+  }
+  return null;
+}
+
+/**
  * Lays out every chapter's segments (that already have audio) onto the
  * narration track back-to-back, with configurable gaps, and drops a chapter
  * marker at the start of each chapter. Shared by /populate, /generate-and-populate,
  * and the long-running generation job (generation.ts) so "generate audio" and
  * "arrange on timeline" always produce identical results regardless of entry point.
+ *
+ * All writes run inside a single transaction — for a long book with thousands
+ * of segments this is dramatically faster than committing one row at a time.
+ * Existing clips are pre-fetched in one query (avoiding an N+1 lookup per
+ * segment) so repopulating a large, already-populated book stays fast too.
  */
 export function populateTimelineForBook(
   db: SqlJsDatabase,
@@ -472,6 +515,7 @@ export function populateTimelineForBook(
     chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);
   }
 
+  // Ensure a narration track exists (outside the transaction so we can read it back immediately).
   let narrationTrack = queryOne(db, "SELECT * FROM tracks WHERE book_id = ? AND type = 'narration' LIMIT 1", [bookId]);
   if (!narrationTrack) {
     const trackId = uuid();
@@ -479,48 +523,58 @@ export function populateTimelineForBook(
     narrationTrack = queryOne(db, 'SELECT * FROM tracks WHERE id = ?', [trackId]);
   }
 
+  // Pre-fetch all existing clips for this track in one query to avoid an N+1
+  // lookup per segment when repopulating a book that already has clips.
+  const existingClips = queryAll(db, 'SELECT segment_id, position_ms FROM clips WHERE track_id = ?', [narrationTrack.id]);
+  const existingBySegment = new Map<string, { position_ms: number }>(
+    existingClips.map((c: any) => [c.segment_id, { position_ms: c.position_ms }])
+  );
+
   let currentPositionMs = 0;
   let clipsCreated = 0;
   let markersCreated = 0;
 
-  // Only clear markers for the chapters being (re)populated so a partial/incremental
-  // populate on a long book doesn't wipe markers for chapters left untouched.
-  if (opts.chapterIds?.length) {
-    const placeholders = opts.chapterIds.map(() => '?').join(',');
-    run(db, `DELETE FROM chapter_markers WHERE book_id = ? AND chapter_id IN (${placeholders})`, [bookId, ...opts.chapterIds]);
-  } else {
-    run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
-  }
-
-  for (const chapter of chapters) {
-    const markerId = uuid();
-    run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
-      [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
-    markersCreated++;
-
-    const segments = queryAll(db,
-      `SELECT s.*, a.duration_ms FROM segments s
-       JOIN audio_assets a ON s.audio_asset_id = a.id
-       WHERE s.chapter_id = ? ORDER BY s.sort_order`,
-      [chapter.id]);
-
-    for (const seg of segments) {
-      const existing = queryOne(db, 'SELECT * FROM clips WHERE segment_id = ? AND track_id = ?', [seg.id, narrationTrack.id]);
-      if (existing) {
-        currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
-        continue;
-      }
-
-      const clipId = uuid();
-      const durationMs = seg.duration_ms || 3000;
-      run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
-        [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
-      clipsCreated++;
-      currentPositionMs += durationMs + gapBetweenSegmentsMs;
+  withTransaction(db, () => {
+    // Only clear markers for the chapters being (re)populated so a partial/incremental
+    // populate on a long book doesn't wipe markers for chapters left untouched.
+    if (opts.chapterIds?.length) {
+      const placeholders = opts.chapterIds.map(() => '?').join(',');
+      run(db, `DELETE FROM chapter_markers WHERE book_id = ? AND chapter_id IN (${placeholders})`, [bookId, ...opts.chapterIds]);
+    } else {
+      run(db, 'DELETE FROM chapter_markers WHERE book_id = ?', [bookId]);
     }
 
-    currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
-  }
+    for (const chapter of chapters) {
+      const markerId = uuid();
+      run(db, 'INSERT INTO chapter_markers (id, book_id, chapter_id, position_ms, label) VALUES (?, ?, ?, ?, ?)',
+        [markerId, bookId, chapter.id, currentPositionMs, chapter.title]);
+      markersCreated++;
+
+      const segments = queryAll(db,
+        `SELECT s.*, a.duration_ms FROM segments s
+         JOIN audio_assets a ON s.audio_asset_id = a.id
+         WHERE s.chapter_id = ? ORDER BY s.sort_order`,
+        [chapter.id]);
+
+      for (const seg of segments) {
+        // Use the pre-fetched map instead of a per-segment query.
+        const existing = existingBySegment.get(seg.id);
+        if (existing) {
+          currentPositionMs = existing.position_ms + (seg.duration_ms || 3000) + gapBetweenSegmentsMs;
+          continue;
+        }
+
+        const clipId = uuid();
+        const durationMs = seg.duration_ms || 3000;
+        run(db, `INSERT INTO clips (id, track_id, audio_asset_id, segment_id, position_ms) VALUES (?, ?, ?, ?, ?)`,
+          [clipId, narrationTrack.id, seg.audio_asset_id, seg.id, currentPositionMs]);
+        clipsCreated++;
+        currentPositionMs += durationMs + gapBetweenSegmentsMs;
+      }
+
+      currentPositionMs += gapBetweenChaptersMs - gapBetweenSegmentsMs;
+    }
+  });
 
   return { clips_created: clipsCreated, markers_created: markersCreated, total_duration_ms: currentPositionMs };
 }
@@ -532,12 +586,16 @@ async function generateSegmentAudioForTimeline(
   let voiceId = 'default';
   let voiceSettings = { stability: 0.5, similarity_boost: 0.75, style: 0.0, use_speaker_boost: true };
   let modelId = 'eleven_v3';
+  let ttsProvider: TTSProviderName = 'elevenlabs';
+  let speed = 1.0;
 
   if (segment.character_id) {
     const char = queryOne(db, 'SELECT * FROM characters WHERE id = ?', [segment.character_id]);
     if (char?.voice_id) {
       voiceId = char.voice_id;
       modelId = char.model_id || 'eleven_v3';
+      ttsProvider = char.tts_provider || 'elevenlabs';
+      speed = char.speed || 1.0;
       voiceSettings = {
         stability: char.stability ?? 0.5,
         similarity_boost: char.similarity_boost ?? 0.75,
@@ -551,7 +609,10 @@ async function generateSegmentAudioForTimeline(
     throw new Error('No voice assigned. Assign a character with a voice first.');
   }
 
-  const hashParams = { text: segment.text, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
+  // Apply pronunciation rules before generating audio
+  const processedText = applyPronunciationRules(db, segment.text, segment.chapter_id, segment.character_id);
+
+  const hashParams = { provider: ttsProvider, text: processedText, voice_id: voiceId, model_id: modelId, voice_settings: voiceSettings };
   const promptHash = computePromptHash(hashParams);
 
   // Check cache
@@ -562,25 +623,52 @@ async function generateSegmentAudioForTimeline(
   }
 
   const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [segment.chapter_id]);
+  if (!chapter) throw new Error('Chapter not found - it may have been deleted');
 
-  const { buffer, requestId } = await generateTTS({
-    text: segment.text,
-    voice_id: voiceId,
-    model_id: modelId,
-    voice_settings: voiceSettings,
-    output_format: 'mp3_44100_192',
-  });
+  let buffer: Buffer;
+  let requestId: string | null = null;
+  let durationMs: number;
+
+  if (ttsProvider === 'elevenlabs') {
+    const prevSegment = queryOne(db,
+      'SELECT previous_request_id FROM segments WHERE chapter_id = ? AND sort_order < ? AND previous_request_id IS NOT NULL ORDER BY sort_order DESC LIMIT 1',
+      [segment.chapter_id, segment.sort_order]);
+
+    const result = await generateTTS({
+      text: processedText,
+      voice_id: voiceId,
+      model_id: modelId,
+      voice_settings: voiceSettings,
+      previous_request_ids: prevSegment?.previous_request_id ? [prevSegment.previous_request_id] : undefined,
+      output_format: 'mp3_44100_192',
+    });
+    buffer = result.buffer;
+    requestId = result.requestId;
+    durationMs = Math.round((buffer.length / 24000) * 1000);
+  } else {
+    const result = await generateWithProvider(ttsProvider, {
+      text: processedText,
+      voiceId,
+      modelId,
+      speed,
+      stability: voiceSettings.stability,
+      similarityBoost: voiceSettings.similarity_boost,
+      style: voiceSettings.style,
+      speakerBoost: voiceSettings.use_speaker_boost,
+    });
+    buffer = result.buffer;
+    requestId = result.requestId;
+    durationMs = result.durationMs || Math.round((buffer.length / 16000) * 1000);
+  }
 
   const assetId = uuid();
   const filePath = path.join(DATA_DIR, 'audio', `${assetId}.mp3`);
   fs.writeFileSync(filePath, buffer);
 
-  const estimatedDurationMs = Math.round((buffer.length / 24000) * 1000);
-
   run(db,
     `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, prompt_hash, elevenlabs_request_id, generation_params, file_size_bytes)
      VALUES (?, ?, 'tts', ?, ?, ?, ?, ?, ?)`,
-    [assetId, chapter.book_id, filePath, estimatedDurationMs, promptHash, requestId, JSON.stringify(hashParams), buffer.length]);
+    [assetId, chapter.book_id, filePath, durationMs, promptHash, requestId, JSON.stringify({ ...hashParams, provider: ttsProvider }), buffer.length]);
 
   run(db, `UPDATE segments SET audio_asset_id = ?, previous_request_id = ?, updated_at = datetime('now') WHERE id = ?`,
     [assetId, requestId, segment.id]);

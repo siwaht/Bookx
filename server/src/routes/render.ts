@@ -20,10 +20,32 @@ export function renderRouter(db: SqlJsDatabase): Router {
     try {
       const bookId = req.params.bookId;
       const { type, chapter_id } = req.body;
+
+      // Validate type field
+      const allowedTypes = ['full', 'chapter', 'preview'];
+      const renderType = type || 'full';
+      if (!allowedTypes.includes(renderType)) {
+        res.status(400).json({ error: `Invalid render type. Allowed: ${allowedTypes.join(', ')}` });
+        return;
+      }
+
+      // If type is 'chapter', chapter_id is required
+      if (renderType === 'chapter') {
+        if (!chapter_id) {
+          res.status(400).json({ error: 'chapter_id is required when type is "chapter"' });
+          return;
+        }
+        const chapterExists = queryOne(db, 'SELECT id FROM chapters WHERE id = ? AND book_id = ?', [chapter_id, bookId]);
+        if (!chapterExists) {
+          res.status(404).json({ error: 'Chapter not found' });
+          return;
+        }
+      }
+
       const jobId = uuid();
 
       run(db, `INSERT INTO render_jobs (id, book_id, status, type, chapter_id, started_at) VALUES (?, ?, 'running', ?, ?, datetime('now'))`,
-        [jobId, bookId, type || 'full', chapter_id || null]);
+        [jobId, bookId, renderType, chapter_id || null]);
 
       res.json({ job_id: jobId, status: 'running' });
 
@@ -54,7 +76,7 @@ export function renderRouter(db: SqlJsDatabase): Router {
     // Prevent directory traversal
     const resolved = path.resolve(job.output_path);
     const dataDir = path.resolve(DATA_DIR);
-    if (!resolved.startsWith(dataDir) || !fs.existsSync(resolved)) {
+    if ((!resolved.startsWith(dataDir + path.sep) && resolved !== dataDir) || !fs.existsSync(resolved)) {
       res.status(404).json({ error: 'File not found' });
       return;
     }
@@ -67,6 +89,9 @@ export function renderRouter(db: SqlJsDatabase): Router {
 
 async function processRenderJob(db: SqlJsDatabase, jobId: string): Promise<void> {
   const job = queryOne(db, 'SELECT * FROM render_jobs WHERE id = ?', [jobId]);
+  if (!job) {
+    throw new Error(`Render job ${jobId} not found`);
+  }
   const bookId = job.book_id;
 
   const chapters = queryAll(db, 'SELECT * FROM chapters WHERE book_id = ? ORDER BY sort_order', [bookId]);

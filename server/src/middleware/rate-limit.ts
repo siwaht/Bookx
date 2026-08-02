@@ -7,7 +7,7 @@ interface RateLimitEntry {
 
 const buckets = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries every 60s
+// Clean up expired entries every 60s (runs for the process lifetime; intentional for a long-running server)
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of buckets) {

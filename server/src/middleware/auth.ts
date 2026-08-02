@@ -75,7 +75,7 @@ function recordAttempt(ip: string): void {
   }
 }
 
-// Clean up old entries periodically
+// Clean up old entries periodically (runs for the process lifetime; intentional for a long-running server)
 setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of loginAttempts) {
