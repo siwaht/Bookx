@@ -85,14 +85,29 @@ setInterval(() => {
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token: string | undefined;
+
+  if (authHeader?.startsWith('Bearer ')) {
+    token = authHeader.slice(7);
+  } else if (req.method === 'GET' && typeof req.query.token === 'string') {
+    /**
+     * Media elements and download links can't set request headers: an
+     * `<audio src>`, `new Audio(url)`, or `<a download>` issues a plain browser
+     * request, so audio playback and file downloads could never authenticate.
+     *
+     * Accepting the token from the query string is limited to GET so it can't be
+     * used to drive state changes, and the request logger records only the path,
+     * not the query, so tokens stay out of the logs.
+     */
+    token = req.query.token;
+  }
+
+  if (!token) {
     res.status(401).json({ error: 'Authentication required' });
     return;
   }
 
-  const token = authHeader.slice(7);
-
-  if (!token || !verifyToken(token)) {
+  if (!verifyToken(token)) {
     res.status(401).json({ error: 'Invalid or expired token' });
     return;
   }

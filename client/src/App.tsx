@@ -10,7 +10,7 @@ import { ToastContainer } from './components/Toast';
 import { Dashboard } from './pages/Dashboard';
 import { BookEditor } from './pages/BookEditor';
 import { ManuscriptPage } from './pages/ManuscriptPage';
-import { VoicesPage } from './pages/VoicesPage';
+import { CastPage } from './pages/CastPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { QCPage } from './pages/QCPage';
 import { ExportPage } from './pages/ExportPage';
@@ -81,7 +81,9 @@ function AppLayout() {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/book/:bookId" element={<BookEditor />}>
             <Route index element={<ManuscriptPage />} />
-            <Route path="voices" element={<VoicesPage />} />
+            <Route path="cast" element={<CastPage />} />
+            {/* Old path, kept so existing links/bookmarks still land somewhere sensible. */}
+            <Route path="voices" element={<Navigate to="../cast" replace />} />
             <Route path="pronunciation" element={<PronunciationPage />} />
             <Route path="studio" element={<AudioStudioPage />} />
             <Route path="generation" element={<GenerationPage />} />

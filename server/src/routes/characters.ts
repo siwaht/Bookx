@@ -26,7 +26,26 @@ export function charactersRouter(db: SqlJsDatabase): Router {
 
   router.get('/', (req: Request, res: Response) => {
     try {
-      const characters = queryAll(db, 'SELECT * FROM characters WHERE book_id = ?', [req.params.bookId]);
+      // `line_count` and `sample_line` let the cast list show how much each
+      // character actually speaks and quote one of their lines, which is the
+      // fastest way to confirm a voice suits them. Both are derived, so they're
+      // computed here rather than stored.
+      const characters = queryAll(db,
+        `SELECT c.*,
+           (SELECT COUNT(*) FROM segments s
+              JOIN chapters ch ON ch.id = s.chapter_id
+             WHERE s.character_id = c.id AND ch.book_id = c.book_id) AS line_count,
+           (SELECT s.text FROM segments s
+              JOIN chapters ch ON ch.id = s.chapter_id
+             WHERE s.character_id = c.id AND ch.book_id = c.book_id
+             ORDER BY ch.sort_order, s.sort_order LIMIT 1) AS sample_line
+         FROM characters c
+         WHERE c.book_id = ?
+         ORDER BY
+           CASE c.role WHEN 'narrator' THEN 0 WHEN 'host' THEN 1 WHEN 'guest' THEN 2 ELSE 3 END,
+           line_count DESC,
+           c.name`,
+        [req.params.bookId]);
       res.json(characters);
     } catch (err: any) {
       res.status(500).json({ error: 'Failed to list characters' });
@@ -147,7 +166,16 @@ export function charactersRouter(db: SqlJsDatabase): Router {
         return;
       }
 
-      const unassigned = characters.filter((c: any) => !c.voice_id);
+      // Optional subset: the UI uses this for a single character's "auto-pick"
+      // so it doesn't silently cast everyone else at the same time.
+      const requestedIds: string[] | undefined = Array.isArray(req.body.character_ids)
+        ? req.body.character_ids.map((id: any) => String(id))
+        : undefined;
+      const requestedSet = requestedIds?.length ? new Set(requestedIds) : null;
+
+      const unassigned = characters.filter(
+        (c: any) => !c.voice_id && (!requestedSet || requestedSet.has(c.id))
+      );
       if (unassigned.length === 0) {
         res.json({ assigned: 0, message: 'All characters already have voices', assignments: [] });
         return;
@@ -174,7 +202,9 @@ export function charactersRouter(db: SqlJsDatabase): Router {
       // recall works purely off the database, so an unconfigured or rate-limited
       // provider must not cost us the voices we already remember. We only report
       // the "no voices available" error if nothing at all could be assigned.
-      const assignments = autoAssignWithMemory(db, bookId, characters, availableVoices);
+      const assignments = autoAssignWithMemory(db, bookId, characters, availableVoices, {
+        onlyCharacterIds: requestedIds,
+      });
       const rememberedCount = assignments.filter((a) => a.source === 'memory').length;
 
       if (assignments.length === 0 && availableVoices.length === 0) {

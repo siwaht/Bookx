@@ -167,9 +167,37 @@ export const characters = {
   autoAssignByName: (bookId: string) =>
     request<{ assigned: number; total_segments: number; matches: { segment_id: string; character_name: string }[] }>(
       `/books/${bookId}/characters/auto-assign-by-name`, { method: 'POST' }),
-  autoAssignVoices: (bookId: string, voices?: Array<{ voiceId: string; name: string; provider: string; gender?: string; category?: string; labels?: Record<string, string> }>) =>
-    request<{ assigned: number; total_characters: number; unassigned_remaining: number; assignments: Array<{ character_id: string; character_name: string; voice_id: string; voice_name: string; provider: string }> }>(
-      `/books/${bookId}/characters/auto-assign-voices`, { method: 'POST', body: JSON.stringify(voices ? { voices } : {}) }),
+  /**
+   * Auto-cast voices. Pass `characterIds` to limit it to a subset (used by the
+   * per-character "auto-pick"); omit it to cast everyone still without a voice.
+   * `source: 'memory'` means the voice was recalled from a saved cast or series
+   * rather than freshly chosen.
+   */
+  autoAssignVoices: (
+    bookId: string,
+    opts?: {
+      characterIds?: string[];
+      voices?: Array<{ voiceId: string; name: string; provider: string; gender?: string; category?: string; labels?: Record<string, string> }>;
+    }
+  ) =>
+    request<{
+      assigned: number;
+      total_characters: number;
+      unassigned_remaining: number;
+      remembered_from_casting?: number;
+      message?: string;
+      assignments: Array<{
+        character_id: string; character_name: string;
+        voice_id: string; voice_name: string; provider: string;
+        source?: 'memory' | 'fresh'; casting_name?: string;
+      }>;
+    }>(`/books/${bookId}/characters/auto-assign-voices`, {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(opts?.characterIds?.length ? { character_ids: opts.characterIds } : {}),
+        ...(opts?.voices ? { voices: opts.voices } : {}),
+      }),
+    }),
 };
 
 // ── Segments ──
@@ -311,12 +339,27 @@ export const exportBook = {
   status: (bookId: string, exportId: string) =>
     request<any>(`/books/${bookId}/export/${exportId}`),
   downloadUrl: (bookId: string, exportId: string) =>
-    `${API_BASE}/books/${bookId}/export/${exportId}/download`,
+    withToken(`${API_BASE}/books/${bookId}/export/${exportId}/download`),
 };
 
+// ── Authenticated media URLs ──
+/**
+ * Appends the auth token as a query parameter.
+ *
+ * Use this for any URL consumed directly by the browser — `<audio src>`,
+ * `new Audio(url)`, `<img src>`, `<a download>`. Those requests are issued by
+ * the browser itself and cannot carry an `Authorization` header, so without the
+ * token they come back 401. The server only honours `?token=` on GET.
+ */
+function withToken(path: string): string {
+  if (!authToken) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}token=${encodeURIComponent(authToken)}`;
+}
+
 // ── Audio ──
-export const audioUrl = (assetId: string) => `${API_BASE}/audio/${assetId}`;
-export const audioDownloadUrl = (assetId: string) => `${API_BASE}/audio/${assetId}/download`;
+export const audioUrl = (assetId: string) => withToken(`${API_BASE}/audio/${assetId}`);
+export const audioDownloadUrl = (assetId: string) => withToken(`${API_BASE}/audio/${assetId}/download`);
 
 export const audioAssets = {
   listLibrary: (bookId: string) => request<any[]>(`/audio/book/${bookId}/library`),
@@ -348,7 +391,7 @@ export const settings = {
 export const saveProject = () => request<{ ok: boolean; saved_at: string }>('/save', { method: 'POST' });
 
 // ── Download Project ──
-export const downloadProjectUrl = (bookId: string) => `${API_BASE}/books/${bookId}/download-project`;
+export const downloadProjectUrl = (bookId: string) => withToken(`${API_BASE}/books/${bookId}/download-project`);
 
 // LLM-based analysis on a full manuscript/script can legitimately take a
 // couple of minutes on long books — give these calls a longer leash than the
@@ -636,10 +679,10 @@ export const library = {
     if (!res.ok) { const err = await res.json().catch(() => ({ error: 'Upload failed' })); throw new Error(err.error); }
     return res.json();
   },
-  coverUrl: (id: string) => `${API_BASE}/library/${id}/cover`,
-  readUrl: (id: string) => `${API_BASE}/library/${id}/read`,
-  readHtmlUrl: (id: string) => `${API_BASE}/library/${id}/read-html`,
-  downloadUrl: (id: string) => `${API_BASE}/library/${id}/download`,
+  coverUrl: (id: string) => withToken(`${API_BASE}/library/${id}/cover`),
+  readUrl: (id: string) => withToken(`${API_BASE}/library/${id}/read`),
+  readHtmlUrl: (id: string) => withToken(`${API_BASE}/library/${id}/read-html`),
+  downloadUrl: (id: string) => withToken(`${API_BASE}/library/${id}/download`),
   uploadFormat: async (id: string, file: File, format?: string) => {
     const formData = new FormData();
     formData.append('file', file);

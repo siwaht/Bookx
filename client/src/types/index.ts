@@ -103,6 +103,12 @@ export interface Character {
   speaker_boost: number;
   casting_member_id?: string | null;
   normalized_name?: string | null;
+  /** Derived by the API: how many segments this character speaks in the book. */
+  line_count?: number;
+  /** Derived by the API: this character's first line, used to preview the casting. */
+  sample_line?: string | null;
+  /** Set on create when a voice was recalled from an existing cast. */
+  remembered?: boolean;
 }
 
 export interface Segment {

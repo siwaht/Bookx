@@ -1,4 +1,5 @@
-import 'dotenv/config';
+// Must stay first: it populates process.env before any module reads it.
+import { loadedEnvFiles } from './load-env.js';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -92,6 +93,14 @@ async function main() {
   const interruptedCount = reconcileInterruptedGenerationJobs(db);
   if (interruptedCount > 0) {
     log.warn('Marked generation jobs as interrupted after restart', { count: interruptedCount });
+  }
+
+  // Make env resolution visible: a missing .env used to look identical to an
+  // empty one, which made "I set the key but it isn't working" hard to diagnose.
+  if (loadedEnvFiles.length > 0) {
+    log.info('Loaded environment files', { files: loadedEnvFiles });
+  } else {
+    log.warn('No .env file found. Relying on real environment variables only.');
   }
 
   // Load API keys from settings into env — DB values always take priority

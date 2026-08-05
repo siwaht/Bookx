@@ -279,7 +279,8 @@ export function autoAssignWithMemory(
   db: SqlJsDatabase,
   bookId: string,
   characters: any[],
-  availableVoices: CandidateVoice[]
+  availableVoices: CandidateVoice[],
+  opts: { onlyCharacterIds?: string[] } = {}
 ): AutoAssignResult[] {
   const results: AutoAssignResult[] = [];
   // Voices taken by characters already voiced in THIS book...
@@ -290,7 +291,12 @@ export function autoAssignWithMemory(
   for (const claimed of getClaimedVoiceIds(db, bookId)) usedVoiceIds.add(claimed);
   const assignedInThisRound = new Set<string>();
 
-  const unassigned = characters.filter((c) => !c.voice_id);
+  // `onlyCharacterIds` narrows *which* characters get cast (used by the UI's
+  // per-character "auto-pick"), but the full `characters` list is still used
+  // above for uniqueness, so a one-off pick can't steal a voice that's already
+  // in use elsewhere in the book.
+  const limitTo = opts.onlyCharacterIds?.length ? new Set(opts.onlyCharacterIds) : null;
+  const unassigned = characters.filter((c) => !c.voice_id && (!limitTo || limitTo.has(c.id)));
   // Narrators first so they get first pick of "narrator-labeled" voices.
   const sorted = [...unassigned].sort((a, b) => {
     if (a.role === 'narrator' && b.role !== 'narrator') return -1;
