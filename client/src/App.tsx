@@ -60,7 +60,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!authenticated) return <LoginPage />;
+  // TEMPORARY: login screen disabled for development.
+  // Re-enable by restoring: if (!authenticated) return <LoginPage />;
   return <>{children}</>;
 }
 

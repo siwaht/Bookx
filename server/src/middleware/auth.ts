@@ -84,6 +84,12 @@ setInterval(() => {
 }, 60_000);
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
+  // TEMPORARY: auth disabled for development. Remove this block to re-enable the login screen.
+  if (process.env.NODE_ENV !== 'production') {
+    next();
+    return;
+  }
+
   const authHeader = req.headers.authorization;
   let token: string | undefined;
 
