@@ -129,7 +129,7 @@ export const auth = {
 export const books = {
   list: () => request<any[]>('/books'),
   get: (id: string) => request<any>(`/books/${id}`),
-  create: (data: { title: string; author?: string; narrator?: string }) =>
+  create: (data: { title: string; author?: string; narrator?: string; project_type?: 'audiobook' | 'podcast'; format?: string; default_model?: string; default_gap_ms?: number; chapter_gap_ms?: number; default_speed?: number }) =>
     request<any>('/books', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: string, data: any) =>
     request<any>(`/books/${id}`, { method: 'PUT', body: JSON.stringify(data) }),

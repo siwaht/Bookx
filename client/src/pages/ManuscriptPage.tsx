@@ -17,7 +17,7 @@ import type { Chapter, Segment, Character } from '../types';
 import {
   Upload, Play, RefreshCw, Plus, Zap, LayoutDashboard, Trash2, BookOpen,
   Scissors, Users, Volume2, Wand2, Loader, Edit3, Copy, ChevronUp,
-  ChevronDown, Check, X, Tag, MoreVertical, Send, Settings, Gauge,
+  ChevronDown, Check, X, Tag, MoreVertical, Send, Settings, Gauge, SlidersHorizontal,
 } from 'lucide-react';
 
 // V3 audio tags for quick insertion
@@ -88,6 +88,7 @@ export function ManuscriptPage() {
 
   // V3 tag panel
   const [showTagPanel, setShowTagPanel] = useState(false);
+  const [showAdvancedTools, setShowAdvancedTools] = useState(false);
 
   // Pacing & mood controls
   const [showPacingPanel, setShowPacingPanel] = useState(false);
@@ -670,33 +671,40 @@ export function ManuscriptPage() {
                     <button onClick={() => setSplitMode(true)} style={styles.smallBtn} title="Split chapter at cursor position">
                       <Scissors size={12} /> Split
                     </button>
-                    <button onClick={() => setShowTagPanel(!showTagPanel)}
-                      style={{ ...styles.smallBtn, background: showTagPanel ? 'var(--purple-subtle)' : 'var(--bg-elevated)', color: showTagPanel ? 'var(--purple)' : 'var(--text-secondary)' }}
-                      title="Toggle V3 audio tags panel">
-                      <Tag size={12} /> V3 Tags
+                    <button onClick={() => setShowAdvancedTools(!showAdvancedTools)}
+                      style={{ ...styles.smallBtn, background: showAdvancedTools ? 'var(--accent-subtle)' : 'var(--bg-elevated)', color: showAdvancedTools ? 'var(--accent)' : 'var(--text-secondary)' }}
+                      title="Show advanced narration tools" aria-expanded={showAdvancedTools}>
+                      <SlidersHorizontal size={12} /> Tools
                     </button>
-                    <button onClick={() => setShowMoodPresets(!showMoodPresets)}
-                      style={{ ...styles.smallBtn, background: showMoodPresets ? 'var(--accent-subtle)' : 'var(--bg-elevated)', color: showMoodPresets ? 'var(--accent)' : 'var(--text-secondary)' }}
-                      title="Emotional/mood presets">
-                      <Wand2 size={12} /> Moods
-                    </button>
-                    <button onClick={() => setShowPacingPanel(!showPacingPanel)}
-                      style={{ ...styles.smallBtn, background: showPacingPanel ? 'var(--success-subtle)' : 'var(--bg-elevated)', color: showPacingPanel ? 'var(--success)' : 'var(--text-secondary)' }}
-                      title="Pacing & gap settings">
-                      <Gauge size={12} /> Pacing
-                    </button>
-                    <button onClick={handleAiSuggestTags} disabled={aiTagging || !chapterText.trim()}
-                      style={{ ...styles.smallBtn, background: 'var(--purple-subtle)', color: 'var(--purple)' }}
-                      title="AI will suggest and insert V3 tags into the text">
-                      {aiTagging ? <Loader size={12} /> : <Wand2 size={12} />}
-                      {aiTagging ? 'Tagging...' : 'AI Tags'}
-                    </button>
+                    {showAdvancedTools && <>
+                      <button onClick={() => setShowTagPanel(!showTagPanel)}
+                        style={{ ...styles.smallBtn, background: showTagPanel ? 'var(--purple-subtle)' : 'var(--bg-elevated)', color: showTagPanel ? 'var(--purple)' : 'var(--text-secondary)' }}
+                        title="Toggle V3 audio tags panel">
+                        <Tag size={12} /> Tags
+                      </button>
+                      <button onClick={() => setShowMoodPresets(!showMoodPresets)}
+                        style={{ ...styles.smallBtn, background: showMoodPresets ? 'var(--accent-subtle)' : 'var(--bg-elevated)', color: showMoodPresets ? 'var(--accent)' : 'var(--text-secondary)' }}
+                        title="Emotional/mood presets">
+                        <Wand2 size={12} /> Moods
+                      </button>
+                      <button onClick={() => setShowPacingPanel(!showPacingPanel)}
+                        style={{ ...styles.smallBtn, background: showPacingPanel ? 'var(--success-subtle)' : 'var(--bg-elevated)', color: showPacingPanel ? 'var(--success)' : 'var(--text-secondary)' }}
+                        title="Pacing & gap settings">
+                        <Gauge size={12} /> Pacing
+                      </button>
+                      <button onClick={handleAiSuggestTags} disabled={aiTagging || !chapterText.trim()}
+                        style={{ ...styles.smallBtn, background: 'var(--purple-subtle)', color: 'var(--purple)' }}
+                        title="AI will suggest and insert V3 tags into the text">
+                        {aiTagging ? <Loader size={12} /> : <Wand2 size={12} />}
+                        {aiTagging ? 'Tagging...' : 'AI suggest'}
+                      </button>
+                    </>}
                   </>
                 )}
               </div>
             </div>
 
-            {showTagPanel && (
+            {showAdvancedTools && showTagPanel && (
               <div style={styles.tagPanel}>
                 {V3_TAGS.map((cat) => (
                   <div key={cat.cat} style={styles.tagRow}>
@@ -712,7 +720,7 @@ export function ManuscriptPage() {
             )}
 
             {/* Mood Presets Panel */}
-            {showMoodPresets && (
+            {showAdvancedTools && showMoodPresets && (
               <div style={{ ...styles.tagPanel, background: 'var(--bg-base)' }}>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {MOOD_PRESETS.map((preset) => (
@@ -728,7 +736,7 @@ export function ManuscriptPage() {
             )}
 
             {/* Pacing Settings Panel */}
-            {showPacingPanel && (
+            {showAdvancedTools && showPacingPanel && (
               <div style={{ ...styles.tagPanel, background: 'var(--bg-base)', gap: 8 }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
                   <div style={{ display: 'flex', flexDirection: 'column' as const, gap: 4 }}>

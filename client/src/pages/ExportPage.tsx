@@ -27,8 +27,8 @@ export function ExportPage() {
   return (
     <div style={styles.container}>
       <div style={styles.header}>
-        <h2 style={styles.title}>📦 Export</h2>
-        <p style={styles.subtitle}>Package your rendered audio for distribution</p>
+        <h2 style={styles.title}>Publish & export</h2>
+        <p style={styles.subtitle}>Run the final checks, choose a delivery format, and package your audiobook.</p>
       </div>
 
       {/* Target selector */}
@@ -120,7 +120,7 @@ export function ExportPage() {
 
       <button onClick={handleExport} disabled={exporting} style={styles.exportBtn}>
         {exporting ? <Loader size={18} /> : <Package size={18} />}
-        {exporting ? 'Exporting...' : target === 'acx' ? 'Export ACX Package' : target === 'podcast' ? 'Export Podcast Package' : 'Export InAudio Package'}
+        {exporting ? 'Preparing package…' : target === 'acx' ? 'Create ACX package' : target === 'podcast' ? 'Create podcast package' : 'Create InAudio package'}
       </button>
 
       {result && (

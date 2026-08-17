@@ -586,3 +586,155 @@ code, .monospace, [style*="monospace"] {
     pointer-events: auto;
   }
 }
+
+
+/* ── Bookx redesign: calm studio palette ── */
+[data-theme="light"] {
+  --bg-deep: #f4f7fb;
+  --bg-base: #ffffff;
+  --bg-surface: #ffffff;
+  --bg-elevated: #eef3f8;
+  --bg-hover: #e9f0f7;
+  --bg-active: #dce8f3;
+  --border-subtle: rgba(33, 55, 78, 0.08);
+  --border-default: rgba(33, 55, 78, 0.13);
+  --border-strong: rgba(33, 55, 78, 0.20);
+  --border-accent: rgba(39, 104, 164, 0.28);
+  --text-primary: #162b3d;
+  --text-secondary: #526579;
+  --text-tertiary: #7890a4;
+  --text-muted: #9cadbb;
+  --accent: #287bb5;
+  --accent-hover: #1e6799;
+  --accent-subtle: rgba(40, 123, 181, 0.10);
+  --accent-glow: rgba(40, 123, 181, 0.16);
+  --accent-gradient: linear-gradient(135deg, #287bb5 0%, #3c9b9b 100%);
+  --success: #17845b;
+  --success-subtle: rgba(23, 132, 91, 0.10);
+  --purple: #7358b8;
+  --purple-subtle: rgba(115, 88, 184, 0.10);
+  --glass-bg: rgba(255, 255, 255, 0.88);
+  --glass-border: rgba(33, 55, 78, 0.10);
+  --shadow-sm: 0 2px 7px rgba(31, 64, 92, 0.05);
+  --shadow-md: 0 10px 26px rgba(31, 64, 92, 0.08);
+  --shadow-lg: 0 18px 44px rgba(31, 64, 92, 0.11);
+}
+
+.app-content {
+  background:
+    radial-gradient(circle at 88% 4%, rgba(91, 181, 173, 0.10), transparent 26rem),
+    radial-gradient(circle at 5% 0%, rgba(40, 123, 181, 0.07), transparent 24rem),
+    var(--bg-deep);
+}
+
+.page-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.page-heading h1,
+.page-heading h2 {
+  color: var(--text-primary);
+}
+
+.page-heading p {
+  color: var(--text-tertiary);
+}
+
+.simple-card {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--border-subtle);
+  border-radius: 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.simple-card:hover {
+  border-color: var(--border-accent);
+  box-shadow: var(--shadow-md);
+}
+
+@media (max-width: 900px) {
+  .page-heading { flex-direction: column; }
+}
+
+@media (max-width: 760px) {
+  body { overflow: auto; }
+  #root { min-height: 100vh; height: auto; }
+  .app-content { overflow: visible !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+[data-theme="light"] .card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(52, 88, 116, 0.18);
+}
+
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(52, 88, 116, 0.30);
+}
+
+[data-theme="light"] input[type="range"] {
+  background: rgba(52, 88, 116, 0.12);
+}
+
+[data-theme="light"] input[type="range"]::-webkit-slider-thumb,
+[data-theme="light"] input[type="range"]::-moz-range-thumb {
+  background: var(--accent);
+}
+
+[data-theme="dark"] .app-content {
+  background: var(--bg-deep);
+}
+
+@media (max-width: 980px) {
+  .top-nav-links { display: none !important; }
+  .top-nav-menu { display: flex !important; }
+}
+
+.top-nav-menu { display: none; }
+
+@media (max-width: 620px) {
+  .dashboard-page { padding: 22px 16px !important; }
+  .dashboard-actions { width: 100%; }
+  .dashboard-actions button { flex: 1; justify-content: center; }
+}
+
+@media (max-width: 520px) {
+  .project-grid { grid-template-columns: 1fr !important; }
+}
+
+@media (max-width: 760px) {
+  .editor-layout { flex-direction: column !important; }
+  .editor-sidebar { width: 100% !important; max-height: none !important; position: static !important; }
+  .editor-nav-list { display: grid !important; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .editor-main { min-height: 70vh !important; }
+}
+
+@media (max-width: 420px) {
+  .editor-nav-list { grid-template-columns: 1fr; }
+}
+
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: 3px solid rgba(40, 123, 181, 0.24);
+  outline-offset: 2px;
+}
+
+button:not(:disabled):hover { transform: translateY(-1px); }
+button:not(:disabled):active { transform: translateY(0) scale(0.985); }
+
+/* Avoid applying decorative motion to native media controls. */
+audio, video, canvas { transition: none !important; }

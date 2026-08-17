@@ -33,10 +33,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
   const authenticated = useAppStore((s) => s.authenticated);
   const setAuthenticated = useAppStore((s) => s.setAuthenticated);
   const [checking, setChecking] = useState(true);
+  const previewMode = (import.meta as ImportMeta & { env?: { VITE_PREVIEW_MODE?: string } }).env?.VITE_PREVIEW_MODE === 'true';
 
   useEffect(() => {
     const verifyAuth = async () => {
-      if (!authenticated) {
+      if (previewMode || !authenticated) {
         setChecking(false);
         return;
       }
@@ -50,7 +51,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
       }
     };
     verifyAuth();
-  }, [authenticated, setAuthenticated]);
+  }, [authenticated, previewMode, setAuthenticated]);
+
+  if (previewMode) {
+    return <>{children}</>;
+  }
 
   if (checking) {
     return (
@@ -72,7 +77,7 @@ function AppLayout() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
       {!isBookEditor && <TopNav />}
-      <div style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
+      <div className="app-content" style={{ flex: 1, overflow: 'auto', minHeight: 0 }}>
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/library" element={<LibraryPage />} />

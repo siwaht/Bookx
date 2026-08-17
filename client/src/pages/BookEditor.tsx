@@ -35,17 +35,17 @@ interface Section {
  * so the two can be reordered independently.
  */
 const SECTIONS: Section[] = [
-  { key: 'text', to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', group: 'Content', end: true },
-  { key: 'cast', to: 'cast', icon: Users, label: 'Cast', podcastLabel: 'Cast', group: 'Content' },
-  { key: 'pronunciation', to: 'pronunciation', icon: BookOpen, label: 'Pronunciation', podcastLabel: 'Pronunciation', group: 'Content' },
+  { key: 'text', to: '', icon: FileText, label: 'Write', podcastLabel: 'Script', group: '1 · Content', end: true },
+  { key: 'cast', to: 'cast', icon: Users, label: 'Choose voices', podcastLabel: 'Choose voices', group: '1 · Content' },
+  { key: 'pronunciation', to: 'pronunciation', icon: BookOpen, label: 'Pronunciation', podcastLabel: 'Pronunciation', group: '1 · Content' },
 
-  { key: 'sound', to: 'studio', icon: Music, label: 'Music & effects', podcastLabel: 'Music & effects', group: 'Audio' },
-  { key: 'generate', to: 'generation', icon: Zap, label: 'Generate speech', podcastLabel: 'Generate speech', group: 'Audio' },
-  { key: 'enhance', to: 'boost', icon: Sparkles, label: 'Auto sound design', podcastLabel: 'Auto sound design', group: 'Audio' },
+  { key: 'sound', to: 'studio', icon: Music, label: 'Add sound', podcastLabel: 'Add sound', group: '2 · Audio' },
+  { key: 'generate', to: 'generation', icon: Zap, label: 'Generate', podcastLabel: 'Generate', group: '2 · Audio' },
+  { key: 'enhance', to: 'boost', icon: Sparkles, label: 'Polish sound', podcastLabel: 'Polish sound', group: '2 · Audio' },
 
-  { key: 'timeline', to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', group: 'Assemble' },
-  { key: 'review', to: 'qc', icon: CheckCircle, label: 'Listen & check', podcastLabel: 'Listen & check', group: 'Assemble' },
-  { key: 'export', to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', group: 'Assemble' },
+  { key: 'timeline', to: 'timeline', icon: LayoutDashboard, label: 'Arrange', podcastLabel: 'Arrange', group: '3 · Finish' },
+  { key: 'review', to: 'qc', icon: CheckCircle, label: 'Review audio', podcastLabel: 'Review audio', group: '3 · Finish' },
+  { key: 'export', to: 'export', icon: Download, label: 'Publish & export', podcastLabel: 'Publish & export', group: '3 · Finish' },
 ];
 
 export function BookEditor() {
@@ -101,10 +101,11 @@ export function BookEditor() {
   );
 
   const isPodcast = book.project_type === 'podcast';
+  const completedSections = Object.values(status).filter(Boolean).length;
 
   return (
-    <div style={S.layout}>
-      <nav style={S.sidebar} aria-label="Project sections">
+    <div className="editor-layout" style={S.layout}>
+      <nav className="editor-sidebar" style={S.sidebar} aria-label="Project workflow">
         <button onClick={() => navigate('/')} style={S.backBtn}>
           <ArrowLeft size={icon.sm} />
           <span>All projects</span>
@@ -120,6 +121,8 @@ export function BookEditor() {
           </span>
           <h2 style={S.bookTitle}>{book.title}</h2>
           {book.author && <p style={S.bookAuthor}>{book.author}</p>}
+          <p style={S.bookHint}>Move from content to finish. You can revisit any step at any time.</p>
+          <div style={S.progressSummary}><span style={S.progressTrack}><span style={{ ...S.progressFill, width: `${Math.round((completedSections / SECTIONS.length) * 100)}%` }} /></span><span>{completedSections}/{SECTIONS.length} ready</span></div>
           {book.library_book_id && (
             <button onClick={() => navigate('/library')} style={S.libraryLink}>
               <BookMarked size={icon.xs} /> From library
@@ -127,7 +130,7 @@ export function BookEditor() {
           )}
         </div>
 
-        <div style={S.navList}>
+          <div className="editor-nav-list" style={S.navList}>
           {SECTIONS.map((item, idx) => {
             const isFirstOfGroup = idx === 0 || SECTIONS[idx - 1].group !== item.group;
             const done = !!status[item.key];
@@ -184,7 +187,7 @@ export function BookEditor() {
           </button>
         </div>
       </nav>
-      <main style={S.main}>
+      <main className="editor-main" style={S.main}>
         <Outlet />
       </main>
     </div>
@@ -199,7 +202,7 @@ const S: Record<string, React.CSSProperties> = {
   },
   layout: { display: 'flex', minHeight: '100vh', background: 'var(--bg-deep)' },
   sidebar: {
-    width: 262, background: 'var(--bg-base)', padding: '12px 0',
+    width: 248, background: 'var(--bg-base)', padding: '12px 0',
     display: 'flex', flexDirection: 'column',
     borderRight: '1px solid var(--border-subtle)', flexShrink: 0,
     overflow: 'hidden',
@@ -221,6 +224,10 @@ const S: Record<string, React.CSSProperties> = {
   },
   bookTitle: { fontSize: text.title, fontWeight: weight.semibold, color: 'var(--text-primary)', lineHeight: 1.3, letterSpacing: '-0.02em' },
   bookAuthor: { fontSize: text.label, color: 'var(--text-tertiary)' },
+  bookHint: { fontSize: text.meta, color: 'var(--text-tertiary)', lineHeight: 1.5, marginTop: 2 },
+  progressSummary: { display: 'flex', alignItems: 'center', gap: 8, color: 'var(--text-tertiary)', fontSize: text.micro, marginTop: 4 },
+  progressTrack: { flex: 1, height: 5, borderRadius: 20, background: 'var(--bg-elevated)', overflow: 'hidden' },
+  progressFill: { display: 'block', height: '100%', borderRadius: 20, background: 'var(--accent-gradient)' },
   libraryLink: {
     display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none',
     color: 'var(--purple)', cursor: 'pointer', fontSize: text.meta,

@@ -201,26 +201,26 @@ export function GenerationPage() {
     <div style={S.container}>
       {/* Header */}
       <div style={S.header}>
-        <h1 style={S.title}><Zap size={20} /> Audio Generation</h1>
-        <p style={S.subtitle}>Generate TTS audio for your entire book, selected chapters, or regenerate specific sections.</p>
+        <h1 style={S.title}><Zap size={20} /> Generate narration</h1>
+        <p style={S.subtitle}>Create narration for the whole audiobook, selected chapters, or only the sections you want to refine.</p>
       </div>
 
       {/* Stats cards */}
       <div style={S.cards}>
         <div style={S.card}>
-          <div style={S.cardLabel}>Total Segments</div>
+          <div style={S.cardLabel}>Total paragraphs</div>
           <div style={S.cardValue}>{totals.total_segments}</div>
         </div>
         <div style={{ ...S.card, borderColor: 'rgba(74,222,128,0.3)' }}>
-          <div style={S.cardLabel}>With Audio</div>
+          <div style={S.cardLabel}>Audio ready</div>
           <div style={{ ...S.cardValue, color: '#4ade80' }}>{totals.with_audio}</div>
         </div>
         <div style={{ ...S.card, borderColor: 'rgba(251,191,36,0.3)' }}>
-          <div style={S.cardLabel}>Missing Audio</div>
+          <div style={S.cardLabel}>Needs audio</div>
           <div style={{ ...S.cardValue, color: '#fbbf24' }}>{totals.missing_audio}</div>
         </div>
         <div style={{ ...S.card, borderColor: 'rgba(91,141,239,0.3)' }}>
-          <div style={S.cardLabel}>Ready to Generate</div>
+          <div style={S.cardLabel}>Ready to create</div>
           <div style={{ ...S.cardValue, color: '#5b8def' }}>{totals.ready_to_generate}</div>
         </div>
       </div>
@@ -322,7 +322,7 @@ export function GenerationPage() {
             }}
           >
             {generating && !isRunning ? <Loader size={14} className="spin" /> : <Zap size={14} />}
-            {regenerate ? 'Regenerate Entire Book' : 'Generate Entire Book'}
+            {regenerate ? 'Regenerate full audiobook' : 'Generate full audiobook'}
           </button>
 
           <button
@@ -426,7 +426,7 @@ export function GenerationPage() {
       {/* Recent jobs */}
       {jobs.length > 0 && (
         <div style={S.historySection}>
-          <h2 style={S.sectionTitle}><Clock size={14} /> Recent Jobs</h2>
+          <h2 style={S.sectionTitle}><Clock size={14} /> Generation history</h2>
           <div style={S.jobList}>
             {jobs.filter(j => j.id !== activeJob?.id).slice(0, 5).map((j: any) => (
               <div key={j.id} style={S.historyRow}>
