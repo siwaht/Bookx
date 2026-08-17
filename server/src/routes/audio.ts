@@ -5,8 +5,10 @@ import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
 import { getStorageProvider } from '../storage/index.js';
+import { estimateMp3DurationMs } from '../utils.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
+const IS_PROD = process.env.NODE_ENV === 'production';
 
 export function audioRouter(db: SqlJsDatabase): Router {
   const router = Router();
@@ -39,7 +41,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
         fs.createReadStream(filePath).pipe(res);
       }
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to stream audio' });
+      res.status(500).json({ error: 'Failed to stream audio', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -48,7 +50,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const assets = queryAll(db, 'SELECT * FROM audio_assets WHERE book_id = ? ORDER BY created_at DESC', [req.params.bookId]);
       res.json(assets);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to list audio assets' });
+      res.status(500).json({ error: 'Failed to list audio assets', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -60,7 +62,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
         [req.params.bookId]);
       res.json(assets);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to list audio library' });
+      res.status(500).json({ error: 'Failed to list audio library', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -89,7 +91,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
         fs.createReadStream(asset.file_path).pipe(res);
       }
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to download audio' });
+      res.status(500).json({ error: 'Failed to download audio', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -109,7 +111,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const updated = queryOne(db, 'SELECT * FROM audio_assets WHERE id = ?', [req.params.assetId]);
       res.json(updated);
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to update audio asset' });
+      res.status(500).json({ error: 'Failed to update audio asset', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -131,7 +133,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       run(db, 'DELETE FROM audio_assets WHERE id = ?', [req.params.assetId]);
       res.status(204).send();
     } catch (err: any) {
-      res.status(500).json({ error: 'Failed to delete audio asset' });
+      res.status(500).json({ error: 'Failed to delete audio asset', ...(IS_PROD ? {} : { detail: err.message }) });
     }
   });
 
@@ -238,7 +240,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId, chapterId });
 
       const fileSizeBytes = filePart.data.length;
-      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+      const estimatedDurationMs = ext === '.mp3' ? estimateMp3DurationMs(fileSizeBytes) : null;
 
       // Create audio asset
       run(db,
@@ -352,7 +354,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId, segmentId });
 
       const fileSizeBytes = filePart.data.length;
-      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+      const estimatedDurationMs = ext === '.mp3' ? estimateMp3DurationMs(fileSizeBytes) : null;
 
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
@@ -411,7 +413,6 @@ export function audioRouter(db: SqlJsDatabase): Router {
       }
 
       const assetId = uuid();
-      const filePath = path.join(DATA_DIR, 'audio', `${assetId}${ext}`);
 
       // Use storage provider
       const storage = getStorageProvider();
@@ -420,7 +421,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
 
       // Estimate duration from file size (rough: 192kbps mp3 = 24000 bytes/sec)
       const fileSizeBytes = filePart.data.length;
-      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+      const estimatedDurationMs = ext === '.mp3' ? estimateMp3DurationMs(fileSizeBytes) : null;
 
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes) VALUES (?, ?, 'imported', ?, ?, ?)`,

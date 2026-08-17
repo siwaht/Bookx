@@ -73,6 +73,33 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
   router.put('/:id', (req: Request, res: Response) => {
     try {
       const { title, raw_text, cleaned_text, sort_order } = req.body;
+
+      // Input validation
+      if (title !== undefined) {
+        if (typeof title !== 'string' || title.length === 0 || title.length > 500) {
+          res.status(400).json({ error: 'Title must be a string between 1 and 500 characters' });
+          return;
+        }
+      }
+      if (raw_text !== undefined) {
+        if (typeof raw_text !== 'string' || raw_text.length > 500000) {
+          res.status(400).json({ error: 'raw_text must be a string under 500000 characters' });
+          return;
+        }
+      }
+      if (cleaned_text !== undefined && cleaned_text !== null) {
+        if (typeof cleaned_text !== 'string' || cleaned_text.length > 500000) {
+          res.status(400).json({ error: 'cleaned_text must be a string under 500000 characters' });
+          return;
+        }
+      }
+      if (sort_order !== undefined) {
+        if (typeof sort_order !== 'number' || !Number.isInteger(sort_order) || sort_order < 0) {
+          res.status(400).json({ error: 'sort_order must be a non-negative integer' });
+          return;
+        }
+      }
+
       const cleanedTextVal = req.body.hasOwnProperty('cleaned_text') ? cleaned_text : undefined;
       const updates: string[] = [];
       const values: any[] = [];
@@ -123,7 +150,7 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
       const textAfter = text.slice(split_at).trimStart();
 
       // Update original chapter with first half
-      withTransaction(db, () => {
+      const result = withTransaction(db, () => {
         run(db, `UPDATE chapters SET raw_text = ?, cleaned_text = NULL, updated_at = datetime('now') WHERE id = ?`,
           [textBefore, chapter.id]);
 
@@ -141,8 +168,9 @@ export function chaptersRouter(db: SqlJsDatabase): Router {
 
         const original = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [chapter.id]);
         const newChapter = queryOne(db, 'SELECT * FROM chapters WHERE id = ?', [newId]);
-        res.json({ original, new_chapter: newChapter });
+        return { original, new_chapter: newChapter };
       });
+      res.json(result);
     } catch (err: any) { res.status(500).json({ error: err.message }); }
   });
 

@@ -7,7 +7,9 @@ import { queryAll, queryOne, run } from '../db/helpers.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
+import { applyPronunciationRules } from '../utils/pronunciation.js';
 import { z } from 'zod/v4';
+import { estimateMp3DurationMs } from '../utils.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -142,43 +144,6 @@ export function segmentsRouter(db: SqlJsDatabase): Router {
 }
 
 
-/**
- * Apply pronunciation rules from the book to the given text.
- * Character-specific rules take priority, then global rules.
- * Longer words are replaced first to avoid partial matches.
- */
-function applyPronunciationRules(db: SqlJsDatabase, text: string, chapterId: string, characterId: string | null): string {
-  const chapter = queryOne(db, 'SELECT book_id FROM chapters WHERE id = ?', [chapterId]);
-  if (!chapter) return text;
-
-  let rules;
-  if (characterId) {
-    rules = queryAll(db,
-      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND (character_id = ? OR character_id IS NULL) ORDER BY length(word) DESC',
-      [chapter.book_id, characterId]);
-  } else {
-    rules = queryAll(db,
-      'SELECT * FROM pronunciation_rules WHERE book_id = ? AND character_id IS NULL ORDER BY length(word) DESC',
-      [chapter.book_id]);
-  }
-
-  if (!rules || rules.length === 0) return text;
-
-  let result = text;
-  for (const rule of rules as any[]) {
-    const escaped = rule.word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`\\b${escaped}\\b`, 'gi');
-    if (rule.alias) {
-      result = result.replace(regex, rule.alias);
-    } else if (rule.phoneme) {
-      result = result.replace(regex, `<phoneme alphabet="ipa" ph="${rule.phoneme}">${rule.word}</phoneme>`);
-    }
-  }
-
-  return result;
-}
-
-
 // Shared generation logic
 async function generateSegmentAudio(
   db: SqlJsDatabase,
@@ -249,7 +214,7 @@ async function generateSegmentAudio(
     });
     buffer = result.buffer;
     requestId = result.requestId;
-    durationMs = Math.round((buffer.length / 24000) * 1000);
+    durationMs = estimateMp3DurationMs(buffer.length);
   } else {
     // Use the provider abstraction for other providers
     const result = await generateWithProvider(ttsProvider, {
@@ -264,7 +229,7 @@ async function generateSegmentAudio(
     });
     buffer = result.buffer;
     requestId = result.requestId;
-    durationMs = result.durationMs || Math.round((buffer.length / 24000) * 1000);
+    durationMs = result.durationMs || estimateMp3DurationMs(buffer.length);
   }
 
   const assetId = uuid();

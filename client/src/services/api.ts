@@ -48,7 +48,13 @@ export function getToken(): string | null {
   return authToken;
 }
 
-async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+interface RequestOptions extends RequestInit {
+  /** Override the default 60s abort timeout. Use for calls known to run long
+   * (LLM-based script/manuscript analysis on large books, etc). */
+  timeoutMs?: number;
+}
+
+async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(options.headers as Record<string, string> || {}),
@@ -76,10 +82,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   return doRequest<T>(path, { ...options, headers });
 }
 
-async function doRequest<T>(path: string, options: RequestInit): Promise<T> {
-  // Add a timeout to prevent hanging requests
+async function doRequest<T>(path: string, options: RequestOptions): Promise<T> {
+  // Add a timeout to prevent hanging requests. Long-running analysis calls
+  // (AI script/manuscript parsing on big books) pass a longer timeoutMs.
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 60_000); // 60s timeout
+  const timeoutId = setTimeout(() => controller.abort(), options.timeoutMs ?? 60_000);
 
   try {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -160,9 +167,37 @@ export const characters = {
   autoAssignByName: (bookId: string) =>
     request<{ assigned: number; total_segments: number; matches: { segment_id: string; character_name: string }[] }>(
       `/books/${bookId}/characters/auto-assign-by-name`, { method: 'POST' }),
-  autoAssignVoices: (bookId: string, voices?: Array<{ voiceId: string; name: string; provider: string; gender?: string; category?: string; labels?: Record<string, string> }>) =>
-    request<{ assigned: number; total_characters: number; unassigned_remaining: number; assignments: Array<{ character_id: string; character_name: string; voice_id: string; voice_name: string; provider: string }> }>(
-      `/books/${bookId}/characters/auto-assign-voices`, { method: 'POST', body: JSON.stringify(voices ? { voices } : {}) }),
+  /**
+   * Auto-cast voices. Pass `characterIds` to limit it to a subset (used by the
+   * per-character "auto-pick"); omit it to cast everyone still without a voice.
+   * `source: 'memory'` means the voice was recalled from a saved cast or series
+   * rather than freshly chosen.
+   */
+  autoAssignVoices: (
+    bookId: string,
+    opts?: {
+      characterIds?: string[];
+      voices?: Array<{ voiceId: string; name: string; provider: string; gender?: string; category?: string; labels?: Record<string, string> }>;
+    }
+  ) =>
+    request<{
+      assigned: number;
+      total_characters: number;
+      unassigned_remaining: number;
+      remembered_from_casting?: number;
+      message?: string;
+      assignments: Array<{
+        character_id: string; character_name: string;
+        voice_id: string; voice_name: string; provider: string;
+        source?: 'memory' | 'fresh'; casting_name?: string;
+      }>;
+    }>(`/books/${bookId}/characters/auto-assign-voices`, {
+      method: 'POST',
+      body: JSON.stringify({
+        ...(opts?.characterIds?.length ? { character_ids: opts.characterIds } : {}),
+        ...(opts?.voices ? { voices: opts.voices } : {}),
+      }),
+    }),
 };
 
 // ── Segments ──
@@ -269,6 +304,8 @@ export const timeline = {
 };
 
 // ── Import ──
+// No explicit Content-Type header needed: the browser sets it automatically
+// with the correct multipart boundary when using FormData as the body.
 export const importManuscript = async (bookId: string, file: File) => {
   const formData = new FormData();
   formData.append('file', file);
@@ -302,12 +339,27 @@ export const exportBook = {
   status: (bookId: string, exportId: string) =>
     request<any>(`/books/${bookId}/export/${exportId}`),
   downloadUrl: (bookId: string, exportId: string) =>
-    `${API_BASE}/books/${bookId}/export/${exportId}/download`,
+    withToken(`${API_BASE}/books/${bookId}/export/${exportId}/download`),
 };
 
+// ── Authenticated media URLs ──
+/**
+ * Appends the auth token as a query parameter.
+ *
+ * Use this for any URL consumed directly by the browser — `<audio src>`,
+ * `new Audio(url)`, `<img src>`, `<a download>`. Those requests are issued by
+ * the browser itself and cannot carry an `Authorization` header, so without the
+ * token they come back 401. The server only honours `?token=` on GET.
+ */
+function withToken(path: string): string {
+  if (!authToken) return path;
+  const separator = path.includes('?') ? '&' : '?';
+  return `${path}${separator}token=${encodeURIComponent(authToken)}`;
+}
+
 // ── Audio ──
-export const audioUrl = (assetId: string) => `${API_BASE}/audio/${assetId}`;
-export const audioDownloadUrl = (assetId: string) => `${API_BASE}/audio/${assetId}/download`;
+export const audioUrl = (assetId: string) => withToken(`${API_BASE}/audio/${assetId}`);
+export const audioDownloadUrl = (assetId: string) => withToken(`${API_BASE}/audio/${assetId}/download`);
 
 export const audioAssets = {
   listLibrary: (bookId: string) => request<any[]>(`/audio/book/${bookId}/library`),
@@ -339,7 +391,14 @@ export const settings = {
 export const saveProject = () => request<{ ok: boolean; saved_at: string }>('/save', { method: 'POST' });
 
 // ── Download Project ──
-export const downloadProjectUrl = (bookId: string) => `${API_BASE}/books/${bookId}/download-project`;
+export const downloadProjectUrl = (bookId: string) => withToken(`${API_BASE}/books/${bookId}/download-project`);
+
+// LLM-based analysis on a full manuscript/script can legitimately take a
+// couple of minutes on long books — give these calls a longer leash than the
+// default 60s so they aren't aborted client-side while the server is still
+// working (the server's own LLM call timeouts are the real ceiling; see
+// ai-parse.ts / background-boost.ts / podcast.ts for those).
+const LONG_ANALYSIS_TIMEOUT_MS = 5 * 60 * 1000;
 
 // ── AI Parse ──
 export const aiParse = {
@@ -349,7 +408,7 @@ export const aiParse = {
       sfx_cues: number; music_cues: number;
       provider: string; format: string; project_type: string;
     }>(`/books/${bookId}/ai-parse`, {
-      method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }),
+      method: 'POST', body: JSON.stringify({ chapter_ids: chapterIds }), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS,
     }),
   suggestV3Tags: (bookId: string, text: string) =>
     request<{ tagged_text: string; tags_used: string[]; provider: string }>(
@@ -484,7 +543,7 @@ export const generation = {
       totals: { total_segments: number; with_audio: number; ready_to_generate: number; missing_audio: number };
       jobs: any[];
     }>(`/books/${bookId}/generation/status`),
-  start: (bookId: string, data: { scope: 'book' | 'chapter' | 'segment'; scope_ids?: string[]; regenerate?: boolean }) =>
+  start: (bookId: string, data: { scope: 'book' | 'chapter' | 'segment'; scope_ids?: string[]; regenerate?: boolean; auto_populate?: boolean }) =>
     request<{ job_id: string; total_segments: number }>(`/books/${bookId}/generation/start`, {
       method: 'POST', body: JSON.stringify(data),
     }),
@@ -495,16 +554,73 @@ export const generation = {
       cached_segments: number; failed_segments: number; skipped_segments: number;
       errors: string[]; current_chapter: string | null; current_segment: string | null;
       started_at: string | null; completed_at: string | null;
+      clips_created?: number; markers_created?: number; total_duration_ms?: number;
     }>(`/books/${bookId}/generation/jobs/${jobId}`),
   cancel: (bookId: string, jobId: string) =>
     request<{ ok: boolean }>(`/books/${bookId}/generation/cancel/${jobId}`, { method: 'POST' }),
+  resume: (bookId: string, jobId: string) =>
+    request<{ job_id: string; resumed: boolean; remaining_segments: number }>(`/books/${bookId}/generation/resume/${jobId}`, { method: 'POST' }),
+};
+
+// ── Series (multi-volume voice memory) ──
+export const series = {
+  list: () => request<any[]>('/series'),
+  get: (id: string) => request<any>(`/series/${id}`),
+  create: (data: { name: string; author?: string; description?: string }) =>
+    request<any>('/series', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: any) => request<any>(`/series/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/series/${id}`, { method: 'DELETE' }),
+  attachBook: (seriesId: string, bookId: string, volume?: number) =>
+    request<any>(`/series/${seriesId}/books/${bookId}`, { method: 'POST', body: JSON.stringify({ volume }) }),
+  detachBook: (seriesId: string, bookId: string) =>
+    request<void>(`/series/${seriesId}/books/${bookId}`, { method: 'DELETE' }),
+};
+
+// ── Voice Castings (reusable, persistent character casts) ──
+export const castings = {
+  list: (projectType?: 'audiobook' | 'podcast') =>
+    request<any[]>(`/castings${projectType ? `?project_type=${projectType}` : ''}`),
+  get: (id: string) => request<any>(`/castings/${id}`),
+  create: (data: { name: string; description?: string; project_type?: 'audiobook' | 'podcast' | 'any' }) =>
+    request<any>('/castings', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string, data: any) => request<any>(`/castings/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
+  delete: (id: string) => request<void>(`/castings/${id}`, { method: 'DELETE' }),
+  addMember: (castingId: string, member: any) =>
+    request<any>(`/castings/${castingId}/members`, { method: 'POST', body: JSON.stringify(member) }),
+  updateMember: (castingId: string, memberId: string, data: any) =>
+    request<any>(`/castings/${castingId}/members/${memberId}`, { method: 'PUT', body: JSON.stringify(data) }),
+  deleteMember: (castingId: string, memberId: string) =>
+    request<void>(`/castings/${castingId}/members/${memberId}`, { method: 'DELETE' }),
+  syncFromBook: (bookId: string, opts?: { castingId?: string; name?: string; description?: string; projectType?: string }) =>
+    request<any>('/castings/sync-from-book', {
+      method: 'POST',
+      body: JSON.stringify({ book_id: bookId, casting_id: opts?.castingId, name: opts?.name, description: opts?.description, project_type: opts?.projectType }),
+    }),
+  applyToBook: (castingId: string, bookId: string) =>
+    request<{ updated: number; created: number; characters: any[] }>(`/castings/${castingId}/apply-to-book/${bookId}`, { method: 'POST' }),
+};
+
+// ── Podcast (script -> auto-cast episode) ──
+export const podcast = {
+  parseScript: (scriptText: string) =>
+    request<{ method: 'tags' | 'llm'; speakers: string[]; segments: Array<{ speaker: string; text: string }>; provider?: string }>(
+      '/podcast/parse-script', { method: 'POST', body: JSON.stringify({ script_text: scriptText }), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS }),
+  createEpisode: (data: {
+    title: string; author?: string; script_text?: string;
+    segments?: Array<{ speaker: string; text: string }>; speakers?: string[];
+    casting_id?: string; save_as_casting_name?: string;
+  }) => request<{
+    book: any; chapter_id: string; characters: any[]; segments_created: number;
+    speakers_detected: string[]; casting_applied: { updated: number; created: number } | null;
+    voice_assignments: any[]; saved_casting_id?: string;
+  }>('/podcast/episodes', { method: 'POST', body: JSON.stringify(data), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS }),
 };
 
 // ── Background Boost ──
 export const backgroundBoost = {
   analyze: (bookId: string, opts?: { chapterIds?: string[]; provider?: string; model?: string }) =>
     request<any>(`/books/${bookId}/background-boost/analyze`, {
-      method: 'POST', body: JSON.stringify({ chapter_ids: opts?.chapterIds, provider: opts?.provider, model: opts?.model }),
+      method: 'POST', body: JSON.stringify({ chapter_ids: opts?.chapterIds, provider: opts?.provider, model: opts?.model }), timeoutMs: LONG_ANALYSIS_TIMEOUT_MS,
     }),
   models: (bookId: string, refresh?: boolean) =>
     request<{ providers: Record<string, { models: { id: string; label: string }[]; hasKey: boolean }>; currentProvider: string | null; currentModel: string | null }>(`/books/${bookId}/background-boost/models${refresh ? '?refresh=true' : ''}`),
@@ -563,10 +679,10 @@ export const library = {
     if (!res.ok) { const err = await res.json().catch(() => ({ error: 'Upload failed' })); throw new Error(err.error); }
     return res.json();
   },
-  coverUrl: (id: string) => `${API_BASE}/library/${id}/cover`,
-  readUrl: (id: string) => `${API_BASE}/library/${id}/read`,
-  readHtmlUrl: (id: string) => `${API_BASE}/library/${id}/read-html`,
-  downloadUrl: (id: string) => `${API_BASE}/library/${id}/download`,
+  coverUrl: (id: string) => withToken(`${API_BASE}/library/${id}/cover`),
+  readUrl: (id: string) => withToken(`${API_BASE}/library/${id}/read`),
+  readHtmlUrl: (id: string) => withToken(`${API_BASE}/library/${id}/read-html`),
+  downloadUrl: (id: string) => withToken(`${API_BASE}/library/${id}/download`),
   uploadFormat: async (id: string, file: File, format?: string) => {
     const formData = new FormData();
     formData.append('file', file);

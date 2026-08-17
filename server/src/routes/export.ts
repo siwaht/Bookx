@@ -73,7 +73,14 @@ export function exportRouter(db: SqlJsDatabase): Router {
   router.get('/:exportId/download', (req: Request, res: Response) => {
     const exp = queryOne(db, 'SELECT * FROM exports WHERE id = ?', [req.params.exportId]);
     if (!exp?.output_path || !fs.existsSync(exp.output_path)) { res.status(404).json({ error: 'Export file not found' }); return; }
-    res.download(exp.output_path);
+    // Prevent directory traversal
+    const resolved = path.resolve(exp.output_path);
+    const dataDir = path.resolve(DATA_DIR);
+    if (!resolved.startsWith(dataDir + path.sep) && resolved !== dataDir) {
+      res.status(404).json({ error: 'Export file not found' });
+      return;
+    }
+    res.download(resolved);
   });
 
   return router;

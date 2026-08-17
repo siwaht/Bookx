@@ -3,18 +3,49 @@ import { useParams, useNavigate, NavLink, Outlet, useLocation } from 'react-rout
 import { books, elevenlabs, chapters as chaptersApi, characters as charsApi, timeline as timelineApi } from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import type { Book } from '../types';
-import { ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Download, Music, Settings, BookOpen, BarChart3, Headphones, BookMarked, ChevronRight, Sparkles, Zap } from 'lucide-react';
+import {
+  ArrowLeft, FileText, Users, LayoutDashboard, CheckCircle, Check, Download,
+  Music, Settings, BookOpen, BarChart3, BookMarked, Sparkles, Zap,
+  type LucideIcon,
+} from 'lucide-react';
+import { icon, text, weight } from '../components/ui/tokens';
 
-const STEPS = [
-  { to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', step: 1, hint: 'Import & split text', podcastHint: 'Import script / text', end: true },
-  { to: 'voices', icon: Users, label: 'Voices', podcastLabel: 'Voices', step: 2, hint: 'Assign character voices', podcastHint: 'Assign speaker voices' },
-  { to: 'pronunciation', icon: BookOpen, label: 'Pronunciation', podcastLabel: 'Pronunciation', step: 3, hint: 'Fix word pronunciations', podcastHint: 'Fix word pronunciations' },
-  { to: 'studio', icon: Music, label: 'Audio Studio', podcastLabel: 'Audio Studio', step: 4, hint: 'SFX, music & v3 tags', podcastHint: 'SFX, music & effects' },
-  { to: 'generation', icon: Zap, label: 'Generate', podcastLabel: 'Generate', step: 5, hint: 'Generate audiobook audio', podcastHint: 'Generate all audio' },
-  { to: 'boost', icon: Sparkles, label: 'BG Boost', podcastLabel: 'BG Boost', step: 6, hint: 'AI cinematic sound design', podcastHint: 'AI background audio' },
-  { to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', step: 7, hint: 'Arrange & preview audio', podcastHint: 'Arrange & preview' },
-  { to: 'qc', icon: CheckCircle, label: 'QC & Render', podcastLabel: 'QC & Render', step: 8, hint: 'Render & check quality', podcastHint: 'Render & check quality' },
-  { to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', step: 9, hint: 'Download ACX package', podcastHint: 'Download final audio' },
+interface Section {
+  /** Stable id used to key the status map. */
+  key: string;
+  /** Route path relative to /book/:bookId. */
+  to: string;
+  icon: LucideIcon;
+  label: string;
+  podcastLabel: string;
+  /** Visual chunking only; carries no ordering meaning. */
+  group: string;
+  /** Exact-match routing, needed for the index route. */
+  end?: boolean;
+}
+
+/**
+ * Every section of the editor, reachable at any time.
+ *
+ * These are areas of the project, not ordered steps: you can add music before
+ * importing text, or listen back before casting. `done` marks are informational
+ * only — nothing here gates anything else.
+ *
+ * `group` is purely for visual chunking. The `key` is what `status` is keyed by,
+ * so the two can be reordered independently.
+ */
+const SECTIONS: Section[] = [
+  { key: 'text', to: '', icon: FileText, label: 'Manuscript', podcastLabel: 'Script', group: 'Content', end: true },
+  { key: 'cast', to: 'cast', icon: Users, label: 'Cast', podcastLabel: 'Cast', group: 'Content' },
+  { key: 'pronunciation', to: 'pronunciation', icon: BookOpen, label: 'Pronunciation', podcastLabel: 'Pronunciation', group: 'Content' },
+
+  { key: 'sound', to: 'studio', icon: Music, label: 'Music & effects', podcastLabel: 'Music & effects', group: 'Audio' },
+  { key: 'generate', to: 'generation', icon: Zap, label: 'Generate speech', podcastLabel: 'Generate speech', group: 'Audio' },
+  { key: 'enhance', to: 'boost', icon: Sparkles, label: 'Auto sound design', podcastLabel: 'Auto sound design', group: 'Audio' },
+
+  { key: 'timeline', to: 'timeline', icon: LayoutDashboard, label: 'Timeline', podcastLabel: 'Timeline', group: 'Assemble' },
+  { key: 'review', to: 'qc', icon: CheckCircle, label: 'Listen & check', podcastLabel: 'Listen & check', group: 'Assemble' },
+  { key: 'export', to: 'export', icon: Download, label: 'Export', podcastLabel: 'Export', group: 'Assemble' },
 ];
 
 export function BookEditor() {
@@ -23,245 +54,202 @@ export function BookEditor() {
   const location = useLocation();
   const { setCurrentBook, setCapabilities } = useAppStore();
   const [book, setBook] = useState<Book | null>(null);
-  const [stepsDone, setStepsDone] = useState<boolean[]>(new Array(9).fill(false));
+  const [status, setStatus] = useState<Record<string, boolean>>({});
 
-  const checkWorkflowProgress = useCallback(async () => {
+  /**
+   * Informational only. Tells you what already has content so you can pick up
+   * where you left off; it never disables or hides a section.
+   */
+  const refreshStatus = useCallback(async () => {
     if (!bookId) return;
-    const done = new Array(9).fill(false);
     try {
-      const chapterList = await chaptersApi.list(bookId);
-      done[0] = chapterList.length > 0;
-      const charList = await charsApi.list(bookId);
-      done[1] = charList.some((c: any) => c.voice_id);
-      done[2] = done[1];
-      done[3] = done[1];
+      const [chapterList, charList, trackList] = await Promise.all([
+        chaptersApi.list(bookId).catch(() => []),
+        charsApi.list(bookId).catch(() => []),
+        timelineApi.tracks(bookId).catch(() => []),
+      ]);
+      const hasVoices = charList.some((c: any) => c.voice_id);
       const hasAudio = chapterList.some((ch: any) => ch.stats?.with_audio > 0);
-      done[4] = hasAudio;
-      done[5] = done[1];
-      const trackList = await timelineApi.tracks(bookId);
       const hasClips = trackList.some((t: any) => t.clips && t.clips.length > 0);
-      done[6] = hasClips;
-      done[7] = hasAudio && hasClips;
-    } catch { /* progress indicators are non-critical */ }
-    setStepsDone(done);
+      const soundTracks = trackList.filter((t: any) => t.type === 'music' || t.type === 'sfx');
+
+      setStatus({
+        text: chapterList.length > 0,
+        cast: hasVoices,
+        sound: soundTracks.some((t: any) => t.clips && t.clips.length > 0),
+        generate: hasAudio,
+        timeline: hasClips,
+        review: hasAudio && hasClips,
+      });
+    } catch {
+      /* status badges are non-critical */
+    }
   }, [bookId]);
 
   useEffect(() => {
     if (!bookId) return;
     books.get(bookId).then((b) => { setBook(b); setCurrentBook(b); }).catch(console.error);
     elevenlabs.capabilities().then(setCapabilities).catch(() => {});
-    checkWorkflowProgress();
+    refreshStatus();
     return () => setCurrentBook(null);
-  }, [bookId, checkWorkflowProgress]);
+  }, [bookId, refreshStatus]);
 
-  useEffect(() => { checkWorkflowProgress(); }, [location.pathname, checkWorkflowProgress]);
+  useEffect(() => { refreshStatus(); }, [location.pathname, refreshStatus]);
 
   if (!book) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: 'var(--bg-deep)', color: 'var(--text-tertiary)' }}>
-      Loading project...
-    </div>
+    <div style={S.loading}>Loading project…</div>
   );
 
   const isPodcast = book.project_type === 'podcast';
-  const completedCount = stepsDone.filter(Boolean).length;
 
   return (
-    <div style={styles.layout}>
-      <nav style={styles.sidebar} aria-label="Project editor navigation">
-        <button onClick={() => navigate('/')} style={styles.backBtn}>
-          <ArrowLeft size={13} />
-          <span>Projects</span>
-          <ChevronRight size={10} style={{ opacity: 0.3 }} />
-          <span style={{ color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {book.title.length > 16 ? book.title.slice(0, 16) + '…' : book.title}
-          </span>
+    <div style={S.layout}>
+      <nav style={S.sidebar} aria-label="Project sections">
+        <button onClick={() => navigate('/')} style={S.backBtn}>
+          <ArrowLeft size={icon.sm} />
+          <span>All projects</span>
         </button>
 
-        <div style={styles.bookInfo}>
+        <div style={S.bookInfo}>
           <span style={{
-            ...styles.typeBadge,
+            ...S.typeBadge,
             background: isPodcast ? 'var(--purple-subtle)' : 'var(--accent-subtle)',
             color: isPodcast ? 'var(--purple)' : 'var(--accent)',
           }}>
-            {isPodcast ? '🎙️ Podcast' : '📖 Audiobook'}
+            {isPodcast ? 'Podcast' : 'Audiobook'}
           </span>
-          <h2 style={styles.bookTitle}>{book.title}</h2>
-          {book.author && <p style={styles.bookAuthor}>{book.author}</p>}
+          <h2 style={S.bookTitle}>{book.title}</h2>
+          {book.author && <p style={S.bookAuthor}>{book.author}</p>}
           {book.library_book_id && (
-            <button onClick={() => navigate('/library')} style={{ display: 'flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', color: 'var(--purple)', cursor: 'pointer', fontSize: 10, padding: '2px 0', fontWeight: 500 }}>
-              <BookMarked size={10} /> From Library
+            <button onClick={() => navigate('/library')} style={S.libraryLink}>
+              <BookMarked size={icon.xs} /> From library
             </button>
           )}
         </div>
 
-        {/* Progress bar */}
-        <div style={styles.progressSection}>
-          <div style={styles.progressHeader}>
-            <span style={styles.stepsLabel}>WORKFLOW</span>
-            <span style={styles.stepProgress}>{completedCount}/{STEPS.length}</span>
-          </div>
-          <div style={styles.progressTrack}>
-            <div style={{ ...styles.progressFill, width: `${(completedCount / STEPS.length) * 100}%` }} />
-          </div>
+        <div style={S.navList}>
+          {SECTIONS.map((item, idx) => {
+            const isFirstOfGroup = idx === 0 || SECTIONS[idx - 1].group !== item.group;
+            const done = !!status[item.key];
+            return (
+              <React.Fragment key={item.key}>
+                {isFirstOfGroup && <div style={S.groupLabel}>{item.group}</div>}
+                <NavLink
+                  to={item.to}
+                  end={item.end}
+                  style={({ isActive }) => ({
+                    ...S.navItem,
+                    ...(isActive ? S.navItemActive : {}),
+                  })}
+                >
+                  {({ isActive }: { isActive: boolean }) => (
+                    <>
+                      <item.icon
+                        size={icon.md}
+                        style={{ flexShrink: 0, opacity: isActive ? 1 : 0.62 }}
+                      />
+                      <span style={{
+                        ...S.navLabel,
+                        color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                        fontWeight: isActive ? weight.semibold : weight.medium,
+                      }}>
+                        {isPodcast ? item.podcastLabel : item.label}
+                      </span>
+                      {done && (
+                        <Check
+                          size={icon.xs}
+                          strokeWidth={3}
+                          color="var(--success)"
+                          style={{ flexShrink: 0 }}
+                          aria-label="has content"
+                        />
+                      )}
+                    </>
+                  )}
+                </NavLink>
+              </React.Fragment>
+            );
+          })}
         </div>
 
-        <div style={styles.navList} className="stagger-children">
-          {STEPS.map((item, idx) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.end}
-              style={({ isActive }) => ({
-                ...styles.navItem,
-                ...(isActive ? styles.navItemActive : {}),
-              })}
-            >
-              {({ isActive }: { isActive: boolean }) => (
-                <>
-                  <div style={{
-                    ...styles.stepNumber,
-                    ...(isActive ? styles.stepNumberActive : {}),
-                    ...(!isActive && stepsDone[idx] ? styles.stepNumberDone : {}),
-                  }}>
-                    {!isActive && stepsDone[idx] ? '✓' : item.step}
-                  </div>
-                  <div style={styles.navContent}>
-                    <div style={{
-                      ...styles.navLabel,
-                      color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
-                    }}>
-                      <item.icon size={13} style={{ opacity: isActive ? 1 : 0.5 }} />
-                      {isPodcast ? item.podcastLabel : item.label}
-                    </div>
-                    <div style={{
-                      ...styles.navHint,
-                      color: isActive ? 'var(--text-tertiary)' : 'var(--text-muted)',
-                    }}>
-                      {isPodcast ? item.podcastHint : item.hint}
-                    </div>
-                  </div>
-                </>
-              )}
-            </NavLink>
-          ))}
-        </div>
-
-        <div style={styles.sidebarFooter}>
+        <div style={S.sidebarFooter}>
           <NavLink to={`/book/${bookId}/usage`} style={({ isActive }) => ({
-            ...styles.footerLink,
+            ...S.footerLink,
             ...(isActive ? { color: 'var(--accent)', borderColor: 'var(--border-accent)', background: 'var(--accent-subtle)' } : {}),
           })}>
-            <BarChart3 size={13} /> Usage & Costs
+            <BarChart3 size={icon.sm} /> Usage &amp; costs
           </NavLink>
-          <button onClick={() => navigate('/settings')} style={styles.footerLink}>
-            <Settings size={13} /> Settings
+          <button onClick={() => navigate('/settings')} style={S.footerLink}>
+            <Settings size={icon.sm} /> Settings
           </button>
-          <div style={styles.tipBox}>
-            <span style={{ fontSize: 13, flexShrink: 0 }}>💡</span>
-            <span style={styles.tipText}>
-              {isPodcast
-                ? 'Import your script, AI assigns speakers, then generate audio'
-                : 'Follow steps 1→9 to produce your audiobook'}
-            </span>
-          </div>
         </div>
       </nav>
-      <main style={styles.main}>
+      <main style={S.main}>
         <Outlet />
       </main>
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
+const S: Record<string, React.CSSProperties> = {
+  loading: {
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    minHeight: '100vh', background: 'var(--bg-deep)',
+    color: 'var(--text-tertiary)', fontSize: text.body,
+  },
   layout: { display: 'flex', minHeight: '100vh', background: 'var(--bg-deep)' },
   sidebar: {
-    width: 252, background: 'var(--bg-base)', padding: '10px 0',
+    width: 262, background: 'var(--bg-base)', padding: '12px 0',
     display: 'flex', flexDirection: 'column',
     borderRight: '1px solid var(--border-subtle)', flexShrink: 0,
     overflow: 'hidden',
   },
   backBtn: {
-    display: 'flex', alignItems: 'center', gap: 5, background: 'none',
-    border: 'none', color: 'var(--text-muted)', cursor: 'pointer',
-    padding: '8px 16px', fontSize: 11, fontWeight: 500,
-    whiteSpace: 'nowrap', overflow: 'hidden',
+    display: 'flex', alignItems: 'center', gap: 8, background: 'none',
+    border: 'none', color: 'var(--text-tertiary)', cursor: 'pointer',
+    padding: '10px 18px', fontSize: text.label, fontWeight: weight.medium,
+    whiteSpace: 'nowrap',
   },
   bookInfo: {
-    padding: '10px 16px 14px', borderBottom: '1px solid var(--border-subtle)',
-    display: 'flex', flexDirection: 'column', gap: 6,
+    padding: '10px 18px 18px', borderBottom: '1px solid var(--border-subtle)',
+    display: 'flex', flexDirection: 'column', gap: 8,
   },
   typeBadge: {
-    fontSize: 10, padding: '2px 8px', borderRadius: 20, fontWeight: 600,
-    alignSelf: 'flex-start',
+    fontSize: text.micro, padding: '3px 10px', borderRadius: 20,
+    fontWeight: weight.semibold, alignSelf: 'flex-start',
+    textTransform: 'uppercase', letterSpacing: 0.5,
   },
-  bookTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.3 },
-  bookAuthor: { fontSize: 11, color: 'var(--text-tertiary)' },
-  progressSection: {
-    padding: '12px 16px 8px',
+  bookTitle: { fontSize: text.title, fontWeight: weight.semibold, color: 'var(--text-primary)', lineHeight: 1.3, letterSpacing: '-0.02em' },
+  bookAuthor: { fontSize: text.label, color: 'var(--text-tertiary)' },
+  libraryLink: {
+    display: 'flex', alignItems: 'center', gap: 5, background: 'none', border: 'none',
+    color: 'var(--purple)', cursor: 'pointer', fontSize: text.meta,
+    padding: 0, fontWeight: weight.medium, alignSelf: 'flex-start',
   },
-  progressHeader: {
-    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-    marginBottom: 6,
+
+  navList: { display: 'flex', flexDirection: 'column', gap: 2, flex: 1, padding: '8px 10px', overflowY: 'auto' },
+  groupLabel: {
+    fontSize: text.micro, color: 'var(--text-muted)', letterSpacing: 1,
+    fontWeight: weight.semibold, textTransform: 'uppercase', padding: '14px 10px 5px',
   },
-  stepsLabel: {
-    fontSize: 9, color: 'var(--text-muted)', letterSpacing: 1.5, fontWeight: 600,
-  },
-  stepProgress: {
-    fontSize: 10, color: 'var(--text-tertiary)', letterSpacing: 0, fontWeight: 500,
-    background: 'var(--bg-elevated)', padding: '1px 7px', borderRadius: 10,
-  },
-  progressTrack: {
-    height: 3, background: 'var(--bg-elevated)', borderRadius: 2, overflow: 'hidden',
-  },
-  progressFill: {
-    height: '100%', borderRadius: 2,
-    background: 'var(--accent-gradient)',
-    transition: 'width 0.6s cubic-bezier(0.16, 1, 0.3, 1)',
-  },
-  navList: { display: 'flex', flexDirection: 'column', gap: 1, flex: 1, padding: '4px 8px', overflowY: 'auto' },
   navItem: {
-    display: 'flex', alignItems: 'center', gap: 10, padding: '7px 10px',
-    textDecoration: 'none', cursor: 'pointer', borderRadius: 'var(--radius-md)',
-    transition: 'all 150ms ease', position: 'relative',
+    display: 'flex', alignItems: 'center', gap: 12, padding: '11px 12px',
+    minHeight: 44, textDecoration: 'none', cursor: 'pointer',
+    borderRadius: 'var(--radius-md)', color: 'var(--text-secondary)',
   },
-  navItemActive: {
-    background: 'var(--accent-subtle)',
-  },
-  stepNumber: {
-    width: 22, height: 22, borderRadius: '50%', background: 'var(--bg-elevated)',
-    color: 'var(--text-muted)', fontSize: 10, fontWeight: 600,
-    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-    border: '1.5px solid var(--border-subtle)',
-  },
-  stepNumberActive: {
-    background: 'var(--accent)', color: '#fff',
-    border: '1.5px solid var(--accent)',
-    boxShadow: '0 0 10px var(--accent-glow)',
-  },
-  stepNumberDone: {
-    background: 'var(--success-subtle)', color: 'var(--success)',
-    border: '1.5px solid rgba(74, 222, 128, 0.25)',
-    fontSize: 9,
-  },
-  navContent: { display: 'flex', flexDirection: 'column', gap: 1, minWidth: 0 },
-  navLabel: { display: 'flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500 },
-  navHint: { fontSize: 10, color: 'var(--text-muted)', lineHeight: 1.3 },
+  navItemActive: { background: 'var(--accent-subtle)' },
+  navLabel: { flex: 1, minWidth: 0, fontSize: text.body },
+
   sidebarFooter: {
-    padding: '10px 12px', borderTop: '1px solid var(--border-subtle)',
-    display: 'flex', flexDirection: 'column' as const, gap: 6,
+    padding: '12px 14px', borderTop: '1px solid var(--border-subtle)',
+    display: 'flex', flexDirection: 'column', gap: 7,
   },
   footerLink: {
-    display: 'flex', alignItems: 'center', gap: 6, background: 'none',
+    display: 'flex', alignItems: 'center', gap: 9, background: 'none',
     border: '1px solid var(--border-subtle)', color: 'var(--text-tertiary)',
-    cursor: 'pointer', padding: '7px 10px', borderRadius: 'var(--radius-sm)',
-    fontSize: 11, width: '100%', fontWeight: 500, textDecoration: 'none',
+    cursor: 'pointer', padding: '10px 12px', borderRadius: 'var(--radius-md)',
+    fontSize: text.label, width: '100%', fontWeight: weight.medium, textDecoration: 'none',
+    minHeight: 40,
   },
-  tipBox: {
-    display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 10px',
-    background: 'var(--accent-subtle)', borderRadius: 'var(--radius-md)',
-    border: '1px solid rgba(91,141,239,0.08)',
-  },
-  tipText: { fontSize: 10, color: 'var(--accent)', lineHeight: 1.4 },
   main: { flex: 1, overflow: 'auto', background: 'var(--bg-deep)' },
 };

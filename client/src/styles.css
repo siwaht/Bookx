@@ -129,11 +129,18 @@ body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.55;
   overflow: hidden;
   height: 100vh;
   scrollbar-width: thin;
   scrollbar-color: rgba(255,255,255,0.12) transparent;
+}
+
+/* Baseline control sizing. Inline styles still win where a component sets its
+   own numbers, but this lifts every control that doesn't. */
+button, input, select, textarea {
+  font-size: 14px;
 }
 
 #root {
@@ -144,8 +151,8 @@ body {
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 10px;
+  height: 10px;
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -183,7 +190,7 @@ body {
 /* ── Audio player styling ── */
 audio {
   border-radius: var(--radius-sm);
-  height: 32px;
+  height: 38px;
   filter: invert(1) hue-rotate(180deg) brightness(0.85) contrast(0.9);
 }
 [data-theme="light"] audio {
@@ -454,19 +461,24 @@ select {
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
-  height: 4px;
-  background: rgba(255,255,255,0.06);
-  border-radius: 4px;
+  /* The global reset sets box-sizing: border-box, so `height` must cover the
+     padding too: 20 - (7 * 2) leaves a 6px visible track, and the padding
+     widens the grabbable area without thickening the line. */
+  height: 20px;
+  padding: 7px 0;
+  background: rgba(255,255,255,0.08);
+  background-clip: content-box;
+  border-radius: 6px;
   outline: none;
 }
 [data-theme="light"] input[type="range"] {
-  background: rgba(0,0,0,0.08);
+  background: rgba(0,0,0,0.10);
 }
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--accent);
   cursor: pointer;
@@ -474,17 +486,26 @@ input[type="range"]::-webkit-slider-thumb {
   transition: transform 150ms ease, box-shadow 150ms ease;
 }
 input[type="range"]::-webkit-slider-thumb:hover {
-  transform: scale(1.25);
+  transform: scale(1.15);
   box-shadow: 0 2px 10px rgba(91, 141, 239, 0.4);
 }
 input[type="range"]::-moz-range-thumb {
-  width: 14px;
-  height: 14px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   background: var(--accent);
   cursor: pointer;
   border: none;
   box-shadow: 0 1px 6px rgba(91, 141, 239, 0.3);
+}
+
+/* Checkboxes were near-invisible at the browser default size. */
+input[type="checkbox"] {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
 }
 
 /* ── Checkbox refinement ── */
@@ -541,4 +562,27 @@ code, .monospace, [style*="monospace"] {
   pointer-events: none;
   z-index: 9999;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── Cast list rows ── */
+/* The delete control stays hidden until the row is hovered or focused, so a long
+   cast list reads as names and voices rather than a column of icons. */
+.cast-row .cast-row-delete {
+  opacity: 0;
+  pointer-events: none;
+}
+.cast-row:hover .cast-row-delete,
+.cast-row:focus-within .cast-row-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+.cast-row:hover {
+  background: var(--bg-hover);
+}
+/* Keyboard users need it too, even without hover. */
+@media (hover: none) {
+  .cast-row .cast-row-delete {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }

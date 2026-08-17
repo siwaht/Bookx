@@ -10,7 +10,7 @@ import { ToastContainer } from './components/Toast';
 import { Dashboard } from './pages/Dashboard';
 import { BookEditor } from './pages/BookEditor';
 import { ManuscriptPage } from './pages/ManuscriptPage';
-import { VoicesPage } from './pages/VoicesPage';
+import { CastPage } from './pages/CastPage';
 import { TimelinePage } from './pages/TimelinePage';
 import { QCPage } from './pages/QCPage';
 import { ExportPage } from './pages/ExportPage';
@@ -22,6 +22,8 @@ import { LibraryPage } from './pages/LibraryPage';
 import { BackgroundBoostPage } from './pages/BackgroundBoostPage';
 import { GenerationPage } from './pages/GenerationPage';
 import { BookAgentPage } from './pages/BookAgentPage';
+import { PodcastStudioPage } from './pages/PodcastStudioPage';
+import { SeriesPage } from './pages/SeriesPage';
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: 1, staleTime: 30000 } },
@@ -58,7 +60,8 @@ function AuthGate({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!authenticated) return <LoginPage />;
+  // TEMPORARY: login screen disabled for development.
+  // Re-enable by restoring: if (!authenticated) return <LoginPage />;
   return <>{children}</>;
 }
 
@@ -73,11 +76,15 @@ function AppLayout() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/library" element={<LibraryPage />} />
+          <Route path="/series" element={<SeriesPage />} />
+          <Route path="/podcast-studio" element={<PodcastStudioPage />} />
           <Route path="/book-agent" element={<BookAgentPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/book/:bookId" element={<BookEditor />}>
             <Route index element={<ManuscriptPage />} />
-            <Route path="voices" element={<VoicesPage />} />
+            <Route path="cast" element={<CastPage />} />
+            {/* Old path, kept so existing links/bookmarks still land somewhere sensible. */}
+            <Route path="voices" element={<Navigate to="../cast" replace />} />
             <Route path="pronunciation" element={<PronunciationPage />} />
             <Route path="studio" element={<AudioStudioPage />} />
             <Route path="generation" element={<GenerationPage />} />

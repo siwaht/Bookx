@@ -1,4 +1,5 @@
-import 'dotenv/config';
+// Must stay first: it populates process.env before any module reads it.
+import { loadedEnvFiles } from './load-env.js';
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
@@ -6,8 +7,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getDb, initializeSchema, saveDb, startAutoSave, stopAutoSave } from './db/schema.js';
 import { queryAll, queryOne } from './db/helpers.js';
-import { authMiddleware, loginHandler } from './middleware/auth.js';
-import { apiRateLimit, ttsRateLimit } from './middleware/rate-limit.js';
+import { authMiddleware, loginHandler, clearAuthIntervals } from './middleware/auth.js';
+import { apiRateLimit, ttsRateLimit, clearRateLimitIntervals } from './middleware/rate-limit.js';
 import { createBackup, listBackups, restoreBackup } from './db/backup.js';
 import { runCleanup, getDiskUsage } from './db/cleanup.js';
 import { booksRouter } from './routes/books.js';
@@ -26,8 +27,11 @@ import { pronunciationRouter } from './routes/pronunciation.js';
 import { ttsProvidersRouter } from './routes/tts-providers.js';
 import { libraryRouter } from './routes/library.js';
 import { backgroundBoostRouter } from './routes/background-boost.js';
-import { generationRouter } from './routes/generation.js';
+import { generationRouter, reconcileInterruptedGenerationJobs } from './routes/generation.js';
 import { bookAgentRouter } from './routes/book-agent.js';
+import { seriesRouter } from './routes/series.js';
+import { castingsRouter } from './routes/castings.js';
+import { podcastRouter } from './routes/podcast.js';
 import { initStorageFromSettings } from './storage/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -82,6 +86,23 @@ async function main() {
   initializeSchema(db);
   log.info('Database initialized', { path: DATA_DIR });
 
+  // Long-running generation jobs checkpoint their progress to the DB, but the
+  // in-memory worker doesn't survive a restart. Mark anything still 'running'
+  // from a previous process lifetime as 'interrupted' so it's visibly
+  // resumable (POST /generation/resume/:jobId) instead of silently stuck.
+  const interruptedCount = reconcileInterruptedGenerationJobs(db);
+  if (interruptedCount > 0) {
+    log.warn('Marked generation jobs as interrupted after restart', { count: interruptedCount });
+  }
+
+  // Make env resolution visible: a missing .env used to look identical to an
+  // empty one, which made "I set the key but it isn't working" hard to diagnose.
+  if (loadedEnvFiles.length > 0) {
+    log.info('Loaded environment files', { files: loadedEnvFiles });
+  } else {
+    log.warn('No .env file found. Relying on real environment variables only.');
+  }
+
   // Load API keys from settings into env — DB values always take priority
   const storedElKey = getSetting(db, 'elevenlabs_api_key');
   if (storedElKey) {
@@ -92,7 +113,7 @@ async function main() {
   } else {
     log.warn('No ElevenLabs API key found. Set it in Settings page.');
   }
-  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key', 'deepgram']) {
+  for (const provider of ['openai', 'mistral', 'gemini', 'google_tts', 'aws_access_key', 'aws_secret_access_key', 'deepgram', 'cartesia']) {
     const settingKey = `${provider}_api_key`;
     const envKey = provider === 'google_tts' ? 'GOOGLE_TTS_API_KEY'
       : provider === 'aws_access_key' ? 'AWS_ACCESS_KEY_ID'
@@ -159,6 +180,8 @@ async function main() {
     res.setHeader('X-DNS-Prefetch-Control', 'off');
     if (IS_PROD) {
       res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+      // connect-src 'self' is correct here: the frontend uses relative /api paths
+      // and is served from the same origin, so no external connections are needed.
       res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; connect-src 'self'");
     }
     next();
@@ -206,7 +229,7 @@ async function main() {
   app.use('/api/books', booksRouter(db));
   app.use('/api/books/:bookId/chapters', chaptersRouter(db));
   app.use('/api/books/:bookId/characters', charactersRouter(db));
-  app.use('/api/chapters/:chapterId/segments', segmentsRouter(db));
+  app.use('/api/chapters/:chapterId/segments', ttsRateLimit, segmentsRouter(db));
   app.use('/api/elevenlabs', elevenlabsRouter(db));
   app.use('/api/books/:bookId', timelineRouter(db));
   app.use('/api/books/:bookId/import', importRouter(db));
@@ -219,8 +242,12 @@ async function main() {
   app.use('/api/tts', ttsProvidersRouter(db));
   app.use('/api/library', libraryRouter(db));
   app.use('/api/books/:bookId/background-boost', backgroundBoostRouter(db));
-  app.use('/api/books/:bookId/generation', generationRouter(db));
+  // Apply stricter TTS rate limit to generation endpoints (expensive API calls)
+  app.use('/api/books/:bookId/generation', ttsRateLimit, generationRouter(db));
   app.use('/api/book-agent', bookAgentRouter(db));
+  app.use('/api/series', seriesRouter(db));
+  app.use('/api/castings', castingsRouter(db));
+  app.use('/api/podcast', podcastRouter(db));
 
   // ── Save DB explicitly ──
   app.post('/api/save', (_req, res) => {
@@ -306,6 +333,11 @@ async function main() {
     }
   });
 
+  // ── 404 handler for API routes (must come before the SPA catch-all) ──
+  app.use('/api/*', (_req, res) => {
+    res.status(404).json({ error: 'Endpoint not found' });
+  });
+
   // ── Serve static client in production ──
   const clientDist = path.join(__dirname, '../../client/dist');
   if (fs.existsSync(clientDist)) {
@@ -320,11 +352,6 @@ async function main() {
   } else {
     log.warn('Client dist not found, static serving disabled', { path: clientDist });
   }
-
-  // ── 404 handler for API routes ──
-  app.use('/api/*', (_req, res) => {
-    res.status(404).json({ error: 'Endpoint not found' });
-  });
 
   // ── Global error handler ──
   app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
@@ -345,13 +372,13 @@ async function main() {
 
   // ── Scheduled tasks ──
   // Auto-backup every 6 hours
-  setInterval(() => {
+  const autoBackupInterval = setInterval(() => {
     const result = createBackup();
     if (result) log.info('Auto-backup created', { size: result.size });
   }, 6 * 60 * 60 * 1000);
 
   // Auto-cleanup old exports/renders weekly (every 7 days)
-  setInterval(() => {
+  const autoCleanupInterval = setInterval(() => {
     const result = runCleanup(db, 30);
     if (result.bytes_freed > 0) {
       log.info('Auto-cleanup completed', result);
@@ -362,6 +389,10 @@ async function main() {
   // ── Graceful shutdown ──
   const shutdown = (signal: string) => {
     log.info(`${signal} received, shutting down gracefully...`);
+    clearInterval(autoBackupInterval);
+    clearInterval(autoCleanupInterval);
+    clearAuthIntervals();
+    clearRateLimitIntervals();
     stopAutoSave();
     saveDb();
     server.close(() => {

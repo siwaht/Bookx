@@ -28,6 +28,9 @@ interface JobInfo {
   current_segment: string | null;
   started_at: string | null;
   completed_at: string | null;
+  clips_created?: number;
+  markers_created?: number;
+  total_duration_ms?: number;
 }
 
 export function GenerationPage() {
@@ -41,6 +44,8 @@ export function GenerationPage() {
   const [regenerate, setRegenerate] = useState(false);
   const [expandedErrors, setExpandedErrors] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [autoPopulate, setAutoPopulate] = useState(true);
+  const [resuming, setResuming] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const loadStatus = useCallback(async () => {
@@ -53,6 +58,11 @@ export function GenerationPage() {
       const running = data.jobs.find((j: any) => j.status === 'running');
       if (running) {
         pollJob(running.id);
+      } else {
+        const interrupted = data.jobs.find((j: any) => j.status === 'interrupted');
+        if (interrupted) {
+          setActiveJob({ ...interrupted, errors: JSON.parse(interrupted.errors || '[]'), scope_ids: interrupted.scope_ids ? JSON.parse(interrupted.scope_ids) : null });
+        }
       }
     } catch (err: any) {
       toast.error(`Failed to load status: ${err.message}`);
@@ -89,7 +99,7 @@ export function GenerationPage() {
     if (!bookId) return;
     setGenerating(true);
     try {
-      const { job_id } = await generation.start(bookId, { scope: 'book', regenerate });
+      const { job_id } = await generation.start(bookId, { scope: 'book', regenerate, auto_populate: autoPopulate });
       toast.success('Generation started for entire book');
       pollJob(job_id);
     } catch (err: any) {
@@ -110,6 +120,7 @@ export function GenerationPage() {
         scope: 'chapter',
         scope_ids: ids,
         regenerate,
+        auto_populate: autoPopulate,
       });
       const names = chapters
         .filter(c => selectedChapters.has(c.chapter_id))
@@ -131,6 +142,20 @@ export function GenerationPage() {
       await generation.cancel(bookId, activeJob.id);
       toast.success('Cancelling generation...');
     } catch (err: any) { toast.error(err.message); }
+  };
+
+  const handleResume = async () => {
+    if (!bookId || !activeJob) return;
+    setResuming(true);
+    try {
+      const { job_id, remaining_segments } = await generation.resume(bookId, activeJob.id);
+      toast.success(`Resuming generation — ${remaining_segments} segment${remaining_segments === 1 ? '' : 's'} remaining`);
+      pollJob(job_id);
+    } catch (err: any) {
+      toast.error(err.message);
+    } finally {
+      setResuming(false);
+    }
   };
 
   const toggleChapter = (id: string) => {
@@ -155,6 +180,7 @@ export function GenerationPage() {
   };
 
   const isRunning = activeJob?.status === 'running';
+  const isInterrupted = activeJob?.status === 'interrupted';
   const jobProgress = activeJob && activeJob.total_segments > 0
     ? ((activeJob.completed_segments + activeJob.cached_segments + activeJob.failed_segments + activeJob.skipped_segments) / activeJob.total_segments) * 100
     : 0;
@@ -214,12 +240,12 @@ export function GenerationPage() {
 
       {/* Active job panel */}
       {activeJob && (
-        <div style={{ ...S.jobPanel, borderColor: isRunning ? 'rgba(91,141,239,0.4)' : activeJob.status === 'completed' ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)' }}>
+        <div style={{ ...S.jobPanel, borderColor: isRunning ? 'rgba(91,141,239,0.4)' : isInterrupted ? 'rgba(251,191,36,0.4)' : activeJob.status === 'completed' ? 'rgba(74,222,128,0.4)' : 'rgba(239,68,68,0.4)' }}>
           <div style={S.jobHeader}>
             <div style={S.jobTitle}>
-              {isRunning ? <Loader size={14} className="spin" /> : activeJob.status === 'completed' ? <CheckCircle size={14} style={{ color: '#4ade80' }} /> : <XCircle size={14} style={{ color: '#ef4444' }} />}
+              {isRunning ? <Loader size={14} className="spin" /> : activeJob.status === 'completed' ? <CheckCircle size={14} style={{ color: '#4ade80' }} /> : <XCircle size={14} style={{ color: isInterrupted ? '#fbbf24' : '#ef4444' }} />}
               <span>Generation Job — {activeJob.scope === 'book' ? 'Entire Book' : activeJob.scope === 'chapter' ? 'Selected Chapters' : 'Selected Segments'}</span>
-              <span style={{ ...S.statusBadge, background: isRunning ? 'rgba(91,141,239,0.2)' : activeJob.status === 'completed' ? 'rgba(74,222,128,0.2)' : 'rgba(239,68,68,0.2)', color: isRunning ? '#5b8def' : activeJob.status === 'completed' ? '#4ade80' : '#ef4444' }}>
+              <span style={{ ...S.statusBadge, background: isRunning ? 'rgba(91,141,239,0.2)' : isInterrupted ? 'rgba(251,191,36,0.2)' : activeJob.status === 'completed' ? 'rgba(74,222,128,0.2)' : 'rgba(239,68,68,0.2)', color: isRunning ? '#5b8def' : isInterrupted ? '#fbbf24' : activeJob.status === 'completed' ? '#4ade80' : '#ef4444' }}>
                 {activeJob.status}
               </span>
             </div>
@@ -227,11 +253,21 @@ export function GenerationPage() {
               {isRunning && (
                 <button onClick={handleCancel} style={S.cancelBtn}><Square size={12} /> Cancel</button>
               )}
+              {isInterrupted && (
+                <button onClick={handleResume} disabled={resuming} style={S.secondaryBtn}>
+                  {resuming ? <Loader size={12} className="spin" /> : <Zap size={12} />} Resume
+                </button>
+              )}
               {!isRunning && (
                 <button onClick={() => setActiveJob(null)} style={S.ghostBtn}>Dismiss</button>
               )}
             </div>
           </div>
+          {isInterrupted && (
+            <p style={{ fontSize: 11, color: '#fbbf24', margin: '0 0 8px' }}>
+              This job was interrupted by a server restart. Progress up to this point is safe — click Resume to continue with the remaining segments.
+            </p>
+          )}
 
           <div style={S.progressTrack}>
             <div style={{ ...S.progressFill, width: `${jobProgress}%`, background: isRunning ? '#5b8def' : activeJob.status === 'completed' ? '#4ade80' : '#ef4444' }} />
@@ -244,6 +280,12 @@ export function GenerationPage() {
             <span>❌ {activeJob.failed_segments} failed</span>
             <span style={{ color: '#666' }}>of {activeJob.total_segments} total</span>
           </div>
+
+          {activeJob.status === 'completed' && !!activeJob.clips_created && (
+            <div style={S.currentWork}>
+              🎬 Auto-arranged {activeJob.clips_created} clip{activeJob.clips_created !== 1 ? 's' : ''} onto the timeline ({activeJob.markers_created} chapter marker{activeJob.markers_created !== 1 ? 's' : ''}).
+            </div>
+          )}
 
           {isRunning && activeJob.current_chapter && (
             <div style={S.currentWork}>
@@ -298,10 +340,16 @@ export function GenerationPage() {
           </button>
         </div>
 
-        <label style={S.checkboxLabel}>
-          <input type="checkbox" checked={regenerate} onChange={(e) => setRegenerate(e.target.checked)} />
-          Regenerate existing audio (overwrite)
-        </label>
+        <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap' as const }}>
+          <label style={S.checkboxLabel}>
+            <input type="checkbox" checked={regenerate} onChange={(e) => setRegenerate(e.target.checked)} />
+            Regenerate existing audio (overwrite)
+          </label>
+          <label style={S.checkboxLabel} title="When the job finishes, automatically arrange the generated audio onto the timeline (no manual populate step needed for long books)">
+            <input type="checkbox" checked={autoPopulate} onChange={(e) => setAutoPopulate(e.target.checked)} />
+            Auto-arrange on timeline when done
+          </label>
+        </div>
 
         {selectedChapters.size > 0 && (
           <div style={S.selectionInfo}>
