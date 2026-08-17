@@ -7,8 +7,8 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { getDb, initializeSchema, saveDb, startAutoSave, stopAutoSave } from './db/schema.js';
 import { queryAll, queryOne } from './db/helpers.js';
-import { authMiddleware, loginHandler } from './middleware/auth.js';
-import { apiRateLimit, ttsRateLimit } from './middleware/rate-limit.js';
+import { authMiddleware, loginHandler, clearAuthIntervals } from './middleware/auth.js';
+import { apiRateLimit, ttsRateLimit, clearRateLimitIntervals } from './middleware/rate-limit.js';
 import { createBackup, listBackups, restoreBackup } from './db/backup.js';
 import { runCleanup, getDiskUsage } from './db/cleanup.js';
 import { booksRouter } from './routes/books.js';
@@ -391,6 +391,8 @@ async function main() {
     log.info(`${signal} received, shutting down gracefully...`);
     clearInterval(autoBackupInterval);
     clearInterval(autoCleanupInterval);
+    clearAuthIntervals();
+    clearRateLimitIntervals();
     stopAutoSave();
     saveDb();
     server.close(() => {

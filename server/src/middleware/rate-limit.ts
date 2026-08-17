@@ -7,13 +7,17 @@ interface RateLimitEntry {
 
 const buckets = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries every 60s (runs for the process lifetime; intentional for a long-running server)
-setInterval(() => {
+// Clean up expired entries every 60s
+const rateLimitCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of buckets) {
     if (now > entry.resetAt) buckets.delete(key);
   }
 }, 60_000);
+
+export function clearRateLimitIntervals(): void {
+  clearInterval(rateLimitCleanupInterval);
+}
 
 function getClientIp(req: Request): string {
   return (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim()

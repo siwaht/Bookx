@@ -1,7 +1,7 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
-import { queryAll } from './helpers.js';
+import { queryAll, queryOne } from './helpers.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -625,6 +625,23 @@ export function initializeSchema(database: SqlJsDatabase): void {
     database.run("ALTER TABLE tracks ADD COLUMN ducking_enabled INTEGER DEFAULT 0");
   }
 
+  // Migration: rename old AWS setting keys to new names
+  const oldAwsKey = queryOne(database, "SELECT key, value FROM settings WHERE key = 'aws_access_key_api_key'");
+  if (oldAwsKey) {
+    const newExists = queryOne(database, "SELECT key FROM settings WHERE key = 'aws_access_key'");
+    if (!newExists) {
+      database.run("INSERT INTO settings (key, value) VALUES ('aws_access_key', ?)", [oldAwsKey.value]);
+    }
+    database.run("DELETE FROM settings WHERE key = 'aws_access_key_api_key'");
+  }
+  const oldAwsSecret = queryOne(database, "SELECT key, value FROM settings WHERE key = 'aws_secret_access_key_api_key'");
+  if (oldAwsSecret) {
+    const newExists = queryOne(database, "SELECT key FROM settings WHERE key = 'aws_secret_access_key'");
+    if (!newExists) {
+      database.run("INSERT INTO settings (key, value) VALUES ('aws_secret_access_key', ?)", [oldAwsSecret.value]);
+    }
+    database.run("DELETE FROM settings WHERE key = 'aws_secret_access_key_api_key'");
+  }
   // Migration: link books to a series (multi-volume voice memory) and to the
   // voice casting used to seed/persist character voices for that book.
   const bookCols4 = queryAll(database, "PRAGMA table_info(books)").map((c: any) => c.name);

@@ -75,13 +75,17 @@ function recordAttempt(ip: string): void {
   }
 }
 
-// Clean up old entries periodically (runs for the process lifetime; intentional for a long-running server)
-setInterval(() => {
+// Clean up old entries periodically
+const authCleanupInterval = setInterval(() => {
   const now = Date.now();
   for (const [ip, entry] of loginAttempts) {
     if (now - entry.lastAttempt > WINDOW_MS) loginAttempts.delete(ip);
   }
 }, 60_000);
+
+export function clearAuthIntervals(): void {
+  clearInterval(authCleanupInterval);
+}
 
 export function authMiddleware(req: Request, res: Response, next: NextFunction): void {
   // TEMPORARY: auth disabled (login screen removed). Re-enable by removing

@@ -5,6 +5,7 @@ import { v4 as uuid } from 'uuid';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
 import { getStorageProvider } from '../storage/index.js';
+import { estimateMp3DurationMs } from '../utils.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 const IS_PROD = process.env.NODE_ENV === 'production';
@@ -239,7 +240,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId, chapterId });
 
       const fileSizeBytes = filePart.data.length;
-      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+      const estimatedDurationMs = ext === '.mp3' ? estimateMp3DurationMs(fileSizeBytes) : null;
 
       // Create audio asset
       run(db,
@@ -353,7 +354,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
       const storedPath = await storage.write(storageKey, filePart.data, { originalName, bookId, segmentId });
 
       const fileSizeBytes = filePart.data.length;
-      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+      const estimatedDurationMs = ext === '.mp3' ? estimateMp3DurationMs(fileSizeBytes) : null;
 
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes, name)
@@ -420,7 +421,7 @@ export function audioRouter(db: SqlJsDatabase): Router {
 
       // Estimate duration from file size (rough: 192kbps mp3 = 24000 bytes/sec)
       const fileSizeBytes = filePart.data.length;
-      const estimatedDurationMs = ext === '.mp3' ? Math.round((fileSizeBytes / 24000) * 1000) : null;
+      const estimatedDurationMs = ext === '.mp3' ? estimateMp3DurationMs(fileSizeBytes) : null;
 
       run(db,
         `INSERT INTO audio_assets (id, book_id, type, file_path, duration_ms, file_size_bytes) VALUES (?, ?, 'imported', ?, ?, ?)`,
