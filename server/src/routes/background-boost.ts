@@ -4,8 +4,16 @@ import fs from 'fs';
 import path from 'path';
 import type { Database as SqlJsDatabase } from 'sql.js';
 import { queryAll, queryOne, run } from '../db/helpers.js';
+import { saveDb } from '../db/schema.js';
 import { getSetting } from './settings.js';
 import { generateSFX, generateMusic, computePromptHash } from '../elevenlabs/client.js';
+import { runWithConcurrency } from '../utils/concurrency.js';
+
+// SFX/ambience generation calls are network-bound and independent of each other,
+// so a long book with many scenes (dozens of SFX/ambience cues) processes several
+// at once instead of one-at-a-time. Music generation stays sequential below since
+// there's normally only one music cue per scene.
+const BOOST_CONCURRENCY = parseInt(process.env.BOOST_CONCURRENCY || '3', 10);
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -911,10 +919,11 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
           }
         }
 
-        // Generate ambience
+        // Generate ambience — cues within a scene are independent network calls,
+        // so run them with bounded concurrency instead of one at a time.
         if (doAmbience) {
           const ambienceList = JSON.parse(scene.ambience_json || '[]');
-          for (const amb of ambienceList) {
+          await runWithConcurrency(ambienceList, BOOST_CONCURRENCY, async (amb: any) => {
             try {
               const durSec = amb.duration_hint_seconds || Math.ceil(sceneDurationMs / 1000);
               const promptHash = computePromptHash({ prompt: amb.prompt, duration_seconds: durSec, type: 'boost_ambience' });
@@ -949,13 +958,13 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
             } catch (err: any) {
               results.errors.push(`Ambience "${amb.prompt?.slice(0, 30)}": ${err.message}`);
             }
-          }
+          });
         }
 
-        // Generate SFX
+        // Generate SFX — same bounded-concurrency treatment as ambience above.
         if (doSfx) {
           const sfxList = JSON.parse(scene.sfx_json || '[]');
-          for (const sfx of sfxList) {
+          await runWithConcurrency(sfxList, BOOST_CONCURRENCY, async (sfx: any) => {
             try {
               const durSec = sfx.duration_hint_seconds || 3;
               const promptHash = computePromptHash({ prompt: sfx.prompt, duration_seconds: durSec, type: 'boost_sfx' });
@@ -1008,11 +1017,15 @@ export function backgroundBoostRouter(db: SqlJsDatabase): Router {
             } catch (err: any) {
               results.errors.push(`SFX "${sfx.prompt?.slice(0, 30)}": ${err.message}`);
             }
-          }
+          });
         }
 
-        // Mark scene as generated
+        // Mark scene as generated, then flush: the SFX/music we just generated
+        // cost real API credits, so those audio_asset rows must not be lost to
+        // a crash before the next autosave (the files would be orphaned on disk
+        // and the user would pay to generate them again).
         run(db, "UPDATE background_boost_scenes SET status = 'generated' WHERE id = ?", [scene.id]);
+        saveDb();
 
         // Generate transition sting SFX if transition type is 'sting'
         if (scene.transition_to_next === 'sting') {

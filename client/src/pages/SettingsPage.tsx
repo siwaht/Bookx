@@ -19,6 +19,7 @@ const API_KEYS: ApiKeyConfig[] = [
   { key: 'aws_secret_access_key', label: 'AWS Secret Key', placeholder: 'wJal...', hint: 'Amazon Polly secret access key' },
   { key: 'aws_region', label: 'AWS Region', placeholder: 'us-east-1', hint: 'AWS region for Amazon Polly (default: us-east-1)' },
   { key: 'deepgram_api_key', label: 'Deepgram', placeholder: 'dg-...', hint: 'Deepgram Aura TTS voices and speech-to-text' },
+  { key: 'cartesia_api_key', label: 'Cartesia', placeholder: 'sk_car_...', hint: 'Cartesia Sonic TTS voices — often a cheaper/faster alternative to ElevenLabs' },
   { key: 'mistral_api_key', label: 'Mistral', placeholder: 'mist-...', hint: 'Mistral models for AI script parsing' },
   { key: 'gemini_api_key', label: 'Google Gemini', placeholder: 'AIza...', hint: 'Gemini models for AI script parsing' },
   { key: 'cloudflare_api_token', label: 'Cloudflare Workers AI Token', placeholder: 'cfut_...', hint: 'Cloudflare Workers AI API token for LLM inference' },

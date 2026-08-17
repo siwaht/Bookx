@@ -7,6 +7,7 @@ import { initStorageFromSettings } from '../storage/index.js';
 const ALLOWED_KEYS = [
   'elevenlabs_api_key',
   'deepgram_api_key',
+  'cartesia_api_key',
   'openai_api_key',
   'mistral_api_key',
   'gemini_api_key',
@@ -86,6 +87,7 @@ export function settingsRouter(db: SqlJsDatabase): Router {
       if (key === 'aws_secret_access_key' && value) process.env.AWS_SECRET_ACCESS_KEY = value;
       if (key === 'aws_region' && value) process.env.AWS_REGION = value;
       if (key === 'deepgram_api_key' && value) process.env.DEEPGRAM_API_KEY = value;
+      if (key === 'cartesia_api_key' && value) process.env.CARTESIA_API_KEY = value;
       if (key === 'cloudflare_api_token' && value) process.env.CLOUDFLARE_API_TOKEN = value;
       if (key === 'cloudflare_account_id' && value) process.env.CLOUDFLARE_ACCOUNT_ID = value;
       if (key === 'cloudflare_gateway_id' && value) process.env.CLOUDFLARE_GATEWAY_ID = value;

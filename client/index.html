@@ -10,15 +10,16 @@
     <title>Audio Producer</title>
     <style>
       *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-      body { background: #08090a; color: #e8e9ed; }
+      html, body { background: #08090a; color: #e8e9ed; }
+      html[data-theme="light"], html[data-theme="light"] body { background: #f5f6f8; color: #1a1b1e; }
     </style>
     <script>
+      /* Set the theme before first paint to avoid a flash of the wrong colours.
+         This runs in <head>, so document.body doesn't exist yet — the attribute
+         goes on <html> and the rule above colours both elements. */
       (function() {
-        var t = localStorage.getItem('theme');
-        if (t === 'light') {
+        if (localStorage.getItem('theme') === 'light') {
           document.documentElement.setAttribute('data-theme', 'light');
-          document.body.style.background = '#f5f6f8';
-          document.body.style.color = '#1a1b1e';
         }
       })();
     </script>

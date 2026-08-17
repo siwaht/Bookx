@@ -16,10 +16,58 @@ export interface Book {
   intro_asset_id: string | null;
   outro_asset_id: string | null;
   library_book_id: string | null;
+  series_id: string | null;
+  series_volume: number | null;
+  casting_id: string | null;
   created_at: string;
   updated_at: string;
   chapters?: Chapter[];
   characters?: Character[];
+}
+
+export interface Series {
+  id: string;
+  name: string;
+  author: string | null;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+  book_count?: number;
+  books?: Book[];
+  casting_id?: string;
+  cast?: VoiceCastingMember[];
+}
+
+export interface VoiceCasting {
+  id: string;
+  name: string;
+  description: string | null;
+  project_type: 'audiobook' | 'podcast' | 'any';
+  series_id: string | null;
+  is_series_default: number;
+  created_at: string;
+  updated_at: string;
+  member_count?: number;
+  voiced_count?: number;
+  members?: VoiceCastingMember[];
+  books?: Array<{ id: string; title: string; project_type: string }>;
+}
+
+export interface VoiceCastingMember {
+  id: string;
+  casting_id: string;
+  character_name: string;
+  normalized_name: string;
+  role: string;
+  voice_id: string | null;
+  voice_name: string | null;
+  tts_provider: TTSProviderName;
+  model_id: string;
+  stability: number;
+  similarity_boost: number;
+  style: number;
+  speed: number;
+  speaker_boost: number;
 }
 
 export interface Chapter {
@@ -37,13 +85,13 @@ export interface Chapter {
   };
 }
 
-export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon' | 'deepgram';
+export type TTSProviderName = 'elevenlabs' | 'openai' | 'google' | 'amazon' | 'deepgram' | 'cartesia';
 
 export interface Character {
   id: string;
   book_id: string;
   name: string;
-  role: 'narrator' | 'character';
+  role: 'narrator' | 'character' | 'host' | 'guest';
   voice_id: string | null;
   voice_name: string | null;
   tts_provider: TTSProviderName;
@@ -53,6 +101,14 @@ export interface Character {
   style: number;
   speed: number;
   speaker_boost: number;
+  casting_member_id?: string | null;
+  normalized_name?: string | null;
+  /** Derived by the API: how many segments this character speaks in the book. */
+  line_count?: number;
+  /** Derived by the API: this character's first line, used to preview the casting. */
+  sample_line?: string | null;
+  /** Set on create when a voice was recalled from an existing cast. */
+  remembered?: boolean;
 }
 
 export interface Segment {

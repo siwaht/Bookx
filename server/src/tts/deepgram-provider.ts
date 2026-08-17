@@ -77,7 +77,8 @@ export class DeepgramTTSProvider implements TTSProvider {
     const requestId = res.headers.get('dg-request-id');
     const charCount = res.headers.get('dg-char-count');
 
-    // Estimate duration from MP3 buffer size (rough: ~16kB/s at 128kbps)
+    // Estimate duration from MP3 buffer size.
+    // At 128kbps, 1 second of audio = 16,000 bytes (128000 bits / 8 = 16000 bytes/sec).
     const durationMs = Math.round((buffer.length / 16000) * 1000);
 
     return { buffer, requestId, provider: 'deepgram', durationMs };

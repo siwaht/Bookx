@@ -1,787 +1,824 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { elevenlabs, audioUrl, audioDownloadUrl, audioAssets, timeline as timelineApi, uploadAudio } from '../services/api';
+import {
+  Check, Download, Edit3, FolderOpen, Loader, Music, Plus, Repeat, Sparkles,
+  Trash2, Upload, Wand2, X,
+} from 'lucide-react';
+import {
+  audioAssets, audioDownloadUrl, audioUrl, elevenlabs,
+  timeline as timelineApi, uploadAudio,
+} from '../services/api';
 import { useAppStore } from '../stores/appStore';
 import { toast } from '../components/Toast';
-import { Wand2, Music, Volume2, Loader, Plus, Clock, Repeat, Upload, Download, Trash2, Edit3, Check, X, FolderOpen } from 'lucide-react';
+import { Modal } from '../components/ui/Modal';
+import { Segmented } from '../components/ui/Segmented';
+import { Button, IconButton } from '../components/ui/Button';
+import { field, icon as iconSize, text, weight } from '../components/ui/tokens';
 
-interface GeneratedAsset {
-  id: string;
-  type: 'sfx' | 'music' | 'imported';
-  prompt: string;
-  audio_asset_id: string;
+type Tab = 'music' | 'sfx' | 'library';
+type AssetKind = 'sfx' | 'music' | 'imported';
+
+interface FreshAsset {
+  key: string;
+  kind: AssetKind;
+  label: string;
+  assetId: string;
   cached: boolean;
 }
 
 const SFX_PRESETS = [
-  'Footsteps on gravel, then a metallic door opens',
-  'Thunder rumbling in the distance',
-  'Wind whistling through trees, followed by leaves rustling',
-  'Glass shattering on concrete',
   'Heavy wooden door creaking open slowly',
+  'Footsteps on gravel, then a metal door opens',
+  'Thunder rumbling in the distance',
   'Rain falling on a tin roof',
   'Campfire crackling with occasional pops',
+  'Glass shattering on concrete',
+  'Wind whistling through trees',
+  'Sword drawn from a sheath',
   'Clock ticking in a quiet room',
-  'Sword being drawn from a sheath',
-  'Horse galloping on a dirt road',
-  'Ocean waves crashing on rocks',
   'Crowd murmuring in a large hall',
 ];
 
 const MUSIC_PRESETS = [
-  'Gentle piano melody, reflective and melancholic, suitable for audiobook intro',
-  'Soft ambient strings, warm and hopeful, cinematic underscore',
-  'Mysterious dark orchestral, suspenseful, minor key',
-  'Upbeat acoustic guitar, cheerful folk feel',
-  'Epic orchestral crescendo, triumphant brass and timpani',
+  'Gentle piano, reflective and melancholic',
+  'Soft ambient strings, warm and hopeful',
+  'Mysterious dark orchestral, suspenseful',
+  'Epic orchestral crescendo, triumphant brass',
   'Quiet solo cello, intimate and emotional',
-  'Jazz lounge piano, smooth and relaxed, late night feel',
+  'Jazz lounge piano, smooth late-night feel',
+  'Upbeat acoustic guitar, cheerful folk',
   'Ethereal choir pad, spiritual and vast',
 ];
 
-const INTRO_OUTRO_PRESETS = [
-  { label: 'Audiobook Intro', prompt: 'Gentle orchestral intro, warm strings building slowly, cinematic and inviting, 10 seconds', duration: 10, type: 'intro' as const },
-  { label: 'Audiobook Outro', prompt: 'Soft piano outro, reflective and peaceful, fading gently, 8 seconds', duration: 8, type: 'outro' as const },
-  { label: 'Chapter Intro', prompt: 'Brief musical transition, soft harp and strings, 4 seconds', duration: 4, type: 'intro' as const },
-  { label: 'Chapter Outro', prompt: 'Gentle fade-out transition, ambient pad, 3 seconds', duration: 3, type: 'outro' as const },
-  { label: 'Podcast Intro', prompt: 'Upbeat modern podcast intro, electronic beats with synth melody, energetic and catchy, 8 seconds', duration: 8, type: 'intro' as const },
-  { label: 'Podcast Outro', prompt: 'Chill podcast outro, lo-fi beats fading out, relaxed and smooth, 6 seconds', duration: 6, type: 'outro' as const },
-  { label: 'Dramatic Sting', prompt: 'Short dramatic orchestral sting, tension and impact, 3 seconds', duration: 3, type: 'intro' as const },
-  { label: 'Ambient Bed', prompt: 'Soft ambient background music, gentle pads and subtle texture, loopable, calm and unobtrusive', duration: 60, type: 'intro' as const },
+/**
+ * Bookends get their own presets because they carry an extra behaviour: they're
+ * placed on the timeline automatically (intro at 0, outro at the end).
+ */
+const BOOKEND_PRESETS: Array<{
+  label: string; prompt: string; seconds: number; place: 'start' | 'end';
+}> = [
+  { label: 'Book intro', prompt: 'Gentle orchestral intro, warm strings building slowly, cinematic and inviting', seconds: 10, place: 'start' },
+  { label: 'Book outro', prompt: 'Soft piano outro, reflective and peaceful, fading gently', seconds: 8, place: 'end' },
+  { label: 'Chapter break', prompt: 'Brief musical transition, soft harp and strings', seconds: 4, place: 'start' },
+  { label: 'Podcast intro', prompt: 'Upbeat modern podcast intro, electronic beats with synth melody, energetic', seconds: 8, place: 'start' },
+  { label: 'Podcast outro', prompt: 'Chill podcast outro, lo-fi beats fading out, relaxed', seconds: 6, place: 'end' },
+  { label: 'Dramatic sting', prompt: 'Short dramatic orchestral sting, tension and impact', seconds: 3, place: 'start' },
 ];
 
-const V3_TAG_CATEGORIES = [
-  {
-    name: 'Emotions',
-    tags: ['happy', 'sad', 'angry', 'fearful', 'excited', 'melancholic', 'romantic', 'mysterious',
-      'anxious', 'confident', 'nostalgic', 'playful', 'serious', 'tender', 'dramatic'],
-  },
-  {
-    name: 'Vocal Effects',
-    tags: ['whisper', 'shout', 'gasp', 'sigh', 'laugh', 'sob', 'yawn', 'cough',
-      'chuckle', 'giggle', 'growl', 'murmur', 'panting', 'clears throat'],
-  },
-  {
-    name: 'Styles',
-    tags: ['conversational', 'formal', 'theatrical', 'monotone', 'breathy', 'crisp',
-      'commanding', 'gentle', 'intimate', 'distant', 'warm', 'cold'],
-  },
-  {
-    name: 'Narrative',
-    tags: ['storytelling tone', 'voice-over style', 'documentary style', 'bedtime story',
-      'dramatic pause', 'suspense build-up', 'inner monologue', 'flashback tone'],
-  },
-  {
-    name: 'Rhythm',
-    tags: ['slow', 'fast', 'dramatic pause', 'pauses for effect', 'staccato',
-      'measured', 'rushed', 'languid', 'building tension'],
-  },
-  {
-    name: 'Environments',
-    tags: ['forest morning', 'city street', 'cafe ambient', 'rain heavy', 'library ambient',
-      'church ambient', 'campfire crackle', 'ocean waves'],
-  },
+const EXPRESSION_TAGS: Array<{ group: string; tags: string[] }> = [
+  { group: 'Emotion', tags: ['happy', 'sad', 'angry', 'fearful', 'excited', 'melancholic', 'romantic', 'mysterious', 'anxious', 'confident', 'nostalgic', 'playful', 'serious', 'tender', 'dramatic'] },
+  { group: 'Voice', tags: ['whisper', 'shout', 'gasp', 'sigh', 'laugh', 'sob', 'chuckle', 'giggle', 'growl', 'murmur', 'panting', 'clears throat'] },
+  { group: 'Style', tags: ['conversational', 'formal', 'theatrical', 'monotone', 'breathy', 'commanding', 'gentle', 'intimate', 'warm', 'cold'] },
+  { group: 'Narration', tags: ['storytelling tone', 'voice-over style', 'documentary style', 'bedtime story', 'dramatic pause', 'suspense build-up', 'inner monologue', 'flashback tone'] },
+  { group: 'Pace', tags: ['slow', 'fast', 'pauses for effect', 'staccato', 'measured', 'rushed', 'building tension'] },
 ];
 
 export function AudioStudioPage() {
   const { bookId } = useParams<{ bookId: string }>();
   const capabilities = useAppStore((s) => s.capabilities);
-  const [activeTab, setActiveTab] = useState<'sfx' | 'music' | 'intro_outro' | 'v3tags' | 'import' | 'library'>('sfx');
+  const [tab, setTab] = useState<Tab>('music');
+  const [showTags, setShowTags] = useState(false);
 
-  // Library state
-  const [libraryAssets, setLibraryAssets] = useState<any[]>([]);
-  const [libraryLoading, setLibraryLoading] = useState(false);
+  // Music
+  const [musicPrompt, setMusicPrompt] = useState('');
+  const [musicSeconds, setMusicSeconds] = useState(30);
+  const [instrumental, setInstrumental] = useState(true);
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [bookendBusy, setBookendBusy] = useState<string | null>(null);
+
+  // SFX
+  const [sfxPrompt, setSfxPrompt] = useState('');
+  const [sfxSeconds, setSfxSeconds] = useState<number | undefined>(undefined);
+  const [sfxLoop, setSfxLoop] = useState(false);
+  const [sfxBusy, setSfxBusy] = useState(false);
+
+  // Results + library
+  const [fresh, setFresh] = useState<FreshAsset[]>([]);
+  const [placingId, setPlacingId] = useState<string | null>(null);
+  const [library, setLibrary] = useState<any[]>([]);
+  const [libraryBusy, setLibraryBusy] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const loadLibrary = useCallback(async () => {
     if (!bookId) return;
-    setLibraryLoading(true);
+    setLibraryBusy(true);
     try {
-      const data = await audioAssets.listLibrary(bookId);
-      setLibraryAssets(data);
-    } catch (err) { console.error('Failed to load library:', err); }
-    finally { setLibraryLoading(false); }
+      setLibrary(await audioAssets.listLibrary(bookId));
+    } catch {
+      /* non-critical */
+    } finally {
+      setLibraryBusy(false);
+    }
   }, [bookId]);
 
-  useEffect(() => {
-    loadLibrary();
-  }, [loadLibrary]);
+  useEffect(() => { loadLibrary(); }, [loadLibrary]);
 
-  const handleRename = async (assetId: string) => {
-    if (!renameValue.trim()) return;
-    await audioAssets.rename(assetId, renameValue.trim());
-    setRenamingId(null);
-    loadLibrary();
+  const addFresh = (kind: AssetKind, label: string, assetId: string, cached: boolean) => {
+    setFresh((prev) => [{ key: `${assetId}-${Date.now()}`, kind, label, assetId, cached }, ...prev].slice(0, 6));
   };
 
-  const handleDeleteAsset = async (assetId: string) => {
-    if (!confirm('Delete this audio asset? This will also remove it from the timeline.')) return;
-    setDeletingId(assetId);
+  /** Find (or create) the right track, then drop the clip after whatever's already there. */
+  const placeOnTimeline = async (kind: AssetKind, assetId: string, label: string, uiKey: string) => {
+    if (!bookId) return;
+    setPlacingId(uiKey);
     try {
-      await audioAssets.delete(assetId);
-      setLibraryAssets((prev) => prev.filter((a) => a.id !== assetId));
-    } catch (err: any) { toast.error(`Delete failed: ${err.message}`); }
-    finally { setDeletingId(null); }
-  };
-
-  // Import state
-  const [uploading, setUploading] = useState(false);
-  const importFileRef = useRef<HTMLInputElement>(null);
-
-  // SFX state
-  const [sfxPrompt, setSfxPrompt] = useState('');
-  const [sfxDuration, setSfxDuration] = useState<number | undefined>(undefined);
-  const [sfxInfluence, setSfxInfluence] = useState(0.3);
-  const [sfxLoop, setSfxLoop] = useState(false);
-  const [sfxGenerating, setSfxGenerating] = useState(false);
-
-  // Music state
-  const [musicPrompt, setMusicPrompt] = useState('');
-  const [musicDuration, setMusicDuration] = useState(30);
-  const [musicInstrumental, setMusicInstrumental] = useState(true);
-  const [musicGenerating, setMusicGenerating] = useState(false);
-
-  // Generated assets
-  const [generated, setGenerated] = useState<GeneratedAsset[]>([]);
-  const [placingId, setPlacingId] = useState<string | null>(null);
-  const [introOutroGenerating, setIntroOutroGenerating] = useState<string | null>(null);
-
-  const handleGenerateSFX = async () => {
-    if (!sfxPrompt.trim()) return;
-    setSfxGenerating(true);
-    try {
-      const result = await elevenlabs.sfx({
-        prompt: sfxPrompt,
-        duration_seconds: sfxDuration,
-        prompt_influence: sfxInfluence,
-        loop: sfxLoop,
-        book_id: bookId,
-      });
-      setGenerated((prev) => [{
-        id: Date.now().toString(),
-        type: 'sfx',
-        prompt: sfxPrompt,
-        audio_asset_id: result.audio_asset_id,
-        cached: result.cached,
-      }, ...prev]);
-    } catch (err: any) { toast.error(`SFX generation failed: ${err.message}`); }
-    finally { setSfxGenerating(false); loadLibrary(); }
+      const trackType = kind === 'imported' ? 'imported' : kind;
+      const tracks = await timelineApi.tracks(bookId);
+      let track = tracks.find((t: any) => t.type === trackType);
+      if (!track) {
+        const names: Record<string, string> = { sfx: 'Sound Effects', music: 'Music', imported: 'Imported' };
+        track = await timelineApi.createTrack(bookId, { name: names[trackType], type: trackType });
+      }
+      const clips = track.clips || [];
+      const endPos = clips.length > 0
+        ? Math.max(...clips.map((c: any) => c.position_ms + (c.asset_duration_ms || c.trim_end_ms || 5000)))
+        : 0;
+      await timelineApi.createClip(bookId, track.id, { audio_asset_id: assetId, position_ms: endPos });
+      toast.success(`Added "${label.slice(0, 40)}" at ${(endPos / 1000).toFixed(1)}s.`);
+    } catch (err: any) {
+      toast.error(`Could not place it on the timeline: ${err.message}`);
+    } finally {
+      setPlacingId(null);
+    }
   };
 
   const handleGenerateMusic = async () => {
     if (!musicPrompt.trim()) return;
-    setMusicGenerating(true);
+    setMusicBusy(true);
     try {
       const result = await elevenlabs.music({
         prompt: musicPrompt,
-        music_length_ms: musicDuration * 1000,
-        force_instrumental: musicInstrumental,
+        music_length_ms: musicSeconds * 1000,
+        force_instrumental: instrumental,
         book_id: bookId,
       });
-      setGenerated((prev) => [{
-        id: Date.now().toString(),
-        type: 'music',
-        prompt: musicPrompt,
-        audio_asset_id: result.audio_asset_id,
-        cached: result.cached,
-      }, ...prev]);
-    } catch (err: any) { toast.error(`Music generation failed: ${err.message}`); }
-    finally { setMusicGenerating(false); loadLibrary(); }
+      addFresh('music', musicPrompt, result.audio_asset_id, result.cached);
+    } catch (err: any) {
+      toast.error(`Music generation failed: ${err.message}`);
+    } finally {
+      setMusicBusy(false);
+      loadLibrary();
+    }
   };
 
-  const handlePlaceOnTimeline = async (asset: GeneratedAsset) => {
-    if (!bookId) return;
-    setPlacingId(asset.id);
+  const handleGenerateSFX = async () => {
+    if (!sfxPrompt.trim()) return;
+    setSfxBusy(true);
     try {
-      // Get existing tracks or create one
-      const tracks = await timelineApi.tracks(bookId);
-      let targetTrack = tracks.find((t: any) => t.type === asset.type);
-      if (!targetTrack) {
-        targetTrack = await timelineApi.createTrack(bookId, {
-          name: asset.type === 'sfx' ? 'Sound Effects' : 'Music',
-          type: asset.type,
-        });
-      }
-      // Find the end position of existing clips on this track
-      const existingClips = targetTrack.clips || [];
-      const endPos = existingClips.length > 0
-        ? Math.max(...existingClips.map((c: any) => c.position_ms + (c.trim_end_ms || 5000)))
-        : 0;
-      await timelineApi.createClip(bookId, targetTrack.id, {
-        audio_asset_id: asset.audio_asset_id,
-        position_ms: endPos,
+      const result = await elevenlabs.sfx({
+        prompt: sfxPrompt,
+        duration_seconds: sfxSeconds,
+        loop: sfxLoop,
+        book_id: bookId,
       });
-      toast.info(`Placed "${asset.prompt.slice(0, 40)}..." on ${asset.type} track at ${(endPos / 1000).toFixed(1)}s`);
-    } catch (err: any) { toast.error(`Failed to place on timeline: ${err.message}`); }
-    finally { setPlacingId(null); }
+      addFresh('sfx', sfxPrompt, result.audio_asset_id, result.cached);
+    } catch (err: any) {
+      toast.error(`Sound effect failed: ${err.message}`);
+    } finally {
+      setSfxBusy(false);
+      loadLibrary();
+    }
   };
 
-  const handleGenerateIntroOutro = async (preset: typeof INTRO_OUTRO_PRESETS[0]) => {
+  /** Bookends are generated and positioned in one action. */
+  const handleBookend = async (preset: typeof BOOKEND_PRESETS[number]) => {
     if (!bookId) return;
-    setIntroOutroGenerating(preset.label);
+    setBookendBusy(preset.label);
     try {
       const result = await elevenlabs.music({
-        prompt: preset.prompt,
-        music_length_ms: preset.duration * 1000,
+        prompt: `${preset.prompt}, ${preset.seconds} seconds`,
+        music_length_ms: preset.seconds * 1000,
         force_instrumental: true,
         book_id: bookId,
       });
-      setGenerated((prev) => [{
-        id: Date.now().toString(),
-        type: 'music',
-        prompt: `${preset.label}: ${preset.prompt}`,
-        audio_asset_id: result.audio_asset_id,
-        cached: result.cached,
-      }, ...prev]);
+      addFresh('music', preset.label, result.audio_asset_id, result.cached);
 
-      // Auto-place: intro at position 0, outro at end of timeline
       const tracks = await timelineApi.tracks(bookId);
-      let musicTrack = tracks.find((t: any) => t.type === 'music');
-      if (!musicTrack) {
-        musicTrack = await timelineApi.createTrack(bookId, { name: 'Music', type: 'music' });
+      let track = tracks.find((t: any) => t.type === 'music');
+      if (!track) track = await timelineApi.createTrack(bookId, { name: 'Music', type: 'music' });
+
+      if (preset.place === 'start') {
+        await timelineApi.createClip(bookId, track.id, {
+          audio_asset_id: result.audio_asset_id,
+          position_ms: 0,
+          notes: preset.label,
+          fade_in_ms: 500,
+          fade_out_ms: 1000,
+        });
+        toast.success(`${preset.label} placed at the start of the timeline.`);
+      } else {
+        const allClips = tracks.flatMap((t: any) => t.clips || []);
+        const endMs = allClips.length > 0
+          ? Math.max(...allClips.map((c: any) => c.position_ms + (c.asset_duration_ms || c.trim_end_ms || 5000)))
+          : 0;
+        await timelineApi.createClip(bookId, track.id, {
+          audio_asset_id: result.audio_asset_id,
+          position_ms: Math.max(0, endMs - 1000),
+          notes: preset.label,
+          fade_in_ms: 1000,
+          fade_out_ms: 500,
+        });
+        toast.success(`${preset.label} placed at the end (${(endMs / 1000).toFixed(1)}s).`);
       }
-      if (musicTrack) {
-        if (preset.type === 'intro') {
-          await timelineApi.createClip(bookId, musicTrack.id, {
-            audio_asset_id: result.audio_asset_id,
-            position_ms: 0,
-            notes: preset.label,
-            fade_in_ms: 500,
-            fade_out_ms: 1000,
-          });
-          toast.info(`${preset.label} placed at the start of the timeline.`);
-        } else {
-          // Find the end of all content
-          const allClips = tracks.flatMap((t: any) => t.clips || []);
-          const endMs = allClips.length > 0
-            ? Math.max(...allClips.map((c: any) => c.position_ms + (c.asset_duration_ms || c.trim_end_ms || 5000)))
-            : 0;
-          await timelineApi.createClip(bookId, musicTrack.id, {
-            audio_asset_id: result.audio_asset_id,
-            position_ms: Math.max(0, endMs - 1000), // overlap slightly
-            notes: preset.label,
-            fade_in_ms: 1000,
-            fade_out_ms: 500,
-          });
-          toast.info(`${preset.label} placed at the end of the timeline (${(endMs / 1000).toFixed(1)}s).`);
-        }
-      }
-    } catch (err: any) { toast.error(`Generation failed: ${err.message}`); }
-    finally { setIntroOutroGenerating(null); loadLibrary(); }
+    } catch (err: any) {
+      toast.error(`${preset.label} failed: ${err.message}`);
+    } finally {
+      setBookendBusy(null);
+      loadLibrary();
+    }
   };
 
-  const handleImportAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !bookId) return;
     setUploading(true);
     try {
       const result = await uploadAudio(bookId, file, file.name);
-      setGenerated((prev) => [{
-        id: Date.now().toString(),
-        type: 'imported',
-        prompt: file.name,
-        audio_asset_id: result.audio_asset_id,
-        cached: false,
-      }, ...prev]);
-    } catch (err: any) { toast.error(`Upload failed: ${err.message}`); }
-    finally { setUploading(false); if (importFileRef.current) importFileRef.current.value = ''; }
+      addFresh('imported', file.name, result.audio_asset_id, false);
+      toast.success(`Imported ${file.name}.`);
+      await loadLibrary();
+      setTab('library');
+    } catch (err: any) {
+      toast.error(`Upload failed: ${err.message}`);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = '';
+    }
   };
 
-  const hasV3 = capabilities?.hasV3;
+  const handleRename = async (assetId: string) => {
+    if (!renameValue.trim()) return;
+    try {
+      await audioAssets.rename(assetId, renameValue.trim());
+      setRenamingId(null);
+      loadLibrary();
+    } catch (err: any) {
+      toast.error(`Rename failed: ${err.message}`);
+    }
+  };
+
+  const handleDeleteAsset = async (assetId: string) => {
+    if (!confirm('Delete this audio? It will also be removed from the timeline.')) return;
+    setDeletingId(assetId);
+    try {
+      await audioAssets.delete(assetId);
+      setLibrary((prev) => prev.filter((a) => a.id !== assetId));
+    } catch (err: any) {
+      toast.error(`Delete failed: ${err.message}`);
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
+  const assetLabel = (asset: any): string => {
+    if (asset.name) return asset.name;
+    try {
+      const params = JSON.parse(asset.generation_params || '{}');
+      if (params.prompt) return params.prompt;
+    } catch { /* fall through */ }
+    return asset.id.slice(0, 8);
+  };
 
   return (
-    <div style={styles.container}>
-      <div style={styles.mainCol}>
-        <div style={styles.header}>
-          <h2 style={styles.title}>🎵 Audio Studio</h2>
-          <p style={styles.subtitle}>Generate sound effects, music, and use v3 audio tags for expressive narration</p>
+    <div style={S.page}>
+      <header style={S.header}>
+        <div style={{ minWidth: 0 }}>
+          <h1 style={S.h1}>Sound</h1>
+          <p style={S.sub}>Background music and sound effects for this project.</p>
         </div>
+        <Button onClick={() => setShowTags(true)} icon={<Sparkles size={iconSize.sm} />}>
+          Expression tags
+        </Button>
+      </header>
 
-        {/* Tab bar */}
-        <div style={styles.tabs}>
-          <button onClick={() => setActiveTab('sfx')}
-            style={{ ...styles.tab, ...(activeTab === 'sfx' ? styles.tabActive : {}) }}>
-            <Wand2 size={14} /> Sound Effects
-          </button>
-          <button onClick={() => setActiveTab('music')}
-            style={{ ...styles.tab, ...(activeTab === 'music' ? styles.tabActive : {}) }}>
-            <Music size={14} /> Music
-          </button>
-          <button onClick={() => setActiveTab('intro_outro')}
-            style={{ ...styles.tab, ...(activeTab === 'intro_outro' ? styles.tabActive : {}) }}>
-            <Music size={14} /> Intro & Outro
-          </button>
-          <button onClick={() => setActiveTab('v3tags')}
-            style={{ ...styles.tab, ...(activeTab === 'v3tags' ? styles.tabActive : {}) }}>
-            <Volume2 size={14} /> V3 Audio Tags {hasV3 && <span style={styles.badge}>v3</span>}
-          </button>
-          <button onClick={() => setActiveTab('import')}
-            style={{ ...styles.tab, ...(activeTab === 'import' ? styles.tabActive : {}) }}>
-            <Upload size={14} /> Import Audio
-          </button>
-          <button onClick={() => setActiveTab('library')}
-            style={{ ...styles.tab, ...(activeTab === 'library' ? styles.tabActive : {}) }}>
-            <FolderOpen size={14} /> Library
-          </button>
-        </div>
+      <div style={S.tabRow}>
+        <Segmented
+          ariaLabel="Sound section"
+          value={tab}
+          onChange={setTab}
+          options={[
+            { value: 'music', label: 'Music', icon: <Music size={iconSize.sm} /> },
+            { value: 'sfx', label: 'Sound effects', icon: <Wand2 size={iconSize.sm} /> },
+            { value: 'library', label: 'Library', icon: <FolderOpen size={iconSize.sm} />, count: library.length },
+          ]}
+        />
+      </div>
 
-      <div style={styles.content}>
-        {/* ── SFX Tab ── */}
-        {activeTab === 'sfx' && (
-          <div style={styles.genPanel}>
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Describe the sound effect</label>
-              <p style={styles.hint}>Be specific about the sound, timing, and environment. The AI understands audio terminology.</p>
-              <textarea value={sfxPrompt} onChange={(e) => setSfxPrompt(e.target.value)}
-                placeholder="e.g. Heavy wooden door creaking open slowly, then slamming shut"
-                style={styles.promptInput} rows={3} aria-label="Sound effect description" />
+      {/* ── Music ── */}
+      {tab === 'music' && (
+        <section style={S.panel}>
+          <textarea
+            value={musicPrompt}
+            onChange={(e) => setMusicPrompt(e.target.value)}
+            placeholder="Describe the music — genre, mood, instruments. e.g. gentle piano, reflective, for a chapter transition"
+            style={S.textarea}
+            rows={3}
+            aria-label="Music description"
+          />
+
+          <div style={S.controlRow}>
+            <label style={S.inlineControl}>
+              <span style={S.controlLabel}>Length</span>
+              <input
+                type="range"
+                min={3}
+                max={300}
+                value={musicSeconds}
+                onChange={(e) => setMusicSeconds(parseInt(e.target.value))}
+                style={S.slider}
+                aria-label="Music length in seconds"
+              />
+              <span style={S.controlValue}>{musicSeconds}s</span>
+            </label>
+            <label style={S.checkLabel}>
+              <input type="checkbox" checked={instrumental} onChange={(e) => setInstrumental(e.target.checked)} />
+              Instrumental only
+            </label>
+            <Button
+              variant="primary"
+              onClick={handleGenerateMusic}
+              loading={musicBusy}
+              disabled={!musicPrompt.trim()}
+              icon={<Music size={iconSize.sm} />}
+              style={{ marginLeft: 'auto' }}
+            >
+              {musicBusy ? 'Composing…' : 'Generate'}
+            </Button>
+          </div>
+
+          <PresetRow label="Start from" presets={MUSIC_PRESETS} onPick={setMusicPrompt} />
+
+          <div style={S.divider} />
+
+          <div>
+            <div style={S.groupLabel}>
+              Intros & outros
+              <span style={S.groupHint}>Generated and placed on the timeline for you</span>
             </div>
-
-            <div style={styles.controlsRow}>
-              <div style={styles.control}>
-                <label style={styles.controlLabel}><Clock size={12} /> Duration (sec)</label>
-                <input type="number" min={0.5} max={30} step={0.5}
-                  value={sfxDuration ?? ''} onChange={(e) => setSfxDuration(e.target.value ? parseFloat(e.target.value) : undefined)}
-                  placeholder="Auto" style={styles.numInput} aria-label="Duration in seconds" />
-              </div>
-              <div style={styles.control}>
-                <label style={styles.controlLabel}>Prompt Influence: {sfxInfluence.toFixed(1)}</label>
-                <input type="range" min={0} max={1} step={0.1} value={sfxInfluence}
-                  onChange={(e) => setSfxInfluence(parseFloat(e.target.value))} style={styles.slider}
-                  aria-label="Prompt influence" />
-                <span style={styles.sliderHint}>Low = creative · High = literal</span>
-              </div>
-              <div style={styles.control}>
-                <label style={styles.checkLabel}>
-                  <input type="checkbox" checked={sfxLoop} onChange={(e) => setSfxLoop(e.target.checked)} />
-                  <Repeat size={12} /> Seamless Loop
-                </label>
-                <span style={styles.sliderHint}>For ambient/background sounds</span>
-              </div>
-            </div>
-
-            <button onClick={handleGenerateSFX} disabled={sfxGenerating || !sfxPrompt.trim()} style={styles.generateBtn}>
-              {sfxGenerating ? <Loader size={16} /> : <Wand2 size={16} />}
-              {sfxGenerating ? 'Generating...' : 'Generate Sound Effect'}
-            </button>
-
-            <div style={styles.presetsSection}>
-              <label style={styles.presetsLabel}>Quick presets</label>
-              <div style={styles.presetGrid}>
-                {SFX_PRESETS.map((p, i) => (
-                  <button key={i} onClick={() => setSfxPrompt(p)} style={styles.presetBtn}>{p}</button>
-                ))}
-              </div>
+            <div style={S.chipWrap}>
+              {BOOKEND_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() => handleBookend(p)}
+                  disabled={bookendBusy !== null}
+                  style={S.bookendBtn}
+                  title={p.prompt}
+                >
+                  {bookendBusy === p.label ? <Loader size={11} className="spin" /> : null}
+                  <span style={{ fontWeight: 600 }}>{p.label}</span>
+                  <span style={S.bookendMeta}>
+                    {p.seconds}s · {p.place === 'start' ? 'at start' : 'at end'}
+                  </span>
+                </button>
+              ))}
             </div>
           </div>
-        )}
 
-        {/* ── Music Tab ── */}
-        {activeTab === 'music' && (
-          <div style={styles.genPanel}>
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Describe the music</label>
-              <p style={styles.hint}>Include genre, mood, instruments, tempo, and intended use. The model generates full compositions.</p>
-              <textarea value={musicPrompt} onChange={(e) => setMusicPrompt(e.target.value)}
-                placeholder="e.g. Gentle piano melody, reflective and melancholic, suitable for audiobook chapter transition"
-                style={styles.promptInput} rows={3} aria-label="Music description" />
-            </div>
+          <FreshStrip
+            fresh={fresh}
+            placingId={placingId}
+            onPlace={placeOnTimeline}
+            onDismiss={(key) => setFresh((prev) => prev.filter((f) => f.key !== key))}
+          />
+        </section>
+      )}
 
-            <div style={styles.controlsRow}>
-              <div style={styles.control}>
-                <label style={styles.controlLabel}><Clock size={12} /> Duration: {musicDuration}s</label>
-                <input type="range" min={3} max={600} step={1} value={musicDuration}
-                  onChange={(e) => setMusicDuration(parseInt(e.target.value))} style={styles.slider}
-                  aria-label="Music duration" />
-                <span style={styles.sliderHint}>3s – 10min</span>
-              </div>
-              <div style={styles.control}>
-                <label style={styles.checkLabel}>
-                  <input type="checkbox" checked={musicInstrumental} onChange={(e) => setMusicInstrumental(e.target.checked)} />
-                  <Music size={12} /> Force Instrumental
-                </label>
-                <span style={styles.sliderHint}>No vocals, pure instrumental</span>
-              </div>
-            </div>
+      {/* ── Sound effects ── */}
+      {tab === 'sfx' && (
+        <section style={S.panel}>
+          <textarea
+            value={sfxPrompt}
+            onChange={(e) => setSfxPrompt(e.target.value)}
+            placeholder="Describe the sound. e.g. heavy wooden door creaking open, then slamming shut"
+            style={S.textarea}
+            rows={3}
+            aria-label="Sound effect description"
+          />
 
-            <button onClick={handleGenerateMusic} disabled={musicGenerating || !musicPrompt.trim()} style={styles.generateBtn}>
-              {musicGenerating ? <Loader size={16} /> : <Music size={16} />}
-              {musicGenerating ? 'Composing...' : 'Generate Music'}
-            </button>
-
-            <div style={styles.presetsSection}>
-              <label style={styles.presetsLabel}>Quick presets</label>
-              <div style={styles.presetGrid}>
-                {MUSIC_PRESETS.map((p, i) => (
-                  <button key={i} onClick={() => setMusicPrompt(p)} style={styles.presetBtn}>{p}</button>
-                ))}
-              </div>
-            </div>
+          <div style={S.controlRow}>
+            <label style={S.inlineControl}>
+              <span style={S.controlLabel}>Length</span>
+              <input
+                type="number"
+                min={0.5}
+                max={30}
+                step={0.5}
+                value={sfxSeconds ?? ''}
+                onChange={(e) => setSfxSeconds(e.target.value ? parseFloat(e.target.value) : undefined)}
+                placeholder="Auto"
+                style={S.numInput}
+                aria-label="Sound effect length in seconds"
+              />
+            </label>
+            <label style={S.checkLabel}>
+              <input type="checkbox" checked={sfxLoop} onChange={(e) => setSfxLoop(e.target.checked)} />
+              <Repeat size={11} /> Seamless loop
+            </label>
+            <Button
+              variant="primary"
+              onClick={handleGenerateSFX}
+              loading={sfxBusy}
+              disabled={!sfxPrompt.trim()}
+              icon={<Wand2 size={iconSize.sm} />}
+              style={{ marginLeft: 'auto' }}
+            >
+              {sfxBusy ? 'Generating…' : 'Generate'}
+            </Button>
           </div>
-        )}
 
-        {/* ── Intro & Outro Tab ── */}
-        {activeTab === 'intro_outro' && (
-          <div style={styles.genPanel}>
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Intro & Outro Music</label>
-              <p style={styles.hint}>
-                Generate intro/outro music for your audiobook or podcast. These are auto-placed at the start or end of your timeline.
-                Perfect for book intros, chapter transitions, podcast bumpers, and closing music.
-              </p>
-            </div>
+          <PresetRow label="Start from" presets={SFX_PRESETS} onPick={setSfxPrompt} />
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600 }}>Audiobook</label>
-              <div style={styles.presetGrid}>
-                {INTRO_OUTRO_PRESETS.filter(p => !p.label.includes('Podcast') && !p.label.includes('Dramatic') && !p.label.includes('Ambient')).map((preset) => (
-                  <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
-                    disabled={introOutroGenerating !== null}
-                    style={{ ...styles.presetBtn, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', minWidth: 180, opacity: introOutroGenerating === preset.label ? 0.6 : 1 }}>
-                    <span style={{ fontWeight: 600, fontSize: 11 }}>
-                      {introOutroGenerating === preset.label ? <Loader size={10} /> : preset.type === 'intro' ? '▶' : '⏹'} {preset.label}
-                    </span>
-                    <span style={{ fontSize: 9, color: '#666' }}>{preset.duration}s · {preset.type}</span>
-                  </button>
-                ))}
-              </div>
+          <FreshStrip
+            fresh={fresh}
+            placingId={placingId}
+            onPlace={placeOnTimeline}
+            onDismiss={(key) => setFresh((prev) => prev.filter((f) => f.key !== key))}
+          />
+        </section>
+      )}
 
-              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginTop: 8 }}>Podcast</label>
-              <div style={styles.presetGrid}>
-                {INTRO_OUTRO_PRESETS.filter(p => p.label.includes('Podcast')).map((preset) => (
-                  <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
-                    disabled={introOutroGenerating !== null}
-                    style={{ ...styles.presetBtn, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', minWidth: 180, opacity: introOutroGenerating === preset.label ? 0.6 : 1 }}>
-                    <span style={{ fontWeight: 600, fontSize: 11 }}>
-                      {introOutroGenerating === preset.label ? <Loader size={10} /> : preset.type === 'intro' ? '▶' : '⏹'} {preset.label}
-                    </span>
-                    <span style={{ fontSize: 9, color: '#666' }}>{preset.duration}s · {preset.type}</span>
-                  </button>
-                ))}
-              </div>
-
-              <label style={{ fontSize: 12, color: 'var(--text-secondary)', fontWeight: 600, marginTop: 8 }}>Special</label>
-              <div style={styles.presetGrid}>
-                {INTRO_OUTRO_PRESETS.filter(p => p.label.includes('Dramatic') || p.label.includes('Ambient')).map((preset) => (
-                  <button key={preset.label} onClick={() => handleGenerateIntroOutro(preset)}
-                    disabled={introOutroGenerating !== null}
-                    style={{ ...styles.presetBtn, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 4, alignItems: 'flex-start', minWidth: 180, opacity: introOutroGenerating === preset.label ? 0.6 : 1 }}>
-                    <span style={{ fontWeight: 600, fontSize: 11 }}>
-                      {introOutroGenerating === preset.label ? <Loader size={10} /> : '🎵'} {preset.label}
-                    </span>
-                    <span style={{ fontSize: 9, color: '#666' }}>{preset.duration}s</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Custom Intro/Outro</label>
-              <p style={styles.hint}>Use the Music tab to generate custom music, then place it on the timeline manually.</p>
-            </div>
+      {/* ── Library ── */}
+      {tab === 'library' && (
+        <section style={S.panel}>
+          <div style={S.libraryBar}>
+            <p style={S.libraryHint}>
+              Everything you've generated or imported. Reuse any of it on the timeline.
+            </p>
+            <Button onClick={() => fileRef.current?.click()} loading={uploading} icon={<Upload size={iconSize.sm} />}>
+              {uploading ? 'Uploading…' : 'Import audio'}
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
+              onChange={handleUpload}
+              hidden
+              aria-label="Import an audio file"
+            />
           </div>
-        )}
 
-        {/* ── V3 Audio Tags Tab ── */}
-        {activeTab === 'v3tags' && (
-          <div style={styles.genPanel}>
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>ElevenLabs v3 Audio Tags</label>
-              {hasV3 ? (
-                <p style={styles.hint}>
-                  With the v3 model, you can embed audio tags directly in your text to control emotion, style, and effects.
-                  Wrap tags in square brackets like <code style={styles.code}>[whispers]</code> or <code style={styles.code}>[excited]</code>.
-                  Use them in your manuscript segments for expressive narration.
-                </p>
-              ) : (
-                <div style={styles.warningBox}>
-                  <p>Your account doesn't appear to have access to the eleven_v3 model. Audio tags require v3.
-                  Check your ElevenLabs subscription tier.</p>
-                </div>
-              )}
+          {libraryBusy && library.length === 0 && (
+            <div style={S.stateBox}><Loader size={13} className="spin" /> Loading…</div>
+          )}
+
+          {!libraryBusy && library.length === 0 && (
+            <div style={S.stateBox}>
+              Nothing here yet. Generate music or a sound effect, or import a file you already have.
             </div>
+          )}
 
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>How to use</label>
-              <div style={styles.exampleBox}>
-                <p style={styles.exampleLabel}>Example text with audio tags:</p>
-                <p style={styles.exampleText}>
-                  [storytelling tone] Once upon a time, in a land far away, [dramatic pause] there lived a dragon.
-                  [whispers] Nobody knew its name. [excited] But one day, a brave knight arrived!
-                  [gasp] The dragon turned and [growl] spoke in a voice like thunder.
-                </p>
-              </div>
-              <p style={styles.hint}>
-                Copy tags from below and paste them into your manuscript text on the Manuscript page.
-                The v3 model will interpret them during TTS generation.
-              </p>
-            </div>
-
-            {V3_TAG_CATEGORIES.map((cat) => (
-              <div key={cat.name} style={styles.tagCategory}>
-                <label style={styles.tagCategoryLabel}>{cat.name}</label>
-                <div style={styles.tagGrid}>
-                  {cat.tags.map((tag) => (
-                    <button key={tag} onClick={() => navigator.clipboard.writeText(`[${tag}]`)}
-                      style={styles.tagBtn} title={`Click to copy [${tag}] to clipboard`}>
-                      [{tag}]
-                    </button>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* ── Import Audio Tab ── */}
-        {activeTab === 'import' && (
-          <div style={styles.genPanel}>
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Import Audio Files</label>
-              <p style={styles.hint}>
-                Upload existing audio files (recorded narration, intros, outros, pre-made effects) to use on the timeline.
-                Supported formats: MP3, WAV, OGG, M4A, FLAC, AAC.
-              </p>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, alignItems: 'flex-start' }}>
-              <button onClick={() => importFileRef.current?.click()} disabled={uploading}
-                style={styles.generateBtn}>
-                {uploading ? <Loader size={16} /> : <Upload size={16} />}
-                {uploading ? 'Uploading...' : 'Choose Audio File'}
-              </button>
-              <input ref={importFileRef} type="file" accept=".mp3,.wav,.ogg,.m4a,.flac,.aac"
-                onChange={handleImportAudio} hidden aria-label="Import audio file" />
-              <p style={styles.hint}>Uploaded files appear in the Generated Audio panel on the right, where you can preview and place them on the timeline.</p>
-            </div>
-          </div>
-        )}
-
-        {/* ── Library Tab ── */}
-        {activeTab === 'library' && (
-          <div style={styles.genPanel}>
-            <div style={styles.section}>
-              <label style={styles.sectionLabel}>Saved Audio Library</label>
-              <p style={styles.hint}>
-                All your generated SFX, music, and imported audio files. Preview, rename, download, or reuse them on the timeline.
-              </p>
-            </div>
-
-            {libraryLoading && <div style={{ color: 'var(--text-tertiary)', fontSize: 12 }}><Loader size={14} /> Loading...</div>}
-
-            {!libraryLoading && libraryAssets.length === 0 && (
-              <div style={{ padding: 24, textAlign: 'center', color: '#555', fontSize: 13 }}>
-                No audio assets yet. Generate SFX or music, or import audio files.
-              </div>
-            )}
-
-            {!libraryLoading && libraryAssets.length > 0 && (() => {
-              const sfxAssets = libraryAssets.filter((a) => a.type === 'sfx');
-              const musicAssets = libraryAssets.filter((a) => a.type === 'music');
-              const importedAssets = libraryAssets.filter((a) => a.type === 'imported');
-
-              const renderAssetCard = (asset: any) => {
-                const isRenaming = renamingId === asset.id;
-                const isDeleting = deletingId === asset.id;
-                const displayName = asset.name || (asset.generation_params ? (JSON.parse(asset.generation_params || '{}').prompt || asset.id.slice(0, 8)) : asset.id.slice(0, 8));
+          {library.length > 0 && (
+            <div style={S.assetList}>
+              {library.map((asset) => {
+                const label = assetLabel(asset);
+                const renaming = renamingId === asset.id;
                 const durationSec = asset.duration_ms ? (asset.duration_ms / 1000).toFixed(1) : '?';
-                const sizeMb = asset.file_size_bytes ? (asset.file_size_bytes / (1024 * 1024)).toFixed(2) : '?';
-
                 return (
-                  <div key={asset.id} style={{
-                    padding: 12, background: 'var(--bg-deep)', borderRadius: 10, border: '1px solid var(--border-subtle)',
-                    display: 'flex', flexDirection: 'column', gap: 8, opacity: isDeleting ? 0.4 : 1,
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      {isRenaming ? (
-                        <div style={{ flex: 1, display: 'flex', gap: 4, alignItems: 'center' }}>
-                          <input value={renameValue} onChange={(e) => setRenameValue(e.target.value)}
-                            style={{ flex: 1, padding: '4px 8px', background: 'var(--bg-base)', color: 'var(--text-primary)', border: '1px solid var(--border-default)', borderRadius: 6, fontSize: 12, outline: 'none' }}
-                            autoFocus onKeyDown={(e) => { if (e.key === 'Enter') handleRename(asset.id); if (e.key === 'Escape') setRenamingId(null); }}
-                            aria-label="Rename asset" />
-                          <button onClick={() => handleRename(asset.id)} style={styles.presetBtn}><Check size={11} /></button>
-                          <button onClick={() => setRenamingId(null)} style={styles.presetBtn}><X size={11} /></button>
-                        </div>
+                  <div
+                    key={asset.id}
+                    style={{ ...S.assetRow, opacity: deletingId === asset.id ? 0.4 : 1 }}
+                  >
+                    <div style={S.assetTop}>
+                      <span
+                        style={{
+                          ...S.kindTag,
+                          color: KIND_COLORS[asset.type as AssetKind] || 'var(--text-tertiary)',
+                          background: `${KIND_HEX[asset.type as AssetKind] || '#888'}14`,
+                        }}
+                      >
+                        {asset.type}
+                      </span>
+
+                      {renaming ? (
+                        <>
+                          <input
+                            value={renameValue}
+                            onChange={(e) => setRenameValue(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') handleRename(asset.id);
+                              if (e.key === 'Escape') setRenamingId(null);
+                            }}
+                            style={S.renameInput}
+                            autoFocus
+                            aria-label="New name"
+                          />
+                          <IconButton size="sm" label="Save name" onClick={() => handleRename(asset.id)}>
+                            <Check size={iconSize.sm} />
+                          </IconButton>
+                          <IconButton size="sm" label="Cancel rename" onClick={() => setRenamingId(null)}>
+                            <X size={iconSize.sm} />
+                          </IconButton>
+                        </>
                       ) : (
-                        <span style={{ flex: 1, fontSize: 12, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                          {displayName}
-                        </span>
+                        <>
+                          <span style={S.assetName}>{label}</span>
+                          <span style={S.assetMeta}>{durationSec}s</span>
+                        </>
                       )}
-                      <span style={{ fontSize: 10, color: 'var(--text-muted)', flexShrink: 0 }}>{durationSec}s · {sizeMb}MB</span>
                     </div>
 
-                    <audio src={audioUrl(asset.id)} controls style={{ width: '100%', height: 32 }} />
+                    <audio src={audioUrl(asset.id)} controls style={{ width: '100%' }} />
 
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <button onClick={() => { setRenamingId(asset.id); setRenameValue(asset.name || displayName); }}
-                        style={styles.presetBtn}><Edit3 size={10} /> Rename</button>
-                      <a href={audioDownloadUrl(asset.id)} download
-                        style={{ ...styles.presetBtn, textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <Download size={10} /> Download
+                    <div style={S.assetActions}>
+                      <Button
+                        size="sm"
+                        variant="subtle"
+                        loading={placingId === asset.id}
+                        onClick={() => placeOnTimeline(asset.type, asset.id, label, asset.id)}
+                        icon={<Plus size={iconSize.xs} />}
+                      >
+                        Add to timeline
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => { setRenamingId(asset.id); setRenameValue(label); }}
+                        icon={<Edit3 size={iconSize.xs} />}
+                      >
+                        Rename
+                      </Button>
+                      <a href={audioDownloadUrl(asset.id)} download style={S.downloadLink}>
+                        <Download size={iconSize.xs} /> Download
                       </a>
-                      <button onClick={() => handlePlaceOnTimeline({ id: asset.id, type: asset.type, prompt: displayName, audio_asset_id: asset.id, cached: false })}
-                        disabled={placingId === asset.id}
-                        style={{ ...styles.presetBtn, background: 'var(--success-subtle)', color: 'var(--success)', borderColor: 'rgba(74,222,128,0.12)' }}>
-                        <Plus size={10} /> {placingId === asset.id ? '...' : 'Place on Timeline'}
-                      </button>
-                      <button onClick={() => handleDeleteAsset(asset.id)}
-                        style={{ ...styles.presetBtn, color: 'var(--danger)', borderColor: 'rgba(239,68,68,0.12)' }}>
-                        <Trash2 size={10} /> Delete
-                      </button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDeleteAsset(asset.id)}
+                        icon={<Trash2 size={iconSize.xs} />}
+                        style={{ color: 'var(--danger)' }}
+                      >
+                        Delete
+                      </Button>
                     </div>
                   </div>
                 );
-              };
+              })}
+            </div>
+          )}
+        </section>
+      )}
 
-              return (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-                  {/* Sound Effects */}
-                  {sfxAssets.length > 0 && (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                        <Wand2 size={14} color="var(--success)" />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--success)' }}>Sound Effects</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({sfxAssets.length})</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {sfxAssets.map(renderAssetCard)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Music */}
-                  {musicAssets.length > 0 && (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                        <Music size={14} color="var(--accent)" />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>Music</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({musicAssets.length})</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {musicAssets.map(renderAssetCard)}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Imported */}
-                  {importedAssets.length > 0 && (
-                    <div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
-                        <Upload size={14} color="var(--warning)" />
-                        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>Imported</span>
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>({importedAssets.length})</span>
-                      </div>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                        {importedAssets.map(renderAssetCard)}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+      {/* ── Expression tags reference ── */}
+      <Modal
+        open={showTags}
+        onClose={() => setShowTags(false)}
+        width={620}
+        title="Expression tags"
+        subtitle="Drop these into your manuscript text to steer delivery. Click one to copy it."
+      >
+        {!capabilities?.hasV3 && (
+          <div style={S.warnBox}>
+            Your ElevenLabs plan doesn't show access to the v3 model. Tags only take effect on v3.
           </div>
         )}
-      </div>
-      </div>{/* end mainCol */}
 
-      {/* ── Generated Assets Panel ── */}
-      {generated.length > 0 && (
-        <div style={styles.resultsPanel}>
-          <h3 style={styles.resultsPanelTitle}>Generated Audio ({generated.length})</h3>
-          {generated.map((asset) => (
-            <div key={asset.id} style={styles.resultItem}>
-              <div style={styles.resultHeader}>
-                <span style={{ ...styles.resultType, background: asset.type === 'sfx' ? '#2a3a1a' : '#1a2a3a' }}>
-                  {asset.type.toUpperCase()}
-                </span>
-                <span style={styles.resultPrompt}>{asset.prompt.slice(0, 60)}{asset.prompt.length > 60 ? '...' : ''}</span>
-                {asset.cached && <span style={styles.cachedBadge}>cached</span>}
-              </div>
-              <audio src={audioUrl(asset.audio_asset_id)} controls style={{ width: '100%', height: 32 }} />
-              <button onClick={() => handlePlaceOnTimeline(asset)} disabled={placingId === asset.id}
-                style={styles.placeBtn} title="Add this clip to the timeline">
-                <Plus size={12} /> {placingId === asset.id ? 'Placing...' : 'Place on Timeline'}
-              </button>
-            </div>
-          ))}
+        <div style={S.exampleBox}>
+          [storytelling tone] Once upon a time, [dramatic pause] there lived a dragon.
+          [whispers] Nobody knew its name.
         </div>
-      )}
+
+        {EXPRESSION_TAGS.map((group) => (
+          <div key={group.group} style={{ marginTop: 16 }}>
+            <div style={S.groupLabel}>{group.group}</div>
+            <div style={S.chipWrap}>
+              {group.tags.map((tag) => (
+                <button
+                  key={tag}
+                  onClick={() => {
+                    navigator.clipboard.writeText(`[${tag}]`);
+                    toast.info(`Copied [${tag}]`, 1500);
+                  }}
+                  style={S.tagBtn}
+                >
+                  [{tag}]
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </Modal>
     </div>
   );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: { display: 'flex', height: 'calc(100vh - 48px)', overflow: 'hidden' },
-  mainCol: { flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 },
-  header: { padding: '18px 24px 0' },
-  title: { fontSize: 18, color: 'var(--text-primary)', fontWeight: 600, letterSpacing: '-0.3px' },
-  subtitle: { fontSize: 12, color: 'var(--text-tertiary)', marginTop: 4 },
-  tabs: { display: 'flex', gap: 4, padding: '14px 24px', borderBottom: '1px solid var(--border-subtle)' },
-  tab: {
-    display: 'flex', alignItems: 'center', gap: 6, padding: '8px 16px',
-    background: 'var(--bg-surface)', color: 'var(--text-tertiary)', border: '1px solid var(--border-subtle)', borderRadius: 10,
-    cursor: 'pointer', fontSize: 12, fontWeight: 500,
+// ── Local pieces ──
+
+const KIND_COLORS: Record<AssetKind, string> = {
+  sfx: 'var(--success)',
+  music: 'var(--accent)',
+  imported: 'var(--warning)',
+};
+const KIND_HEX: Record<AssetKind, string> = {
+  sfx: '#4ade80',
+  music: '#5b8def',
+  imported: '#fbbf24',
+};
+
+function PresetRow({
+  label, presets, onPick,
+}: { label: string; presets: string[]; onPick: (p: string) => void }) {
+  return (
+    <div>
+      <div style={S.groupLabel}>{label}</div>
+      <div style={S.chipWrap}>
+        {presets.map((p) => (
+          <button key={p} onClick={() => onPick(p)} style={S.presetBtn} title={p}>
+            {p}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Just-generated results, inline under the controls. This replaces the old
+ * always-there 320px side rail, which duplicated the Library.
+ */
+function FreshStrip({
+  fresh, placingId, onPlace, onDismiss,
+}: {
+  fresh: FreshAsset[];
+  placingId: string | null;
+  onPlace: (kind: AssetKind, assetId: string, label: string, uiKey: string) => void;
+  onDismiss: (key: string) => void;
+}) {
+  if (fresh.length === 0) return null;
+  return (
+    <div>
+      <div style={S.divider} />
+      <div style={S.groupLabel}>
+        Just generated
+        <span style={S.groupHint}>Also saved to your Library</span>
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {fresh.map((f) => (
+          <div key={f.key} style={S.freshRow}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+              <span
+                style={{
+                  ...S.kindTag,
+                  color: KIND_COLORS[f.kind],
+                  background: `${KIND_HEX[f.kind]}14`,
+                }}
+              >
+                {f.kind}
+              </span>
+              <span style={S.assetName}>{f.label}</span>
+              {f.cached && <span style={S.cachedTag}>reused</span>}
+              <IconButton
+                size="sm"
+                label="Dismiss"
+                onClick={() => onDismiss(f.key)}
+                style={{ marginLeft: 'auto' }}
+              >
+                <X size={iconSize.sm} />
+              </IconButton>
+            </div>
+            <audio src={audioUrl(f.assetId)} controls style={{ width: '100%' }} />
+            <Button
+              size="sm"
+              variant="subtle"
+              loading={placingId === f.key}
+              onClick={() => onPlace(f.kind, f.assetId, f.label, f.key)}
+              icon={<Plus size={iconSize.xs} />}
+              style={{ alignSelf: 'flex-start' }}
+            >
+              Add to timeline
+            </Button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const S: Record<string, React.CSSProperties> = {
+  page: { padding: '28px 32px 56px', maxWidth: 960, margin: '0 auto' },
+
+  header: {
+    display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between',
+    gap: 20, flexWrap: 'wrap', marginBottom: 20,
   },
-  tabActive: { background: 'var(--accent-subtle)', color: 'var(--accent)', borderColor: 'rgba(91,141,239,0.25)' },
-  badge: { fontSize: 9, background: 'var(--accent)', color: '#fff', padding: '1px 6px', borderRadius: 20, fontWeight: 600 },
-  content: { flex: 1, overflow: 'auto', padding: '18px 24px' },
-  genPanel: { display: 'flex', flexDirection: 'column', gap: 18, maxWidth: 800 },
-  section: { display: 'flex', flexDirection: 'column', gap: 6 },
-  sectionLabel: { fontSize: 13, color: 'var(--accent)', fontWeight: 600 },
-  hint: { fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.5 },
-  code: { background: 'var(--accent-subtle)', color: 'var(--accent)', padding: '2px 8px', borderRadius: 5, fontSize: 11 },
-  promptInput: {
-    padding: 14, borderRadius: 10, border: '1px solid var(--border-default)', background: 'var(--bg-deep)',
-    color: 'var(--text-primary)', fontSize: 14, lineHeight: 1.6, outline: 'none', resize: 'vertical', fontFamily: 'inherit',
+  h1: { fontSize: text.heading, fontWeight: weight.semibold, color: 'var(--text-primary)', margin: 0, letterSpacing: '-0.03em' },
+  sub: { fontSize: text.label, color: 'var(--text-tertiary)', margin: '5px 0 0' },
+
+  tabRow: { marginBottom: 20 },
+
+  panel: {
+    display: 'flex', flexDirection: 'column', gap: 22, padding: 24,
+    background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-lg)',
   },
-  controlsRow: { display: 'flex', gap: 20, flexWrap: 'wrap' },
-  control: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 },
-  controlLabel: { display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, color: 'var(--text-tertiary)' },
-  numInput: {
-    padding: '7px 12px', borderRadius: 8, border: '1px solid var(--border-default)', background: 'var(--bg-deep)',
-    color: 'var(--text-primary)', fontSize: 13, outline: 'none', width: 80,
+
+  textarea: {
+    ...field,
+    padding: 16,
+    minHeight: 92,
+    lineHeight: 1.65,
+    resize: 'vertical',
   },
-  slider: { width: '100%', accentColor: 'var(--accent)' },
-  sliderHint: { fontSize: 10, color: 'var(--text-muted)' },
-  checkLabel: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' },
-  generateBtn: {
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-    padding: '11px 24px', background: 'var(--accent)', color: '#fff', border: 'none',
-    borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 500, alignSelf: 'flex-start',
-    boxShadow: '0 2px 10px rgba(91,141,239,0.2)',
+
+  controlRow: { display: 'flex', alignItems: 'center', gap: 22, flexWrap: 'wrap' },
+  inlineControl: { display: 'flex', alignItems: 'center', gap: 11 },
+  controlLabel: { fontSize: text.label, color: 'var(--text-tertiary)', whiteSpace: 'nowrap' },
+  controlValue: {
+    fontSize: text.label, color: 'var(--text-secondary)', minWidth: 42,
+    fontVariantNumeric: 'tabular-nums', fontWeight: weight.medium,
   },
-  presetsSection: { marginTop: 8 },
-  presetsLabel: { fontSize: 11, color: 'var(--text-muted)', marginBottom: 8, display: 'block' },
-  presetGrid: { display: 'flex', flexWrap: 'wrap', gap: 6 },
+  slider: { width: 170 },
+  numInput: { ...field, width: 92 },
+  checkLabel: {
+    display: 'flex', alignItems: 'center', gap: 9, fontSize: text.label,
+    color: 'var(--text-secondary)', cursor: 'pointer', whiteSpace: 'nowrap',
+  },
+
+  divider: { height: 1, background: 'var(--border-subtle)', margin: '4px 0 20px' },
+  groupLabel: {
+    display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+    fontSize: text.micro, fontWeight: weight.semibold, color: 'var(--text-secondary)',
+    textTransform: 'uppercase', letterSpacing: 0.7, marginBottom: 11,
+  },
+  groupHint: {
+    fontSize: text.meta, fontWeight: weight.normal, color: 'var(--text-muted)',
+    textTransform: 'none', letterSpacing: 0,
+  },
+  chipWrap: { display: 'flex', flexWrap: 'wrap', gap: 8 },
   presetBtn: {
-    padding: '7px 14px', background: 'var(--bg-surface)', color: 'var(--text-tertiary)', border: '1px solid var(--border-subtle)',
-    borderRadius: 8, cursor: 'pointer', fontSize: 11, textAlign: 'left', maxWidth: 280,
+    padding: '9px 15px', minHeight: 36, background: 'var(--bg-elevated)',
+    color: 'var(--text-secondary)', border: '1px solid var(--border-subtle)',
+    borderRadius: 20, cursor: 'pointer', fontSize: text.label, textAlign: 'left',
+    maxWidth: 300, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
   },
-  warningBox: { padding: 14, background: 'var(--warning-subtle)', borderRadius: 10, border: '1px solid rgba(251,191,36,0.1)', color: 'var(--warning)', fontSize: 12 },
-  exampleBox: { padding: 18, background: 'var(--bg-base)', borderRadius: 10, border: '1px solid var(--border-subtle)' },
-  exampleLabel: { fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 },
-  exampleText: { fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, fontFamily: 'Georgia, serif' },
-  tagCategory: { marginBottom: 14 },
-  tagCategoryLabel: { fontSize: 12, color: 'var(--text-secondary)', fontWeight: 500, marginBottom: 6, display: 'block' },
-  tagGrid: { display: 'flex', flexWrap: 'wrap', gap: 5 },
+  bookendBtn: {
+    display: 'inline-flex', alignItems: 'center', gap: 9, padding: '10px 16px',
+    minHeight: 40, background: 'var(--bg-elevated)', color: 'var(--text-primary)',
+    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)',
+    cursor: 'pointer', fontSize: text.label,
+  },
+  bookendMeta: { fontSize: text.meta, color: 'var(--text-muted)' },
+
+  libraryBar: { display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' },
+  libraryHint: { flex: 1, minWidth: 220, fontSize: text.label, color: 'var(--text-tertiary)', margin: 0, lineHeight: 1.55 },
+
+  stateBox: {
+    display: 'flex', alignItems: 'center', gap: 10, padding: '22px 18px',
+    fontSize: text.body, color: 'var(--text-tertiary)', background: 'var(--bg-deep)',
+    border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-md)', lineHeight: 1.6,
+  },
+
+  assetList: { display: 'flex', flexDirection: 'column', gap: 12 },
+  assetRow: {
+    display: 'flex', flexDirection: 'column', gap: 11, padding: 16,
+    background: 'var(--bg-deep)', border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-md)',
+  },
+  assetTop: { display: 'flex', alignItems: 'center', gap: 11, minWidth: 0 },
+  kindTag: {
+    fontSize: text.micro, fontWeight: weight.semibold, padding: '3px 9px', borderRadius: 20,
+    flexShrink: 0, textTransform: 'uppercase', letterSpacing: 0.4,
+  },
+  assetName: {
+    flex: 1, minWidth: 0, fontSize: text.body, color: 'var(--text-primary)',
+    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+  },
+  assetMeta: { fontSize: text.meta, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' },
+  cachedTag: {
+    fontSize: text.micro, color: 'var(--text-muted)', background: 'var(--bg-elevated)',
+    padding: '3px 9px', borderRadius: 20, flexShrink: 0,
+  },
+  renameInput: { ...field, flex: 1, background: 'var(--bg-base)' },
+  assetActions: { display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' },
+  downloadLink: {
+    display: 'inline-flex', alignItems: 'center', gap: 6, padding: '7px 13px',
+    minHeight: 32, borderRadius: 'var(--radius-md)', border: '1px solid transparent',
+    color: 'var(--text-secondary)', fontSize: text.label, fontWeight: weight.semibold,
+    textDecoration: 'none',
+  },
+
+  freshRow: {
+    display: 'flex', flexDirection: 'column', gap: 11, padding: 16,
+    background: 'var(--bg-deep)', border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-md)',
+  },
+
+  warnBox: {
+    padding: 16, marginBottom: 18, background: 'var(--warning-subtle)',
+    border: '1px solid rgba(251,191,36,0.16)', borderRadius: 'var(--radius-md)',
+    color: 'var(--warning)', fontSize: text.label, lineHeight: 1.6,
+  },
+  exampleBox: {
+    padding: 18, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)',
+    borderRadius: 'var(--radius-md)', fontSize: text.body, lineHeight: 1.85,
+    color: 'var(--text-secondary)', fontFamily: 'Georgia, serif',
+  },
   tagBtn: {
-    padding: '5px 12px', background: 'var(--accent-subtle)', color: 'var(--accent)', border: '1px solid rgba(91,141,239,0.12)',
-    borderRadius: 6, cursor: 'pointer', fontSize: 11, fontFamily: 'monospace',
-  },
-  resultsPanel: {
-    width: 320, borderLeft: '1px solid var(--border-subtle)', background: 'var(--bg-base)', padding: 14,
-    overflow: 'auto', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 10,
-  },
-  resultsPanelTitle: { fontSize: 12, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4 },
-  resultItem: { display: 'flex', flexDirection: 'column', gap: 6, padding: 12, background: 'var(--bg-surface)', borderRadius: 10, border: '1px solid var(--border-subtle)' },
-  resultHeader: { display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
-  resultType: { fontSize: 9, color: 'var(--success)', padding: '2px 8px', borderRadius: 20, fontWeight: 600, background: 'var(--success-subtle)' },
-  resultPrompt: { fontSize: 11, color: 'var(--text-tertiary)', flex: 1, minWidth: 0 },
-  cachedBadge: { fontSize: 9, color: 'var(--text-muted)', background: 'var(--bg-elevated)', padding: '2px 8px', borderRadius: 20 },
-  placeBtn: {
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-    padding: '6px 12px', background: 'var(--success-subtle)', color: 'var(--success)', border: '1px solid rgba(74,222,128,0.12)',
-    borderRadius: 8, cursor: 'pointer', fontSize: 11, fontWeight: 500,
+    padding: '7px 13px', minHeight: 34, background: 'var(--accent-subtle)', color: 'var(--accent)',
+    border: '1px solid rgba(91,141,239,0.16)', borderRadius: 'var(--radius-md)',
+    cursor: 'pointer', fontSize: text.label, fontFamily: 'monospace',
   },
 };

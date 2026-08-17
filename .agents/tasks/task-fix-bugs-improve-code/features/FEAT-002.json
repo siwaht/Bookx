@@ -1,0 +1,31 @@
+{
+  "id": "FEAT-002",
+  "type": "refactor",
+  "description": "Improve code robustness, add missing validation, and enhance error handling across server routes",
+  "status": "completed",
+  "steps": [
+    "1. Add input validation to chapter update (server/src/routes/chapters.ts PUT /:id): Currently accepts any body fields without validation. Add basic length/type checks for title and raw_text fields to prevent oversized payloads.",
+    "2. Add request body validation to timeline populate endpoint (server/src/routes/timeline.ts POST /populate): Validate chapter_ids is an array of strings if provided, gap_ms and chapter_gap_ms are numbers within reasonable bounds.",
+    "3. Add proper error responses with meaningful messages in server/src/routes/audio.ts: Several catch blocks only return generic 'Failed to...' messages. Include err.message in non-production environments for debugging.",
+    "4. Add validation for the render job type field (server/src/routes/render.ts POST /): Ensure type is one of 'full', 'chapter', 'preview' and chapter_id is provided when type is 'chapter'.",
+    "5. Add rate limiting to TTS generation endpoints: The ttsRateLimit middleware is defined but not applied to the TTS generation route. Apply it to POST /api/tts/generate and POST /api/chapters/:chapterId/segments/:id/generate.",
+    "6. Add missing null check in the export download route (server/src/routes/export.ts GET /:exportId/download): Already checks output_path exists on disk, but should also validate the path is within DATA_DIR (same as render download does).",
+    "7. Improve the server graceful shutdown in server/src/index.ts: The 10-second forced exit timeout should also clear the auto-backup and auto-cleanup intervals to prevent them from firing during shutdown.",
+    "8. Add Content-Security-Policy connect-src for API origins in production mode: The CSP currently blocks all external connections with connect-src 'self', which would block the frontend from making API calls if served from a different origin. Since the frontend uses relative /api paths and is served from the same origin, this is actually correct. Add a comment explaining this.",
+    "9. Fix the generation router to handle the case where a segment's chapter is deleted mid-generation: Add a null check after querying for the chapter in generateSegmentAudioInternal."
+  ],
+  "acceptance_criteria": [
+    "npm run build succeeds without errors",
+    "npm run lint passes for both workspaces",
+    "TTS rate limiting is applied to generation endpoints",
+    "Chapter update has basic input validation",
+    "Render job creation validates the type parameter",
+    "Export download validates path is within DATA_DIR"
+  ],
+  "verification": [
+    "source ~/.nvm/nvm.sh && nvm use 22 && npm run build",
+    "source ~/.nvm/nvm.sh && nvm use 22 && npm run lint"
+  ],
+  "blocked_reason": null,
+  "findings": "All changes compile cleanly. Build and lint both pass. Applied ttsRateLimit to both the generation router and the segments router (which contains the individual segment generate endpoint). The CSP connect-src 'self' comment was added as step 8 required. Path traversal validation added to export download matching the pattern already used in render download."
+}
