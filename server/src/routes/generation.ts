@@ -8,10 +8,10 @@ import { saveDb } from '../db/schema.js';
 import { generateTTS, computePromptHash } from '../elevenlabs/client.js';
 import { generateWithProvider } from '../tts/registry.js';
 import type { TTSProviderName } from '../tts/provider.js';
+import { estimateMp3DurationMs } from '../utils.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
 import { populateTimelineForBook } from './timeline.js';
 import { applyPronunciationRules } from '../utils/pronunciation.js';
-import { estimateMp3DurationMs } from '../utils.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 // How many segments to synthesize in parallel. Keeps very long books moving

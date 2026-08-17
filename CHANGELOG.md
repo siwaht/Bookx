@@ -1,23 +1,16 @@
-# Editorial Changelog — Al-Mizan: The Price of Creation
+# Consolidated Editorial Changelog
 
-Deep editorial pass: trimming filler without losing voice.
+This repository preserves the records for the editorial passes consolidated into `main`.
 
-**Categories:**
-- **RT** = Redundant transitions
-- **OE** = Over-explained emotions
-- **RR** = Repetitive restatements
-- **PS** = Padding sentences
-- **FIX** = Typo/grammar fixes
+## Al-Mizan: The Price of Creation
 
----
+A deep editorial pass covered 30 XHTML chapters with approximately 90 targeted revisions across redundant transitions, over-explained emotions, repetitive restatements, padding, and XHTML corrections. The pass retained the manuscript’s contemplative voice while removing identified dead weight.
 
-## Prologue: The Glass City (ch003.xhtml)
+## The Last Library of Ashurbanipal
 
-- [RR] Removed "The great weighing." — triple naming of the Mizan reduced to two
-- [RR] Trimmed "for a fraction of a second" — redundant with "for a single heartbeat"
-- [RR] Removed "She was outside the law." — restated by "She was outside the Mizan"
+A deep editorial and story-improvement pass covered 39 chapters, including two targeted trimming edits, scene and prose refinements, thematic foreshadowing additions, and a character-depth revision. The detailed improvement record remains available in `IMPROVEMENTS_LOG.md`.
 
-## Chapter 1: The Ruins of Iram (ch004.xhtml)
+## Consolidation note
 
 - [RR] Trimmed crystal-memory restatement already established in prologue
 - [RR] Condensed "Matter was his department. Energy was his department." triple-restatement
@@ -462,3 +455,5 @@ being pulled forward — not by speed, but by inevitability. No sentence
 should make them pause and think ‘I’ve read this already’ or ‘this isn’t
 earning its place.’” The two edits above address the only moments where
 that bar was not already met.
+
+Branch-specific manuscripts, supporting documents, and improvement records remain preserved in their respective directories. This file is the top-level index for the combined editorial history on `main`.
