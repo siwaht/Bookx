@@ -11,6 +11,7 @@ import type { TTSProviderName } from '../tts/provider.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
 import { populateTimelineForBook } from './timeline.js';
 import { applyPronunciationRules } from '../utils/pronunciation.js';
+import { estimateMp3DurationMs } from '../utils.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 // How many segments to synthesize in parallel. Keeps very long books moving
@@ -459,7 +460,7 @@ async function generateSegmentAudioInternal(
     });
     buffer = result.buffer;
     requestId = result.requestId;
-    durationMs = Math.round((buffer.length / 24000) * 1000);
+    durationMs = estimateMp3DurationMs(buffer.length);
   } else {
     const result = await generateWithProvider(ttsProvider, {
       text: processedText,
@@ -473,7 +474,7 @@ async function generateSegmentAudioInternal(
     });
     buffer = result.buffer;
     requestId = result.requestId;
-    durationMs = result.durationMs || Math.round((buffer.length / 24000) * 1000);
+    durationMs = result.durationMs || estimateMp3DurationMs(buffer.length);
   }
 
   const assetId = uuid();

@@ -15,7 +15,8 @@
     "lint": "npm run lint --workspace=client && npm run lint --workspace=server",
     "typecheck": "npm run lint --workspace=client && npm run lint --workspace=server",
     "clean": "rimraf client/dist server/dist",
-    "mcp": "npx tsx server/src/mcp-server.ts"
+    "mcp": "npx tsx server/src/mcp-server.ts",
+    "test": "npm run test --workspace=server"
   },
   "devDependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",

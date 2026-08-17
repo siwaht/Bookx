@@ -1,7 +1,7 @@
 import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs';
-import { queryAll } from './helpers.js';
+import { queryAll, queryOne } from './helpers.js';
 
 const DATA_DIR = process.env.DATA_DIR || './data';
 
@@ -654,6 +654,24 @@ export function initializeSchema(database: SqlJsDatabase): void {
     }
   }
   database.run('CREATE INDEX IF NOT EXISTS idx_characters_norm_name ON characters(normalized_name)');
+
+  // Migration: rename old AWS setting keys to new names
+  const oldAwsKey = queryOne(database, "SELECT key, value FROM settings WHERE key = 'aws_access_key_api_key'");
+  if (oldAwsKey) {
+    const newExists = queryOne(database, "SELECT key FROM settings WHERE key = 'aws_access_key'");
+    if (!newExists) {
+      database.run("INSERT INTO settings (key, value) VALUES ('aws_access_key', ?)", [oldAwsKey.value]);
+    }
+    database.run("DELETE FROM settings WHERE key = 'aws_access_key_api_key'");
+  }
+  const oldAwsSecret = queryOne(database, "SELECT key, value FROM settings WHERE key = 'aws_secret_access_key_api_key'");
+  if (oldAwsSecret) {
+    const newExists = queryOne(database, "SELECT key FROM settings WHERE key = 'aws_secret_access_key'");
+    if (!newExists) {
+      database.run("INSERT INTO settings (key, value) VALUES ('aws_secret_access_key', ?)", [oldAwsSecret.value]);
+    }
+    database.run("DELETE FROM settings WHERE key = 'aws_secret_access_key_api_key'");
+  }
 
   saveDb();
 }
