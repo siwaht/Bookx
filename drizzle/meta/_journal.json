@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1786946822420,
+      "tag": "0000_romantic_kronos",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1786947510469,
+      "tag": "0001_real_bastion",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1786948645107,
+      "tag": "0002_numerous_invaders",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1786965861465,
+      "tag": "0003_next_pestilence",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1786967908719,
+      "tag": "0004_yielding_masked_marvel",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1786978465275,
+      "tag": "0005_low_iron_patriot",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1786980647632,
+      "tag": "0006_sweet_sinister_six",
+      "breakpoints": true
+    }
+  ]
+}

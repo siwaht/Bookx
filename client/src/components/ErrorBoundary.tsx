@@ -1,9 +1,9 @@
-import React, { Component, type ReactNode } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { cn } from "@/lib/utils";
+import { AlertTriangle, RotateCcw } from "lucide-react";
+import { Component, ReactNode } from "react";
 
 interface Props {
   children: ReactNode;
-  fallback?: ReactNode;
 }
 
 interface State {
@@ -11,7 +11,7 @@ interface State {
   error: Error | null;
 }
 
-export class ErrorBoundary extends Component<Props, State> {
+class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
     this.state = { hasError: false, error: null };
@@ -21,36 +21,35 @@ export class ErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
-    console.error('[ErrorBoundary]', error, info.componentStack);
-  }
-
-  handleReset = () => {
-    this.setState({ hasError: false, error: null });
-  };
-
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) return this.props.fallback;
-
       return (
-        <div style={styles.container} role="alert">
-          <div style={styles.card}>
-            <div style={styles.iconWrap}>
-              <AlertTriangle size={32} color="#f59e0b" />
+        <div className="flex items-center justify-center min-h-screen p-8 bg-background">
+          <div className="flex flex-col items-center w-full max-w-2xl p-8">
+            <AlertTriangle
+              size={48}
+              className="text-destructive mb-6 flex-shrink-0"
+            />
+
+            <h2 className="text-xl mb-4">An unexpected error occurred.</h2>
+
+            <div className="p-4 w-full rounded bg-muted overflow-auto mb-6">
+              <pre className="text-sm text-muted-foreground whitespace-break-spaces">
+                {this.state.error?.stack}
+              </pre>
             </div>
-            <h2 style={styles.title}>Something went wrong</h2>
-            <p style={styles.message}>
-              {this.state.error?.message || 'An unexpected error occurred.'}
-            </p>
-            <div style={styles.actions}>
-              <button onClick={this.handleReset} style={styles.retryBtn}>
-                <RefreshCw size={14} /> Try Again
-              </button>
-              <button onClick={() => window.location.reload()} style={styles.reloadBtn}>
-                Reload Page
-              </button>
-            </div>
+
+            <button
+              onClick={() => window.location.reload()}
+              className={cn(
+                "flex items-center gap-2 px-4 py-2 rounded-lg",
+                "bg-primary text-primary-foreground",
+                "hover:opacity-90 cursor-pointer"
+              )}
+            >
+              <RotateCcw size={16} />
+              Reload Page
+            </button>
           </div>
         </div>
       );
@@ -60,35 +59,4 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    minHeight: '100vh', background: 'var(--bg-deep)', padding: 24,
-  },
-  card: {
-    display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16,
-    padding: '44px 48px', background: 'var(--glass-bg)',
-    backdropFilter: 'blur(16px)',
-    borderRadius: 'var(--radius-xl)', border: '1px solid var(--border-subtle)',
-    maxWidth: 420, textAlign: 'center',
-    boxShadow: 'var(--shadow-lg)',
-  },
-  iconWrap: {
-    width: 64, height: 64, borderRadius: 16,
-    background: 'rgba(245,158,11,0.08)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center',
-    border: '1px solid rgba(245,158,11,0.12)',
-  },
-  title: { fontSize: 18, fontWeight: 600, color: 'var(--text-primary)' },
-  message: { fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 },
-  actions: { display: 'flex', gap: 10, marginTop: 8 },
-  retryBtn: {
-    display: 'flex', alignItems: 'center', gap: 6,
-    padding: '10px 20px', background: 'var(--accent)', color: '#fff',
-    border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 13, fontWeight: 500,
-  },
-  reloadBtn: {
-    padding: '10px 20px', background: 'var(--bg-elevated)', color: 'var(--text-secondary)',
-    border: '1px solid var(--border-subtle)', borderRadius: 8, cursor: 'pointer', fontSize: 13,
-  },
-};
+export default ErrorBoundary;

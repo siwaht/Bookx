@@ -1,0 +1,1 @@
+ALTER TABLE `bookxCharacters` ADD `previewStorageKey` varchar(512);

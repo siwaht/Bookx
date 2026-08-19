@@ -1,0 +1,128 @@
+# Project TODO
+
+- [x] Define the Bookx relational schema and apply the initial managed database migration.
+- [x] Implement Bookx tRPC CRUD and workflow mutations for projects, chapters, segments, cast, pronunciations, generation jobs, exports, provider settings, studio assets, timeline clips, and secure narration clips.
+- [x] Connect the dashboard and creation wizard to the persisted Bookx project data layer while preserving a preview fallback for unauthenticated visitors.
+- [x] Build the premium Bookx shell with a refined light visual system, responsive navigation, and clear project context.
+- [x] Build the dashboard interface with exact “New project” and “Import audio” entry points plus a locally persistent recent-project bookshelf.
+- [x] Build the three-step creation wizard interface for Basics, Narration, and Review, including manuscript upload selection readiness.
+- [x] Build the three-panel manuscript editor interface with chapter, text, and narration-segment workflows.
+- [x] Build the character-casting interface with searchable voice library and interactive auto-cast behavior.
+- [x] Build the pronunciation-rule interface with custom aliases and phoneme overrides.
+- [x] Build the chapter-level narration-generation interface with progress, selection, and generation history.
+- [x] Build the audio studio and timeline arrangement interface for clips, music, and sound effects.
+- [x] Build the quality-control pre-flight validation interface and review results.
+- [x] Build the Publish & export interface with exact ACX, Podcast, and InAudio package options.
+- [x] Build the provider-settings interface for ElevenLabs and OpenAI examples plus project defaults.
+- [x] Add automated tests for core data validation and workflow procedures.
+- [x] Verify the complete responsive interface, build, test suite, and production runtime.
+- [x] Integrate server-side TTS generation, validated provider credentials, managed audio storage, and persistent export workflow contracts; final package rendering remains a provider-triggered delivery operation.
+- [x] Save a release checkpoint for the expanded Bookx audio-production build.
+- [x] Complete the user-initiated managed-hosting publish action and verify the resulting stable Bookx URL.
+- [x] Inspect the Bookx repository branches, unmerged commits, and main-branch protection before consolidation.
+- [x] Merge the seven approved remote fixes and editorial branches into GitHub main through the authenticated repository session.
+- [x] Delete redundant remote branches only after confirming their changes are present in main; GitHub now shows main as the sole remaining branch.
+- [x] Reconcile the local Bookx main branch with the updated remote main history before the final source push.
+- [x] Push all available local Bookx source changes to GitHub main and verify the remote commit state.
+- [x] Audit the live Bookx interface for hierarchy, visual distinctiveness, accessibility, and production-workspace usability gaps.
+- [x] Redesign the visual system and dashboard hierarchy with a more ownable editorial-audio waveform motif and textured story-cover language.
+- [x] Refine the project setup, provider connection workspace, model dropdowns, project cards, and mobile responsive presentation.
+- [x] Re-run desktop and mobile visual verification, serial provider checks, core tests, typecheck, and production build checks for the interface refinement release.
+- [x] Research official integration requirements for ElevenLabs, Deepgram, Fish Audio, Cloudflare AI, OpenAI, and provider-agnostic text-to-speech, speech-to-text, and LLM orchestration.
+- [x] Persist model-agnostic provider defaults and connection preferences through tRPC for all supported configured providers.
+- [x] Add documented in-app managed-secret handoff and custom OpenAI-compatible endpoint setup guidance for provider connection or credential rotation.
+- [x] Implement typed speech-to-text routing and app-level provider validation procedures with clear degraded-state responses.
+- [x] Add automated fallback and unavailable-provider behavior tests without exposing credentials.
+- [x] Route language-model tasks through the shared provider resolver, persisted defaults, and fallback system used for TTS and STT.
+- [x] Surface provider validation and fallback outcomes in the settings interface so degraded states are visible to creators.
+- [x] Discover Cloudflare Workers AI models from the connected account and populate compatible voice and LLM dropdowns dynamically.
+- [x] Add long-form audiobook batching, continuity guidance, batch selection, and delivery-oriented production controls.
+- [x] Add a simple multi-cast podcast production flow with episode setup, host and guest roles, per-speaker voice assignment, and quick guest additions.
+- [x] Add sound-effect and background-music controls with timeline placement, volume, narration-duck settings, and persistent studio data contracts.
+- [x] Add clearer podcast and audiobook workflow cues so creators can complete casting, generation, review, and export with less cognitive load.
+- [x] Test the expanded multi-cast, sound, music, long-form, and export user flows through typechecks, automated tests, database verification, and live browser interaction tests.
+- [x] Inventory every visible Bookx button, input, select, toggle, workflow stage, and expected result for comprehensive QA.
+- [x] Run unit, provider-contract, database, API, build, and deployment-health checks.
+- [x] Exercise the dashboard, creation wizard, manuscript, cast, pronunciation, generation, studio, review, export, and provider-settings interactions, including accessible keyboard traversal and source-level inactive-control audit.
+- [x] Verify desktop, tablet, mobile, unauthenticated preview, and deployed-domain behavior.
+- [x] Fix reproducible QA failures and rerun all affected checks.
+- [x] Deliver a complete QA report with passed scenarios, fixed defects, and remaining provider-dependent limitations.
+- [x] Fix QA-discovered dashboard navigation, review, pronunciation, cast, and production-board buttons that lacked explicit click behavior.
+- [x] Independently verify the newly connected Cloudflare account and Workers AI model catalog, then confirm compatible voice and language models appear in Bookx provider controls.
+- [x] Remove the QA-created temporary test project from the published local bookshelf and prevent it from appearing in the release experience.
+- [x] Resolve the QA database persistence finding by verifying the actual deployed Bookx table names and authenticated project-storage procedures.
+- [x] Complete a true isolated QA multi-cast podcast workflow through creation, cast, provider/model selection, studio, review, and Podcast package preparation.
+- [x] Execute a multi-chapter audiobook workflow through manuscript, cast, provider selection, generation, long-form studio, review, InAudio package preparation, and a real stored narration-to-transcription roundtrip.
+- [x] Document end-to-end demo outcomes, output states, provider routing behavior, and remaining provider-dependent constraints.
+- [x] Verify and complete the provider-aware Cloudflare voice-model dropdown so selecting Cloudflare surfaces compatible account-catalog TTS models in the browser.
+- [x] Fix the Cloudflare connection-validation test timeout so the healthy Workers AI catalog check can complete reliably during QA.
+- [x] Fix the creation wizard’s narration-step layout so Back and Continue remain visible and keyboard-accessible at constrained desktop and mobile viewport heights.
+- [x] Add an accessible Escape-key dismissal behavior to the Bookx creation wizard so incomplete QA demos can be cancelled safely.
+- [x] Retest the repaired long-form batch-generation button in the browser and capture visible running/completion feedback.
+- [x] Protect the Cloudflare text-to-speech default with the documented MeloTTS route and runtime fallback when the native model is unavailable.
+- [x] Investigate the remaining Cloudflare MeloTTS upstream HTTP 500 availability issue before treating native Cloudflare voice synthesis as production-ready.
+- [x] Add and run a focused narration fallback test that forces ElevenLabs failure and verifies fallback to the next configured TTS provider.
+- [x] Reset the project creation draft when a wizard is cancelled or reopened so temporary QA titles and settings cannot leak into a new project.
+- [x] Fix the multi-cast review model label so persisted and sample projects always display the active LLM provider and model instead of undefined metadata.
+- [x] Fix the QA-discovered Cloudflare language-model casting invocation so it returns real structured character recommendations instead of silently falling back to static assignments.
+- [x] Normalize model-recommended cast confidence values to the persisted integer contract so successful character analysis can be saved without a tRPC validation error.
+- [x] Add focused unit coverage for percentage-style and unit-interval model confidence normalization in casting recommendations.
+- [x] Ensure authenticated project creation adopts the returned database ID and only persists LLM cast recommendations for verified saved projects.
+- [x] Add a self-cleaning authenticated persistence test for model-ready Bookx character assignments.
+- [x] Define persisted character, scene-line, role, voice-trait, assignment-confidence, and preview metadata for LLM-assisted multi-cast projects.
+- [x] Add model-agnostic manuscript character extraction and provider-aware distinct voice recommendations using the selected language model and available voice catalog.
+- [x] Build a detailed multi-cast review surface with character dialogue context, recommended voice rationale, preview audio, manual overrides, and assignment persistence.
+- [x] Route multi-cast narration generation through the approved character-to-voice assignment map and verify provider compatibility.
+- [x] Test character extraction, automatic distinct voice recommendations, manual overrides, preview behavior, persistence, and multi-cast narration routing.
+- [x] Fix the QA-discovered duplicate “InAudio package package” export label so all delivery copy uses the exact required format name cleanly.
+- [x] Fix the live wizard dialog overflow that hid its Cancel and Continue controls and blocked all project setup interactions.
+- [ ] Audit and repair every visible Bookx button, input, select, and navigation control reported as non-interactive on the live site.
+- [x] Run browser-based end-to-end verification of dashboard, project creation, casting, pronunciation, generation, studio, review, export, and provider settings before publishing the repair.
+- [x] Ensure a manual cast voice override persists by character name even before the workspace query has hydrated its database character IDs.
+- [x] Ensure a manual cast voice override persists by character name even before the workspace query has hydrated its database character IDs.
+- [x] Persist manual cast overrides in browser storage for local-preview projects so an override also survives reload before sign-in.
+- [x] Persist manual cast overrides in browser storage for local-preview projects so an override also survives reload before sign-in.
+- [x] Preserve a browser-stored manual cast override when a signed-in project cannot sync its character update yet.
+- [x] Store local cast overrides with the corresponding project shelf record as a durable fallback across reloads.
+- [x] Store local cast overrides with the corresponding project shelf record as a durable fallback across reloads.
+- [x] Add an explicit sign-in action and session-state cue so users can access persisted Bookx functions instead of silently operating in local-preview mode.
+- [x] Add an explicit sign-in action and session-state cue so users can access persisted Bookx functions instead of silently operating in local-preview mode.
+- [x] Verify and document a published-site control matrix with observed success outcomes for every previously reported non-interactive control category.
+- [x] Run and record a complete published-domain end-to-end workflow with visible success feedback for creation, casting, pronunciation, generation, studio, review, export, and provider settings.
+- [ ] Complete and document an exhaustive published-site audit of remaining secondary controls, selectors, toggles, and chapter/studio actions.
+- [ ] Complete and document an exhaustive published-site audit of remaining secondary controls, selectors, toggles, and chapter/studio actions.
+- [x] Exercise and document the remaining cast-side secondary controls: Add speaker, Find similar voices, library test buttons, and additional previews/selectors.
+- [x] Verify a published character preview, voice-library test, and manual voice-selector change with distinct visible successful outcomes.
+- [x] Add explicit browser-sample feedback for cast previews that fall back while a project is not yet persisted or connected to a provider.
+- [x] Exercise and document remaining write/chapter and workspace utility controls: chapter rows, segment previews, sharing, project settings, and Tools.
+- [ ] Verify each remaining visible secondary control in the published workspace with a distinct observed feedback or state transition recorded in the QA log.
+- [ ] Verify each remaining visible secondary control in the published workspace with a distinct observed feedback or state transition recorded in the QA log.
+- [x] Wire manuscript delivery tools, add chapter, split, and segment preview controls to visible state changes or feedback instead of inert buttons.
+- [x] Wire manuscript delivery tools, add chapter, split, and segment preview controls to visible state changes or feedback instead of inert buttons.
+- [x] Wire remaining studio mix-card, add-batch, and generation actions to visible state changes or feedback instead of inert buttons.
+- [x] Wire remaining studio mix-card, add-batch, and generation actions to visible state changes or feedback instead of inert buttons.
+- [x] Move authentication browser-storage writes out of render computation to prevent client-side exceptions that could interrupt UI interactions or overlay cleanup.
+- [x] Move authentication browser-storage writes out of render computation to prevent client-side exceptions that could interrupt UI interactions or overlay cleanup.
+- [x] Wire the manuscript chapter-add control to visible feedback and verify it in the browser.
+- [x] Wire the manuscript chapter-add control to visible feedback and verify it in the browser.
+- [x] Wire the studio batch-generation action to visible progress or confirmation feedback and verify it in the browser.
+- [x] Wire the studio batch-generation action to visible progress or confirmation feedback and verify it in the browser.
+- [x] Prevent icon controls without an action from appearing clickable in Bookx’s live interface.
+- [x] Repair the manuscript chapter-row selection control so clicking a visible chapter changes the active chapter editor and segment list.
+- [x] Repair the manuscript chapter-row selection control so clicking a visible chapter changes the active chapter editor and segment list.
+- [x] Align the visible manuscript editor chapter number with the selected chapter-row label.
+- [x] Align the visible manuscript editor chapter number with the selected chapter-row label.
+- [x] Replace global click-feedback workarounds with a scoped React workspace feedback handler for chapter add and studio batch generation.
+- [ ] Produce a final explicit published-control inventory with a verified outcome for every visible control in docs/qa_execution_notes.md.
+- [ ] Produce a final explicit published-control inventory with a verified outcome for every visible control in docs/qa_execution_notes.md.
+- [ ] Produce a final explicit published-control inventory with a verified outcome for every visible control in docs/qa_execution_notes.md.
+- [ ] Produce a final explicit published-control inventory with a verified outcome for every visible control in docs/qa_execution_notes.md.
+- [ ] Expand the QA log with a one-by-one published inventory of all remaining secondary controls and their individual observed outcomes.
+- [ ] Expand the QA log with a one-by-one published inventory of all remaining secondary controls and their individual observed outcomes.
+- [ ] Complete final regression, save the release checkpoint, and push the verified Bookx project to GitHub main.
+- [x] Replace global click-feedback workarounds with a scoped React workspace handler for secondary controls.
+- [x] Narrow delegated secondary feedback to the Bookx application surface so unrelated document and overlay clicks are not intercepted.
+- [x] Complete one new published project-creation flow and carry that same project through casting, pronunciation, generation, studio, review, export, and provider settings with observed success feedback.
+- [x] Verify the unauthenticated published dashboard shows the new Sign in action instead of the ME avatar and correct any auth-state mismatch.
+- [x] Capture and document the published Share preview confirmation after the user-approved share action.
+- [x] Capture and document the published Share preview confirmation after the user-approved share action.
