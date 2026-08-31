@@ -1,5 +1,6 @@
 import { storageGetSignedUrl } from "./storage";
 import { transcribeAudio as transcribeWithManus } from "./_core/voiceTranscription";
+import { availableProviders, buildCloudflareSttBody, cloudflareHeaders, getCloudflareEndpoint } from "./providerCredentials";
 
 export type ProviderId = "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio";
 export type RoutingCapability = "text-to-speech" | "speech-to-text" | "language-model";
@@ -30,8 +31,8 @@ export function resolveProvider(requested: ProviderId, capability: RoutingCapabi
   return { provider, fallback: true };
 }
 
-export async function transcribeAudioRoute(input: { provider: ProviderId; model?: string; audioStorageKey: string; language?: string }) {
-  const resolved = resolveProvider(input.provider, "speech-to-text");
+export async function transcribeAudioRoute(input: { provider: ProviderId; model?: string; audioStorageKey: string; language?: string; ownerId?: number }) {
+  const resolved = resolveProvider(input.provider, "speech-to-text", await availableProviders(input.ownerId));
   const audioUrl = await storageGetSignedUrl(input.audioStorageKey);
   const language = input.language && input.language !== "Auto-detect" ? input.language.slice(0, 2).toLowerCase() : undefined;
 
@@ -58,6 +59,42 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
     if (!response.ok) throw new Error(`OpenAI transcription failed with HTTP ${response.status}`);
     const payload = await response.json() as { text?: string };
     return { text: payload.text || "", provider: resolved.provider, fallback: resolved.fallback };
+  }
+
+  if (resolved.provider === "Cloudflare") {
+    const endpoint = await getCloudflareEndpoint(input.ownerId);
+    if (!endpoint) throw new Error("Cloudflare speech-to-text is not configured");
+    const audio = await fetch(audioUrl, { signal: AbortSignal.timeout(45_000) });
+    if (!audio.ok) throw new Error("Stored audio could not be read for transcription");
+    const bytes = new Uint8Array(await audio.arrayBuffer());
+
+    if (endpoint.mode === "openai-compatible") {
+      const body = new FormData();
+      body.set("file", new Blob([bytes], { type: audio.headers.get("content-type") || "audio/mpeg" }), "recording.mp3");
+      body.set("model", input.model || endpoint.sttModel || "whisper-1");
+      if (language) body.set("language", language);
+      const response = await fetch(`${endpoint.apiBaseUrl}/audio/transcriptions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${endpoint.apiKey}` },
+        body,
+        signal: AbortSignal.timeout(45_000),
+      });
+      if (!response.ok) throw new Error(`Cloudflare transcription failed with HTTP ${response.status}`);
+      const payload = await response.json() as { text?: string };
+      return { text: payload.text || "", provider: resolved.provider, fallback: resolved.fallback };
+    }
+
+    const model = input.model || endpoint.sttModel || "@cf/openai/whisper";
+    const response = await fetch(`${endpoint.apiBaseUrl}/run/${model}`, {
+      method: "POST",
+      headers: cloudflareHeaders(endpoint),
+      body: JSON.stringify(buildCloudflareSttBody(model, bytes, language)),
+      signal: AbortSignal.timeout(45_000),
+    });
+    if (!response.ok) throw new Error(`Cloudflare transcription failed with HTTP ${response.status}`);
+    const payload = await response.json() as { result?: { text?: string } | string };
+    const text = typeof payload.result === "string" ? payload.result : payload.result?.text || "";
+    return { text, provider: resolved.provider, fallback: resolved.fallback };
   }
 
   const result = await transcribeWithManus({ audioUrl, language, prompt: "Transcribe this Bookx audiobook or podcast clip with paragraph-ready punctuation." });

@@ -1,0 +1,1 @@
+ALTER TABLE `bookxProviderSettings` ADD `apiKey` varchar(512);

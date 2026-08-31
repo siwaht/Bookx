@@ -6,12 +6,14 @@ vi.mock("./storage", () => ({
 
 vi.mock("./providerRouting", () => ({
   resolveProvider: (provider: string) => ({ provider, fallback: false }),
+  configuredProviders: () => ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI"],
 }));
 
 import { synthesizeNarration, validateNarrationRequest } from "./tts";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 
 describe("Bookx narration request validation", () => {
@@ -29,6 +31,8 @@ describe("Bookx narration request validation", () => {
   });
 
   it("skips failed Cloudflare and ElevenLabs narration responses for the next configured route", async () => {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "qa-account");
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "qa-token");
     const mockedFetch = vi.fn()
       .mockResolvedValueOnce(new Response("", { status: 500 }))
       .mockResolvedValueOnce(new Response("", { status: 403 }))
@@ -52,5 +56,18 @@ describe("Bookx narration request validation", () => {
     expect(mockedFetch).toHaveBeenCalledTimes(2);
     expect(String(mockedFetch.mock.calls[1]?.[0])).toContain("api.deepgram.com");
     expect(result).toMatchObject({ provider: "Deepgram", fallback: true, storageKey: "qa/fallback.mp3" });
+  });
+
+  it("terminates after a single pass when every configured provider fails", async () => {
+    vi.stubEnv("CLOUDFLARE_ACCOUNT_ID", "qa-account");
+    vi.stubEnv("CLOUDFLARE_API_TOKEN", "qa-token");
+    const mockedFetch = vi.fn().mockResolvedValue(new Response("", { status: 500 }));
+    vi.stubGlobal("fetch", mockedFetch);
+
+    await expect(synthesizeNarration({ provider: "Cloudflare", projectId: "qa-exhaust", text: "Every route is down." }))
+      .rejects.toThrow("no configured runtime fallback completed");
+
+    // Cloudflare, ElevenLabs, Deepgram, OpenAI — each tried exactly once, no re-entry.
+    expect(mockedFetch).toHaveBeenCalledTimes(4);
   });
 });

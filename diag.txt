@@ -1,0 +1,24 @@
+﻿BOOK 'Works' [audiobook] id=c15f0957-9f0d-4138-877d-ea9612dad20c
+  characters=0 voiced=0 chapters=2
+    chapter 'Chapter 1: The Beginning': segments=0 with_character=0 with_audio=0
+    chapter 'Chapter 2: The Middle': segments=0 with_character=0 with_audio=0
+
+BOOK 'Final Test' [audiobook] id=be2d5355-e8ef-4fe4-bb21-80dedf3f64d3
+  characters=1 voiced=0 chapters=0
+    - Narrator [narrator] lines=0 -> NO VOICE
+
+BOOK 'E2E Test' [audiobook] id=347fb021-4d53-47ea-9c15-d256c6f096a3
+  characters=0 voiced=0 chapters=0
+
+BOOK 'My Test Book' [audiobook] id=604bc123-e5e8-413f-9906-ba57c7b9bd40
+  characters=0 voiced=0 chapters=0
+
+BOOK 'aiagents' [audiobook] id=63557f70-acce-4b09-86c3-9b089f371673
+  characters=0 voiced=0 chapters=0
+
+BOOK 'aiagents' [audiobook] id=b065755e-bef7-4913-88d6-ad6cc8891fcd
+  characters=0 voiced=0 chapters=0
+
+BOOK 'test from proxy' [audiobook] id=2f5ae927-eb17-4a3c-8803-bb72267c15a4
+  characters=0 voiced=0 chapters=0
+

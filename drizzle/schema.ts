@@ -120,8 +120,9 @@ export const bookxProviderSettings = mysqlTable("bookxProviderSettings", {
   fallbackProvider: varchar("fallbackProvider", { length: 80 }),
   fallbackEnabled: int("fallbackEnabled").notNull().default(0),
   apiBaseUrl: varchar("apiBaseUrl", { length: 255 }),
+  apiKey: varchar("apiKey", { length: 512 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
-  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+  updatedAt: timestamp("updatedAt").onUpdateNow().defaultNow().notNull(),
 });
 
 export const bookxStudioAssets = mysqlTable("bookxStudioAssets", {

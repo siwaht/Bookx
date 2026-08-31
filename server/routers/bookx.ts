@@ -19,6 +19,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { synthesizeNarration } from "../tts";
 import { storagePut } from "../storage";
 import { transcribeAudioRoute } from "../providerRouting";
+import { redactProviderApiKey } from "../providerCredentials";
 
 const projectId = z.object({ projectId: z.string().min(1).max(32) });
 const chapterInput = z.object({ projectId: z.string().min(1), title: z.string().min(1).max(255), body: z.string().optional(), orderIndex: z.number().int().min(0).optional() });
@@ -55,6 +56,16 @@ async function requireProject(ownerId: number, projectIdValue: string) {
   const [project] = await db.select().from(bookxProjects).where(and(eq(bookxProjects.id, projectIdValue), eq(bookxProjects.ownerId, ownerId))).limit(1);
   if (!project) throw new Error("Project not found");
   return { db, project };
+}
+
+/** Verifies a segment belongs to a chapter of the caller's project (ownership check). */
+async function requireSegment(db: NonNullable<Awaited<ReturnType<typeof getDb>>>, projectIdValue: string, segmentId: string) {
+  const [row] = await db.select({ segment: bookxSegments }).from(bookxSegments)
+    .innerJoin(bookxChapters, eq(bookxSegments.chapterId, bookxChapters.id))
+    .where(and(eq(bookxSegments.id, segmentId), eq(bookxChapters.projectId, projectIdValue)))
+    .limit(1);
+  if (!row) throw new Error("Segment not found");
+  return row.segment;
 }
 
 export const bookxRouter = router({
@@ -155,12 +166,14 @@ export const bookxRouter = router({
   updateSegment: protectedProcedure.input(z.object({ projectId: z.string(), segmentId: z.string(), text: z.string().min(1).optional(), characterId: z.string().nullable().optional(), orderIndex: z.number().int().min(0).optional() })).mutation(async ({ ctx, input }) => {
     const { db } = await requireProject(ctx.user.id, input.projectId);
     const { projectId: _projectId, segmentId, ...updates } = input;
+    await requireSegment(db, input.projectId, segmentId);
     await db.update(bookxSegments).set({ ...updates, updatedAt: new Date() }).where(eq(bookxSegments.id, segmentId));
     return { success: true };
   }),
 
   deleteSegment: protectedProcedure.input(z.object({ projectId: z.string(), segmentId: z.string() })).mutation(async ({ ctx, input }) => {
     const { db } = await requireProject(ctx.user.id, input.projectId);
+    await requireSegment(db, input.projectId, input.segmentId);
     await db.delete(bookxSegments).where(eq(bookxSegments.id, input.segmentId));
     return { success: true };
   }),
@@ -243,14 +256,14 @@ export const bookxRouter = router({
     if (!voiceId) throw new Error("Assign a voice before generating a preview");
     const text = character.sampleLine?.trim();
     if (!text) throw new Error("Add a sample line before generating a preview");
-    const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text, voiceId, model: plan.model });
+    const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text, voiceId, model: plan.model, ownerId: ctx.user.id });
     await db.update(bookxCharacters).set({ previewStorageKey: generated.storageKey, updatedAt: new Date() }).where(eq(bookxCharacters.id, character.id));
     return { ...generated, characterId: character.id, voiceId };
   }),
 
   previewVoice: protectedProcedure.input(z.object({ projectId: z.string(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"]), voiceId: z.string().min(1).max(160), model: z.string().max(160).optional(), text: z.string().trim().min(1).max(600) })).mutation(async ({ ctx, input }) => {
     const { project } = await requireProject(ctx.user.id, input.projectId);
-    const generated = await synthesizeNarration({ projectId: input.projectId, provider: input.provider, text: input.text, voiceId: input.voiceId, model: input.model || project.voiceModel });
+    const generated = await synthesizeNarration({ projectId: input.projectId, provider: input.provider, text: input.text, voiceId: input.voiceId, model: input.model || project.voiceModel, ownerId: ctx.user.id });
     return { ...generated, voiceId: input.voiceId };
   }),
 
@@ -261,10 +274,11 @@ export const bookxRouter = router({
       : [];
     const plan = resolveNarrationPlan({ provider: input.provider, explicitVoiceId: input.voiceId, characterVoiceId: character?.voiceId, requestedModel: input.model, projectModel: project.voiceModel });
     const voiceId = plan.voiceId;
+    if (input.segmentId) await requireSegment(db, input.projectId, input.segmentId);
     const jobId = nanoid();
     await db.insert(bookxGenerationJobs).values({ id: jobId, projectId: input.projectId, scope: "segment", status: "running", totalSegments: 1, completedSegments: 0 });
     try {
-      const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text: input.text, voiceId, model: plan.model });
+      const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text: input.text, voiceId, model: plan.model, ownerId: ctx.user.id });
       if (input.segmentId) await db.update(bookxSegments).set({ audioStorageKey: generated.storageKey, updatedAt: new Date() }).where(eq(bookxSegments.id, input.segmentId));
       await db.update(bookxGenerationJobs).set({ status: "completed", completedSegments: 1, updatedAt: new Date() }).where(eq(bookxGenerationJobs.id, jobId));
       return { jobId, characterId: input.characterId, voiceId, ...generated };
@@ -277,7 +291,8 @@ export const bookxRouter = router({
 
   transcribeAudioClip: protectedProcedure.input(z.object({ projectId: z.string(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare", "Fish Audio"]), model: z.string().max(160).optional(), audioStorageKey: z.string().min(1).max(512), language: z.string().max(40).optional() })).mutation(async ({ ctx, input }) => {
     await requireProject(ctx.user.id, input.projectId);
-    return transcribeAudioRoute(input);
+    const { projectId: _projectId, ...route } = input;
+    return transcribeAudioRoute({ ...route, ownerId: ctx.user.id });
   }),
 
   requestExport: protectedProcedure.input(z.object({ projectId: z.string(), format: z.enum(["ACX", "Podcast", "InAudio package"]) })).mutation(async ({ ctx, input }) => {
@@ -347,7 +362,8 @@ export const bookxRouter = router({
   listProviderSettings: protectedProcedure.query(async ({ ctx }) => {
     const db = await getDb();
     if (!db) return [];
-    return db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ctx.user.id));
+    const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ctx.user.id));
+    return rows.map(redactProviderApiKey);
   }),
 
   saveProviderSettings: protectedProcedure.input(z.object({ provider: z.enum(["ElevenLabs", "OpenAI"]), secretConfigured: z.boolean(), defaultModel: z.string().max(100).optional(), defaultPace: z.string().max(80).optional(), chapterGapMs: z.number().int().min(0).max(60000).optional() })).mutation(async ({ ctx, input }) => {
