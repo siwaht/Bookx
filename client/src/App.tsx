@@ -31,7 +31,22 @@ function App() {
         // switchable
       >
         <TooltipProvider>
-          <Toaster />
+          <Toaster
+            position="bottom-right"
+            closeButton
+            toastOptions={{
+              style: {
+                background: "#203f42",
+                color: "#fffefa",
+                borderRadius: "16px",
+                fontFamily: "var(--font-sans)",
+                fontSize: "13px",
+                fontWeight: 600,
+                border: "1px solid rgba(255, 255, 255, 0.12)",
+                boxShadow: "0 12px 32px rgba(23, 48, 52, 0.28)",
+              },
+            }}
+          />
           <Router />
         </TooltipProvider>
       </ThemeProvider>
