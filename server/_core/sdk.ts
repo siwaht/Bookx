@@ -18,6 +18,15 @@ import type {
 const isNonEmptyString = (value: unknown): value is string =>
   typeof value === "string" && value.length > 0;
 
+// `verifySession` runs on every request, so a config warning must not repeat
+// once per call.
+const warnedMessages = new Set<string>();
+const warnOnce = (message: string) => {
+  if (warnedMessages.has(message)) return;
+  warnedMessages.add(message);
+  console.warn(message);
+};
+
 export type SessionPayload = {
   openId: string;
   appId: string;
@@ -155,6 +164,20 @@ class SDKServer {
 
   private getSessionSecret() {
     const secret = ENV.cookieSecret;
+    // `ENV.cookieSecret` defaults to "" when JWT_SECRET is unset, and jose then
+    // fails deep inside signing with "Zero-length key is not supported" — which
+    // surfaces as an opaque 500 on the OAuth callback and a silent auth failure
+    // on every request. Name the actual cause instead.
+    if (!secret) {
+      throw new Error(
+        "JWT_SECRET is not configured, so session tokens cannot be signed or verified. Set JWT_SECRET in your environment."
+      );
+    }
+    if (secret.length < 32) {
+      warnOnce(
+        `[Auth] JWT_SECRET is only ${secret.length} characters. Use at least 32 for HS256.`
+      );
+    }
     return new TextEncoder().encode(secret);
   }
 
@@ -288,6 +311,7 @@ class SDKServer {
     const sessionUserId = session.openId;
     const signedInAt = new Date();
     let user = await db.getUserByOpenId(sessionUserId);
+    let syncedFromOAuth = false;
 
     // If user not in DB, sync from OAuth server automatically
     if (!user) {
@@ -301,6 +325,7 @@ class SDKServer {
           lastSignedIn: signedInAt,
         });
         user = await db.getUserByOpenId(userInfo.openId);
+        syncedFromOAuth = true;
       } catch (error) {
         console.error("[Auth] Failed to sync user from OAuth:", error);
         throw ForbiddenError("Failed to sync user info");
@@ -311,16 +336,38 @@ class SDKServer {
       throw ForbiddenError("User not found");
     }
 
-    await db.upsertUser({
-      openId: user.openId,
-      lastSignedIn: signedInAt,
-    });
+    // The sync branch above already wrote `lastSignedIn`; otherwise refresh it
+    // at most once per window so a purely informational column does not cost a
+    // database write on every single authenticated API call.
+    if (!syncedFromOAuth && shouldRefreshLastSignedIn(user.openId, signedInAt)) {
+      await db.upsertUser({
+        openId: user.openId,
+        lastSignedIn: signedInAt,
+      });
+    }
 
     return user;
   }
 }
 
 const CRON_OPEN_ID_PREFIX = "cron_";
+
+const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
+const LAST_SEEN_CACHE_LIMIT = 10_000;
+const lastSeenWrites = new Map<string, number>();
+
+function shouldRefreshLastSignedIn(openId: string, now: Date) {
+  const timestamp = now.getTime();
+  const previous = lastSeenWrites.get(openId);
+  if (previous !== undefined && timestamp - previous < LAST_SEEN_REFRESH_MS) {
+    return false;
+  }
+  // Bound the cache so a long-lived process with many users cannot grow it
+  // without limit; dropping entries only costs one extra write.
+  if (lastSeenWrites.size >= LAST_SEEN_CACHE_LIMIT) lastSeenWrites.clear();
+  lastSeenWrites.set(openId, timestamp);
+  return true;
+}
 
 /** Result of `sdk.authenticateRequest`. Cron callbacks set `isCron=true` and `taskUid`; see `/home/ubuntu/skills/webdev-periodic-updates/SKILL.md`. */
 export type AuthenticatedUser = User & {

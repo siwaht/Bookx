@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef } from "react";
 import { usePersistFn } from "./usePersistFn";
 
 export interface UseCompositionReturn<
@@ -71,6 +71,13 @@ export function useComposition<
   const isComposing = usePersistFn(() => {
     return c.current;
   });
+
+  // The nested timers were only cleared by the next `compositionStart`, so an
+  // unmount during composition left them pending.
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+    if (timer2.current) clearTimeout(timer2.current);
+  }, []);
 
   return {
     onCompositionStart,

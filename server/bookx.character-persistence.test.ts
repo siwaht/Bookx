@@ -1,6 +1,7 @@
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { describe, expect, it } from "vitest";
+import { needs, unconfigured } from "./testEnv";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
@@ -19,7 +20,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe("Bookx character persistence", () => {
+describe.skipIf(unconfigured("DATABASE_URL"))(`Bookx character persistence (${needs("DATABASE_URL")})`, () => {
   it("persists model-ready character assignments on a saved project and removes the isolated test record", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({

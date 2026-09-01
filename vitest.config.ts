@@ -15,5 +15,8 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["server/**/*.test.ts", "server/**/*.spec.ts"],
+    // Mirrors the `import "dotenv/config"` that `server/_core/index.ts` does at
+    // boot, so integration tests see the same configuration as the server.
+    setupFiles: [path.resolve(templateRoot, "server", "vitest.setup.ts")],
   },
 });

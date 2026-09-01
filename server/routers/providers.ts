@@ -287,16 +287,38 @@ export const providersRouter = router({
     const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ctx.user.id));
     return rows.map(redactProviderApiKey);
   }),
-  savePreference: protectedProcedure.input(z.object({ provider: providerId, defaultTtsModel: z.string().max(160).optional(), defaultSttModel: z.string().max(160).optional(), defaultLlmModel: z.string().max(160).optional(), fallbackProvider: providerId.optional(), fallbackEnabled: z.boolean().default(false), apiBaseUrl: z.string().url().max(255).optional(), apiKey: z.string().max(512).optional() })).mutation(async ({ ctx, input }) => {
+  /**
+   * Patch, not replace. A field the caller omits keeps its stored value; an
+   * empty string clears it. Previously every optional field was written as
+   * `input.x || null`, so a caller that sent only a fallback policy silently
+   * erased the saved endpoint URL and the custom model names alongside it.
+   */
+  savePreference: protectedProcedure.input(z.object({ provider: providerId, defaultTtsModel: z.string().max(160).optional(), defaultSttModel: z.string().max(160).optional(), defaultLlmModel: z.string().max(160).optional(), fallbackProvider: providerId.optional(), fallbackEnabled: z.boolean().optional(), apiBaseUrl: z.union([z.string().url().max(255), z.literal("")]).optional(), apiKey: z.string().max(512).optional() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new Error("Database unavailable");
     const [existing] = await db.select().from(bookxProviderSettings).where(and(eq(bookxProviderSettings.ownerId, ctx.user.id), eq(bookxProviderSettings.provider, input.provider))).limit(1);
-    const values: Record<string, unknown> = { secretConfigured: configuredProviders().includes(input.provider) || Boolean(input.apiKey) ? 1 : 0, defaultTtsModel: input.defaultTtsModel || null, defaultSttModel: input.defaultSttModel || null, defaultLlmModel: input.defaultLlmModel || null, fallbackProvider: input.fallbackProvider || null, fallbackEnabled: input.fallbackEnabled ? 1 : 0, apiBaseUrl: input.apiBaseUrl || null, updatedAt: new Date() };
-    // Only touch the key column when the client sent one (empty string clears it).
-    if (input.apiKey !== undefined) values.apiKey = input.apiKey || null;
+
+    const values: Record<string, unknown> = { updatedAt: new Date() };
+    const patch = (column: string, value: string | undefined) => {
+      if (value !== undefined) values[column] = value || null;
+    };
+    patch("defaultTtsModel", input.defaultTtsModel);
+    patch("defaultSttModel", input.defaultSttModel);
+    patch("defaultLlmModel", input.defaultLlmModel);
+    patch("fallbackProvider", input.fallbackProvider);
+    patch("apiBaseUrl", input.apiBaseUrl);
+    patch("apiKey", input.apiKey);
+    if (input.fallbackEnabled !== undefined) values.fallbackEnabled = input.fallbackEnabled ? 1 : 0;
+
+    // A provider counts as configured when its key is in the environment, the
+    // caller just supplied one, or one is already stored. Deriving this from the
+    // request alone marked an existing saved connection unconfigured.
+    const effectiveKey = input.apiKey !== undefined ? input.apiKey : existing?.apiKey;
+    values.secretConfigured = configuredProviders().includes(input.provider) || Boolean(effectiveKey) ? 1 : 0;
+
     if (existing) { await db.update(bookxProviderSettings).set(values).where(eq(bookxProviderSettings.id, existing.id)); return { id: existing.id }; }
     const id = nanoid();
-    await db.insert(bookxProviderSettings).values({ id, ownerId: ctx.user.id, provider: input.provider, defaultModel: input.defaultTtsModel || null, defaultPace: null, chapterGapMs: 2000, ...values });
+    await db.insert(bookxProviderSettings).values({ id, ownerId: ctx.user.id, provider: input.provider, defaultModel: input.defaultTtsModel || null, defaultPace: null, chapterGapMs: 2000, fallbackEnabled: 0, ...values });
     return { id };
   }),
   validate: protectedProcedure.input(z.object({ provider: providerId })).mutation(async ({ ctx, input }) => {

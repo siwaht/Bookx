@@ -132,7 +132,7 @@ export function AIChatBox({
   // Calculate min-height for last assistant message to push user message to top
   const [minHeightForLastMessage, setMinHeightForLastMessage] = useState(0);
 
-  useEffect(() => {
+  const measureLastMessageSpace = () => {
     if (containerRef.current && inputAreaRef.current) {
       const containerHeight = containerRef.current.offsetHeight;
       const inputHeight = inputAreaRef.current.offsetHeight;
@@ -147,13 +147,30 @@ export function AIChatBox({
 
       setMinHeightForLastMessage(Math.max(0, calculatedHeight));
     }
-  }, []);
+  };
+
+  // Recompute on mount and whenever the box or its growing textarea changes size.
+  // A single mount-time measurement pinned the value to 0 forever when the
+  // component first rendered inside a hidden or zero-height parent.
+  useEffect(() => {
+    measureLastMessageSpace();
+
+    const container = containerRef.current;
+    const inputArea = inputAreaRef.current;
+    if (!container || typeof ResizeObserver === "undefined") return;
+
+    const observer = new ResizeObserver(() => measureLastMessageSpace());
+    observer.observe(container);
+    if (inputArea) observer.observe(inputArea);
+    return () => observer.disconnect();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- measure reads refs only
+  }, [height]);
 
   // Scroll to bottom helper function with smooth animation
   const scrollToBottom = () => {
     const viewport = scrollAreaRef.current?.querySelector(
       '[data-radix-scroll-area-viewport]'
-    ) as HTMLDivElement;
+    ) as HTMLDivElement | null;
 
     if (viewport) {
       requestAnimationFrame(() => {
@@ -165,6 +182,13 @@ export function AIChatBox({
     }
   };
 
+  // The documented "auto-scrolls to latest message" behaviour lived only in the
+  // submit handler, which runs before the parent commits the new message — so
+  // assistant replies and the loading indicator never scrolled into view.
+  useEffect(() => {
+    scrollToBottom();
+  }, [displayMessages.length, isLoading]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const trimmedInput = input.trim();
@@ -172,9 +196,6 @@ export function AIChatBox({
 
     onSendMessage(trimmedInput);
     setInput("");
-
-    // Scroll immediately after sending
-    scrollToBottom();
 
     // Keep focus on input
     textareaRef.current?.focus();
@@ -314,6 +335,7 @@ export function AIChatBox({
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
+          aria-label={placeholder}
           className="flex-1 max-h-32 resize-none min-h-9"
           rows={1}
         />
@@ -321,12 +343,13 @@ export function AIChatBox({
           type="submit"
           size="icon"
           disabled={!input.trim() || isLoading}
+          aria-label={isLoading ? "Sending message" : "Send message"}
           className="shrink-0 h-[38px] w-[38px]"
         >
           {isLoading ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
           ) : (
-            <Send className="size-4" />
+            <Send aria-hidden="true" className="size-4" />
           )}
         </Button>
       </form>

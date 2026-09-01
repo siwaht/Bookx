@@ -1,4 +1,4 @@
-import { createElement, useState } from "react";
+import { createElement, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AudioLines, Music2, Pause, Play, Plus, SlidersHorizontal, Users } from "lucide-react";
 
@@ -16,6 +16,18 @@ export function EnhancedProduction({ kind, playing, setPlaying }: { kind: "audio
     ? [{ name: "Nadia", role: "Host", voice: "Iris" }, { name: "Mika", role: "Guest", voice: "Sage" }, { name: "Otto", role: "Guest", voice: "Theo" }]
     : [{ name: "Mara", role: "Narrator", voice: "Iris" }, { name: "Elias", role: "Character", voice: "Theo" }, { name: "June", role: "Character", voice: "Sage" }];
   const [cast, setCast] = useState<Speaker[]>(initialSpeakers);
+  const batchTimer = useRef<number | undefined>(undefined);
+
+  // `cast` is seeded from props, so switching an open project between audiobook
+  // and podcast used to leave the previous kind's speakers on screen.
+  useEffect(() => {
+    setCast(podcast
+      ? [{ name: "Nadia", role: "Host", voice: "Iris" }, { name: "Mika", role: "Guest", voice: "Sage" }, { name: "Otto", role: "Guest", voice: "Theo" }]
+      : [{ name: "Mara", role: "Narrator", voice: "Iris" }, { name: "Elias", role: "Character", voice: "Theo" }, { name: "June", role: "Character", voice: "Sage" }]);
+  }, [podcast]);
+
+  useEffect(() => () => window.clearTimeout(batchTimer.current), []);
+
   const updateVoice = (index: number, voice: string) => setCast((current) => current.map((speaker, position) => position === index ? { ...speaker, voice } : speaker));
   const addGuest = () => setCast((current) => [...current, { name: `Guest ${current.length + 1}`, role: "Guest", voice: "Noor" }]);
   const announce = (message: string) => toast(message);
@@ -23,7 +35,9 @@ export function EnhancedProduction({ kind, playing, setPlaying }: { kind: "audio
     if (runningBatch) return;
     setRunningBatch(true);
     announce(`${batch} queued with the current cast and mix.`);
-    window.setTimeout(() => {
+    // Cleared on unmount so leaving the studio mid-batch cannot pop a toast or
+    // set state on a component that is gone.
+    batchTimer.current = window.setTimeout(() => {
       setRunningBatch(false);
       announce(`${batch} production pass is ready for review.`);
     }, 700);

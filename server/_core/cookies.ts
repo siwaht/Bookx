@@ -1,13 +1,5 @@
 import type { CookieOptions, Request } from "express";
 
-const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "::1"]);
-
-function isIpAddress(host: string) {
-  // Basic IPv4 check and IPv6 presence detection.
-  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(host)) return true;
-  return host.includes(":");
-}
-
 function isSecureRequest(req: Request) {
   if (req.protocol === "https") return true;
 
@@ -21,28 +13,27 @@ function isSecureRequest(req: Request) {
   return protoList.some(proto => proto.trim().toLowerCase() === "https");
 }
 
+/**
+ * Attributes for the session cookie.
+ *
+ * `domain` is deliberately never set: a host-only cookie cannot be read by a
+ * sibling subdomain, which is what we want for a session credential.
+ */
 export function getSessionCookieOptions(
   req: Request
-): Pick<CookieOptions, "domain" | "httpOnly" | "path" | "sameSite" | "secure"> {
-  // const hostname = req.hostname;
-  // const shouldSetDomain =
-  //   hostname &&
-  //   !LOCAL_HOSTS.has(hostname) &&
-  //   !isIpAddress(hostname) &&
-  //   hostname !== "127.0.0.1" &&
-  //   hostname !== "::1";
-
-  // const domain =
-  //   shouldSetDomain && !hostname.startsWith(".")
-  //     ? `.${hostname}`
-  //     : shouldSetDomain
-  //       ? hostname
-  //       : undefined;
+): Pick<CookieOptions, "httpOnly" | "path" | "sameSite" | "secure"> {
+  const secure = isSecureRequest(req);
 
   return {
     httpOnly: true,
     path: "/",
-    sameSite: "none",
-    secure: isSecureRequest(req),
+    // `SameSite=None` is only valid *together with* `Secure` — browsers reject
+    // the pair outright, which silently dropped the session cookie whenever the
+    // app was served over plain HTTP (local dev, or a proxy that does not send
+    // `x-forwarded-proto`). Over HTTPS we still need `None` so the app works
+    // when embedded in a preview iframe; otherwise fall back to `Lax`, which is
+    // valid without `Secure` and survives top-level navigation.
+    sameSite: secure ? "none" : "lax",
+    secure,
   };
 }

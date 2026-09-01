@@ -36,20 +36,38 @@ const SIDEBAR_WIDTH_KEY = "sidebar-width";
 const DEFAULT_WIDTH = 280;
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 480;
+const RESIZE_STEP = 16;
+
+const clampWidth = (width: number) => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, width));
+
+/**
+ * A corrupt or non-numeric stored value used to yield `NaN`, which reached the
+ * `--sidebar-width` custom property as the invalid string `NaNpx` and was then
+ * written straight back to storage, making the breakage sticky across reloads.
+ */
+function readStoredSidebarWidth(): number {
+  try {
+    const saved = Number.parseInt(localStorage.getItem(SIDEBAR_WIDTH_KEY) ?? "", 10);
+    return Number.isFinite(saved) ? clampWidth(saved) : DEFAULT_WIDTH;
+  } catch {
+    return DEFAULT_WIDTH;
+  }
+}
 
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
-    const saved = localStorage.getItem(SIDEBAR_WIDTH_KEY);
-    return saved ? parseInt(saved, 10) : DEFAULT_WIDTH;
-  });
+  const [sidebarWidth, setSidebarWidth] = useState(readStoredSidebarWidth);
   const { loading, user } = useAuth();
 
   useEffect(() => {
-    localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
+    try {
+      localStorage.setItem(SIDEBAR_WIDTH_KEY, sidebarWidth.toString());
+    } catch {
+      // Persisting the sidebar width is a convenience, never a hard requirement.
+    }
   }, [sidebarWidth]);
 
   if (loading) {
@@ -88,7 +106,7 @@ export default function DashboardLayout({
         } as CSSProperties
       }
     >
-      <DashboardLayoutContent setSidebarWidth={setSidebarWidth}>
+      <DashboardLayoutContent sidebarWidth={sidebarWidth} setSidebarWidth={setSidebarWidth}>
         {children}
       </DashboardLayoutContent>
     </SidebarProvider>
@@ -97,11 +115,13 @@ export default function DashboardLayout({
 
 type DashboardLayoutContentProps = {
   children: React.ReactNode;
+  sidebarWidth: number;
   setSidebarWidth: (width: number) => void;
 };
 
 function DashboardLayoutContent({
   children,
+  sidebarWidth,
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
@@ -125,9 +145,9 @@ function DashboardLayoutContent({
 
       const sidebarLeft = sidebarRef.current?.getBoundingClientRect().left ?? 0;
       const newWidth = e.clientX - sidebarLeft;
-      if (newWidth >= MIN_WIDTH && newWidth <= MAX_WIDTH) {
-        setSidebarWidth(newWidth);
-      }
+      // Clamp rather than ignore: dragging past an edge should pin to the bound
+      // instead of leaving the handle detached from the pointer.
+      setSidebarWidth(clampWidth(newWidth));
     };
 
     const handleMouseUp = () => {
@@ -230,11 +250,35 @@ function DashboardLayoutContent({
             </DropdownMenu>
           </SidebarFooter>
         </Sidebar>
+        {/*
+          Exposed as a focusable separator so the sidebar can be resized with the
+          arrow keys; previously this was a bare div with only `onMouseDown`, which
+          made resizing impossible without a mouse.
+        */}
         <div
-          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 transition-colors ${isCollapsed ? "hidden" : ""}`}
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize navigation sidebar"
+          aria-valuenow={sidebarWidth}
+          aria-valuemin={MIN_WIDTH}
+          aria-valuemax={MAX_WIDTH}
+          tabIndex={isCollapsed ? -1 : 0}
+          className={`absolute top-0 right-0 w-1 h-full cursor-col-resize hover:bg-primary/20 focus-visible:bg-primary/40 focus-visible:outline-none transition-colors ${isCollapsed ? "hidden" : ""}`}
           onMouseDown={() => {
             if (isCollapsed) return;
             setIsResizing(true);
+          }}
+          onKeyDown={event => {
+            if (isCollapsed) return;
+            const delta = event.key === "ArrowLeft" ? -RESIZE_STEP : event.key === "ArrowRight" ? RESIZE_STEP : 0;
+            if (delta === 0) {
+              if (event.key === "Home") setSidebarWidth(MIN_WIDTH);
+              else if (event.key === "End") setSidebarWidth(MAX_WIDTH);
+              else return;
+            } else {
+              setSidebarWidth(clampWidth(sidebarWidth + delta));
+            }
+            event.preventDefault();
           }}
           style={{ zIndex: 50 }}
         />

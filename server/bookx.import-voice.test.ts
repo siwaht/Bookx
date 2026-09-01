@@ -15,6 +15,7 @@ import { MAX_PODCAST_SOURCE_BYTES, validatePodcastSource } from "./routers/bookx
 import { rankVoiceMatches, type DiscoverableVoice } from "./routers/providers";
 import { synthesizeNarration } from "./tts";
 import type { TrpcContext } from "./_core/context";
+import { needs, unconfigured } from "./testEnv";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
@@ -51,7 +52,7 @@ describe("Bookx podcast import and voice discovery", () => {
     expect(rankVoiceMatches(voices, "theo-dramatic")[0]?.id).toBe("theo-dramatic");
   });
 
-  it("generates a library preview using an explicitly selected provider voice ID", async () => {
+  it.skipIf(unconfigured("DATABASE_URL"))(`generates a library preview using an explicitly selected provider voice ID (${needs("DATABASE_URL")})`, async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({
       title: `Voice library QA ${Date.now()}`,

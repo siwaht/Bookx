@@ -6,6 +6,10 @@
     "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
     "noEmit": true,
     "module": "ESNext",
+    // Without an explicit target, tsc assumes ES5 for downlevel checks and
+    // rejects iterating a Set or `.entries()`. Vite/esbuild does the real
+    // transpile; this only aligns type checking with the runtime we ship to.
+    "target": "ES2022",
     "strict": true,
     "lib": ["esnext", "dom", "dom.iterable"],
     "jsx": "preserve",

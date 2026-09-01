@@ -1,6 +1,7 @@
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { describe, expect, it } from "vitest";
+import { needs, unconfigured } from "./testEnv";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
@@ -19,7 +20,7 @@ function createAuthContext(id: number, openId: string): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe("Bookx segment ownership", () => {
+describe.skipIf(unconfigured("DATABASE_URL"))(`Bookx segment ownership (${needs("DATABASE_URL")})`, () => {
   it("rejects cross-project segment updates and deletes even with a valid own project id", async () => {
     const owner = appRouter.createCaller(createAuthContext(990_001, "ownership-owner"));
     const intruder = appRouter.createCaller(createAuthContext(990_002, "ownership-intruder"));
