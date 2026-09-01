@@ -1,6 +1,12 @@
 import { storageGetSignedUrl } from "./storage";
 import { transcribeAudio as transcribeWithManus } from "./_core/voiceTranscription";
-import { availableProviders, buildCloudflareSttBody, cloudflareHeaders, getCloudflareEndpoint } from "./providerCredentials";
+import {
+  availableProviders,
+  buildCloudflareSttRequest,
+  extractCloudflareTranscript,
+  getCloudflareEndpoint,
+  isWebsocketOnlyCloudflareModel,
+} from "./providerCredentials";
 
 export type ProviderId = "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio";
 export type RoutingCapability = "text-to-speech" | "speech-to-text" | "language-model";
@@ -32,6 +38,12 @@ export function resolveProvider(requested: ProviderId, capability: RoutingCapabi
 }
 
 export async function transcribeAudioRoute(input: { provider: ProviderId; model?: string; audioStorageKey: string; language?: string; ownerId?: number }) {
+  // Rejected before any storage or provider I/O: a realtime-only model can never
+  // transcribe a stored file, so there is no point fetching the audio first.
+  if (input.model && isWebsocketOnlyCloudflareModel(input.model)) {
+    throw new Error(`${input.model} is a realtime model that only accepts WebSocket connections, so it cannot transcribe a stored file. Choose @cf/deepgram/nova-3 or @cf/openai/whisper instead.`);
+  }
+
   const resolved = resolveProvider(input.provider, "speech-to-text", await availableProviders(input.ownerId));
   const audioUrl = await storageGetSignedUrl(input.audioStorageKey);
   const language = input.language && input.language !== "Auto-detect" ? input.language.slice(0, 2).toLowerCase() : undefined;
@@ -85,16 +97,33 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
     }
 
     const model = input.model || endpoint.sttModel || "@cf/openai/whisper";
+    if (isWebsocketOnlyCloudflareModel(model)) {
+      throw new Error(`${model} is a realtime model that only accepts WebSocket connections, so it cannot transcribe a stored file. Choose @cf/deepgram/nova-3 or @cf/openai/whisper instead.`);
+    }
+
+    // Whisper wants JSON with a byte array; Deepgram wants the raw audio as the
+    // request body and rejects the JSON form outright.
+    const { body, headers } = buildCloudflareSttRequest({
+      model,
+      audio: bytes,
+      contentType: audio.headers.get("content-type") || "audio/mpeg",
+      language,
+      apiKey: endpoint.apiKey,
+    });
+    const gatewayId = process.env.CLOUDFLARE_GATEWAY_ID;
+    if (gatewayId && endpoint.mode === "native") headers["cf-aig-gateway-id"] = gatewayId;
+
     const response = await fetch(`${endpoint.apiBaseUrl}/run/${model}`, {
       method: "POST",
-      headers: cloudflareHeaders(endpoint),
-      body: JSON.stringify(buildCloudflareSttBody(model, bytes, language)),
-      signal: AbortSignal.timeout(45_000),
+      headers,
+      body,
+      signal: AbortSignal.timeout(120_000),
     });
-    if (!response.ok) throw new Error(`Cloudflare transcription failed with HTTP ${response.status}`);
-    const payload = await response.json() as { result?: { text?: string } | string };
-    const text = typeof payload.result === "string" ? payload.result : payload.result?.text || "";
-    return { text, provider: resolved.provider, fallback: resolved.fallback };
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`Cloudflare transcription failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+    }
+    return { text: extractCloudflareTranscript(await response.json()), provider: resolved.provider, fallback: resolved.fallback };
   }
 
   const result = await transcribeWithManus({ audioUrl, language, prompt: "Transcribe this Bookx audiobook or podcast clip with paragraph-ready punctuation." });

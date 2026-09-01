@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 import { resolveProvider, type ProviderId } from "./providerRouting";
-import { AURA_2_SPEAKERS, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint } from "./providerCredentials";
+import { AURA_2_SPEAKERS, DEFAULT_CLOUDFLARE_TTS_MODEL, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint } from "./providerCredentials";
 
 export type TtsProvider = ProviderId;
 
@@ -117,7 +117,7 @@ async function synthesizeWithCloudflare(request: NarrationRequest): Promise<Resp
     });
   }
 
-  const model = request.model || endpoint.ttsModel || "@cf/myshell-ai/melotts";
+  const model = request.model || endpoint.ttsModel || DEFAULT_CLOUDFLARE_TTS_MODEL;
   return fetch(`${endpoint.apiBaseUrl}/run/${model}`, {
     method: "POST",
     headers: cloudflareHeaders(endpoint),

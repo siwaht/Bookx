@@ -5,6 +5,16 @@ import { configuredProviders, type ProviderId } from "./providerRouting";
 
 export type CloudflareEndpointMode = "native" | "openai-compatible";
 
+/**
+ * Default Workers AI narration model.
+ *
+ * Aura-2 answers in well under a second and returns a clean MP3 every time.
+ * MeloTTS, the previous default, returns intermittent `AiError: Internal server
+ * error` 500s for an identical request — survivable thanks to retries, but a poor
+ * thing to point a multi-hour book at.
+ */
+export const DEFAULT_CLOUDFLARE_TTS_MODEL = "@cf/deepgram/aura-2-en";
+
 export type CloudflareEndpoint = {
   /** Normalized base URL used for all requests (no trailing slash). */
   apiBaseUrl: string;
@@ -209,4 +219,59 @@ export function buildCloudflareSttBody(model: string, audio: Uint8Array, languag
     if (language) body.language = language;
   }
   return body;
+}
+
+/**
+ * Workers AI models that are only reachable over a WebSocket, so an HTTP run can
+ * never succeed. `@cf/deepgram/flux` answers an HTTP POST with
+ * "only supports websocket connections", which is worth naming up front rather
+ * than surfacing as an opaque 400 mid-run.
+ */
+export const CLOUDFLARE_WEBSOCKET_ONLY_MODELS = new Set(["@cf/deepgram/flux"]);
+
+export const isWebsocketOnlyCloudflareModel = (model: string): boolean =>
+  CLOUDFLARE_WEBSOCKET_ONLY_MODELS.has(model) || /\/flux$/.test(model);
+
+/**
+ * Request shape for a Cloudflare native speech-to-text run.
+ *
+ * The two model families disagree, and getting it wrong is a hard 400:
+ *  - Whisper takes JSON with the audio as a byte array.
+ *  - Deepgram (nova-*) rejects that and wants the audio as the raw request body
+ *    with an audio content type.
+ */
+export function buildCloudflareSttRequest(input: {
+  model: string;
+  audio: Uint8Array;
+  contentType: string;
+  language?: string;
+  apiKey: string;
+}): { body: BodyInit; headers: Record<string, string> } {
+  if (/deepgram|nova|aura/.test(input.model)) {
+    return {
+      body: Buffer.from(input.audio) as unknown as BodyInit,
+      headers: { Authorization: `Bearer ${input.apiKey}`, "content-type": input.contentType || "audio/mpeg" },
+    };
+  }
+
+  return {
+    body: JSON.stringify(buildCloudflareSttBody(input.model, input.audio, input.language)),
+    headers: { Authorization: `Bearer ${input.apiKey}`, "content-type": "application/json" },
+  };
+}
+
+/** Reads a transcript out of any of the shapes Workers AI STT models return. */
+export function extractCloudflareTranscript(payload: unknown): string {
+  const root = (payload as { result?: unknown })?.result ?? payload;
+  if (typeof root === "string") return root;
+  const asRecord = root as {
+    text?: string;
+    transcript?: string;
+    results?: { channels?: Array<{ alternatives?: Array<{ transcript?: string }> }> };
+  };
+  if (typeof asRecord?.text === "string") return asRecord.text;
+  if (typeof asRecord?.transcript === "string") return asRecord.transcript;
+  // Deepgram's nested shape.
+  const nested = asRecord?.results?.channels?.[0]?.alternatives?.[0]?.transcript;
+  return typeof nested === "string" ? nested : "";
 }

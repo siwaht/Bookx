@@ -5,7 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { bookxProviderSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { configuredProviders, providerCapabilities, resolveProvider, type RoutingCapability } from "../providerRouting";
-import { AURA_2_SPEAKERS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, redactProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { AURA_2_SPEAKERS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, isWebsocketOnlyCloudflareModel, redactProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
 
 export type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 
@@ -39,10 +39,12 @@ const capabilities = (taskName: string): ProviderCapability[] => {
 
 /** Shown before any discovery so an unconfigured Cloudflare still lists usable defaults. */
 const cloudflareStaticModels: ProviderModel[] = [
-  { id: "@cf/deepgram/aura-2-en", label: "Aura-2 (English)", capabilities: ["text-to-speech"], detail: "Context-aware English narration voices" },
-  { id: "@cf/myshell-ai/melotts", label: "MeloTTS", capabilities: ["text-to-speech"], detail: "Multilingual draft narration" },
+  { id: "@cf/deepgram/aura-2-en", label: "Aura-2 (English)", capabilities: ["text-to-speech"], detail: "Recommended for narration · fast and consistent" },
+  { id: "@cf/deepgram/aura-2-es", label: "Aura-2 (Spanish)", capabilities: ["text-to-speech"], detail: "Spanish narration voices" },
+  { id: "@cf/myshell-ai/melotts", label: "MeloTTS", capabilities: ["text-to-speech"], detail: "Multilingual draft narration · returns intermittent errors" },
   { id: "@cf/openai/gpt-oss-120b", label: "GPT-OSS 120B", capabilities: ["language-model"], detail: "Cast analysis and editorial planning" },
   { id: "@cf/openai/whisper", label: "Whisper", capabilities: ["speech-to-text"], detail: "Audio transcription" },
+  { id: "@cf/deepgram/nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Fast transcription with word timings" },
 ];
 
 /** Best-effort capability guess for models listed by an OpenAI-compatible endpoint. */
@@ -66,6 +68,9 @@ async function cloudflareModels(endpoint: CloudflareEndpoint | null): Promise<Pr
       const taskName = typeof model.task === "string" ? model.task : model.task?.name || "";
       const id = model.name || "";
       if (!id || seen.has(id)) continue;
+      // A realtime-only model cannot serve a stored file, so offering it as a
+      // choice would only produce a confusing failure later.
+      if (isWebsocketOnlyCloudflareModel(id)) continue;
       const caps = capabilities(taskName);
       if (!caps.length) continue;
       seen.add(id);
@@ -231,6 +236,16 @@ const castRecommendation = z.object({
   confidence: z.number().min(0).max(100).transform(normalizeCastConfidence),
 });
 
+/**
+ * Budget and deadline for a casting call.
+ *
+ * Both are sized for reasoning models, which are the norm on Workers AI now:
+ * measured on `@cf/zai-org/glm-5.3-flash`, a 240-character manuscript produced
+ * 14,000 characters of reasoning and took 56 seconds.
+ */
+const LANGUAGE_MODEL_MAX_TOKENS = 16_384;
+const LANGUAGE_MODEL_TIMEOUT_MS = 180_000;
+
 function extractJson(value: string) {
   const fenced = value.match(/```json\s*([\s\S]*?)```/i)?.[1];
   const candidate = fenced || value.match(/\{[\s\S]*\}/)?.[0];
@@ -248,13 +263,35 @@ async function languageModelText(input: { provider: z.infer<typeof providerId>; 
     const response = await fetch(url, {
       method: "POST",
       headers: cloudflareHeaders(endpoint),
-      body: JSON.stringify({ model: input.model, max_tokens: 4096, messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }] }),
-      signal: AbortSignal.timeout(45_000),
+      // Reasoning models (GLM, Kimi) emit a long `reasoning_content` that is billed
+      // against the same completion budget as the answer. Measured against the
+      // casting prompt, reasoning alone ran to ~3,400 tokens on a 240-character
+      // manuscript, so a 4,096 ceiling left nothing for the JSON and returned an
+      // empty `content`.
+      body: JSON.stringify({ model: input.model, max_tokens: LANGUAGE_MODEL_MAX_TOKENS, messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }] }),
+      // Those same models took 56s for a short prompt, so the old 45s deadline
+      // aborted calls that were about to succeed.
+      signal: AbortSignal.timeout(LANGUAGE_MODEL_TIMEOUT_MS),
     });
-    if (!response.ok) throw new Error(`Cloudflare language model request failed with HTTP ${response.status}`);
-    const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }>; result?: { response?: string; text?: string } };
-    const result = payload.choices?.[0]?.message?.content || payload.result?.response || payload.result?.text;
-    if (!result) throw new Error("Cloudflare returned no model text");
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`Cloudflare language model request failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+    }
+    const payload = await response.json() as {
+      choices?: Array<{ finish_reason?: string; message?: { content?: string; reasoning_content?: string } }>;
+      result?: { response?: string; text?: string };
+    };
+    const choice = payload.choices?.[0];
+    const result = choice?.message?.content || payload.result?.response || payload.result?.text;
+    if (!result) {
+      // Distinguish "the model thought until it ran out of room" from "the model
+      // said nothing", because the fix for the first one is a bigger budget or a
+      // shorter excerpt, not a retry.
+      if (choice?.finish_reason === "length" && choice.message?.reasoning_content) {
+        throw new Error(`${input.model} used its entire ${LANGUAGE_MODEL_MAX_TOKENS}-token budget on internal reasoning and returned no answer. Try a shorter excerpt or a non-reasoning model.`);
+      }
+      throw new Error("Cloudflare returned no model text");
+    }
     return result;
   }
   if (!process.env.OPENAI_API_KEY) throw new Error("OpenAI is not configured");
