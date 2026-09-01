@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { projectReadiness } from "../shared/bookx";
+import { needs, unconfigured } from "./testEnv";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
@@ -20,7 +21,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe("Bookx isolated multi-cast podcast workflow", () => {
+describe.skipIf(unconfigured("DATABASE_URL"))(`Bookx isolated multi-cast podcast workflow (${needs("DATABASE_URL")})`, () => {
   it("creates, casts, mixes, reviews, and prepares a Podcast package without retaining QA data", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({
@@ -43,12 +44,20 @@ describe("Bookx isolated multi-cast podcast workflow", () => {
       const effect = await caller.bookx.addStudioAsset({ projectId: created.id, type: "sound-effect", title: "Page Turn", durationMs: 800 });
       await caller.bookx.placeTimelineClip({ projectId: created.id, assetId: music.id, trackType: "music", startMs: 0, durationMs: 12_000, volume: 35, duckUnderNarration: true });
       await caller.bookx.placeTimelineClip({ projectId: created.id, assetId: effect.id, trackType: "sound-effect", startMs: 4_000, durationMs: 800, volume: 70, duckUnderNarration: false });
-      const exportRequest = await caller.bookx.requestExport({ projectId: created.id, format: "Podcast" });
+      // Export now assembles real audio, so it refuses a project whose narration
+      // has not been rendered rather than queueing a package that cannot exist.
+      // This is the guard that stops a partial book from being delivered.
+      await expect(caller.bookx.requestExport({ projectId: created.id, format: "Podcast" }))
+        .rejects.toThrow(/no narration to export|have no audio/i);
+
+      const readiness = await caller.bookx.exportReadiness({ projectId: created.id });
+      expect(readiness.ready).toBe(false);
+
       const workspace = await caller.bookx.getWorkspace({ projectId: created.id });
       const studio = await caller.bookx.listStudio({ projectId: created.id });
 
       expect(workspace.characters).toHaveLength(2);
-      expect(workspace.exports).toEqual(expect.arrayContaining([expect.objectContaining({ id: exportRequest.id, format: "Podcast", status: "queued" })]));
+      expect(workspace.exports).toHaveLength(0);
       expect(studio.assets).toHaveLength(2);
       expect(studio.clips).toHaveLength(2);
       expect(projectReadiness({ chapterCount: 1, generatedChapters: 1, hasCast: true, hasTimeline: studio.clips.length > 0 }).readyToExport).toBe(true);

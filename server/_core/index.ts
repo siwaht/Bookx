@@ -7,6 +7,7 @@ import { registerOAuthRoutes } from "./oauth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
+import { recoverInterruptedRuns } from "../narrationWorker";
 import { serveStatic, setupVite } from "./vite";
 
 function isPortAvailable(port: number): Promise<boolean> {
@@ -60,6 +61,13 @@ async function startServer() {
 
   server.listen(port, () => {
     console.log(`Server running on http://localhost:${port}/`);
+  });
+
+  // A narration run that was interrupted by a restart is left `running` with an
+  // expired lease. Mark those resumable so the Generate screen offers to pick them
+  // up, rather than leaving a half-rendered book looking active forever.
+  void recoverInterruptedRuns().catch(error => {
+    console.error("[Narration] Recovery scan failed:", error);
   });
 }
 

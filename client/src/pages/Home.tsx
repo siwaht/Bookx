@@ -1,4 +1,4 @@
-import { createElement, useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import {
   AlertCircle,
   ArrowLeft,
@@ -8,7 +8,6 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Clock3,
   Download,
   FileText,
   Headphones,
@@ -39,16 +38,70 @@ import { CastingReview, type CastingCharacter } from "@/components/CastingReview
 import { PodcastImportDialog, type PodcastImport } from "@/components/PodcastImportDialog";
 import { PodcastScriptEditor } from "@/components/PodcastScriptEditor";
 import { ProviderSettings, type CloudflareConnectionDraft } from "@/components/ProviderSettings";
+import { NarrationRun } from "@/components/NarrationRun";
+import { ExportPackage } from "@/components/ExportPackage";
 import { projectReadiness, projectSetupSchema, type ProjectSetup } from "@shared/bookx";
 
 type Screen = "dashboard" | "workspace";
 type WorkspaceTab = "manuscript" | "cast" | "pronunciation" | "generation" | "studio" | "review" | "export" | "settings";
-type Project = ProjectSetup & { id: string; progress: number; updated: string; chapters: number; duration: string; cover: string; localCastOverrides?: Record<string, { voice: string; voiceId: string }> };
+type CastOverrides = Record<string, { voice: string; voiceId: string }>;
+type Project = ProjectSetup & { id: string; progress: number; updated: string; chapters: number; duration: string; cover: string; localCastOverrides?: CastOverrides };
 type Character = CastingCharacter;
 type Rule = { word: string; alias: string; phoneme: string };
 type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 type ProviderCatalog = { id: string; label: string; configured: boolean; status: "connected" | "available" | "optional"; capabilities: ProviderCapability[]; models: { id: string; label: string; capabilities: ProviderCapability[]; detail?: string }[] };
 type VoiceChoice = { id: string; name: string; detail: string; color: string };
+
+const catalogProviders = ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "Fish Audio"] as const;
+type CatalogProvider = (typeof catalogProviders)[number];
+/** Providers that can synthesise narration; Fish Audio is catalog-only for now. */
+const narrationProviders = ["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"] as const;
+type NarrationProvider = (typeof narrationProviders)[number];
+
+/**
+ * `Project.voiceProvider` is free-form text (see `projectSetupSchema`), so narrow
+ * it before using it as a provider id.
+ */
+function voiceCatalogProvider(voiceProvider: string): CatalogProvider {
+  return (catalogProviders as readonly string[]).includes(voiceProvider)
+    ? (voiceProvider as CatalogProvider)
+    : "ElevenLabs";
+}
+
+function narrationProvider(voiceProvider: string): NarrationProvider | undefined {
+  return (narrationProviders as readonly string[]).includes(voiceProvider)
+    ? (voiceProvider as NarrationProvider)
+    : undefined;
+}
+
+const voicePalette = ["#d8a665", "#89b5c2", "#b7a0c8", "#8cab91", "#d48a7e"] as const;
+const paletteColor = (index: number) => voicePalette[index % voicePalette.length]!;
+
+/**
+ * Browser-local voice overrides for a project. Tolerates a missing or malformed
+ * entry: a bad local preference must never block the audio workspace.
+ */
+function readCastOverrides(project: { id: string; title: string; localCastOverrides?: CastOverrides }): CastOverrides {
+  if (project.localCastOverrides && Object.keys(project.localCastOverrides).length) return project.localCastOverrides;
+  if (typeof window === "undefined") return {};
+  try {
+    const stored = window.localStorage.getItem(`bookx-cast-overrides:${project.id}`)
+      || window.localStorage.getItem(`bookx-cast-overrides-title:${project.title}`);
+    if (!stored) return {};
+    const parsed: unknown = JSON.parse(stored);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as CastOverrides) : {};
+  } catch {
+    return {};
+  }
+}
+
+const applyCastOverrides = (characters: Character[], overrides: CastOverrides) =>
+  characters.map((character) => {
+    const override = overrides[character.name];
+    return override
+      ? { ...character, ...override, confidence: undefined, rationale: "Manually selected by the creator." }
+      : character;
+  });
 
 const initialProjects: Project[] = [
   { id: "quiet-current", title: "A Quiet Current", author: "Mira Ellis", kind: "audiobook", narrationStyle: "cast", voiceProvider: "ElevenLabs", voiceModel: "eleven_v3", languageModelProvider: "Cloudflare", languageModel: "@cf/openai/gpt-oss-120b", language: "English", manuscriptName: "quiet-current.epub", progress: 72, updated: "Edited today", chapters: 18, duration: "06h 42m", cover: "linear-gradient(145deg,#112a33,#49737b 55%,#c9d4bd)" },
@@ -105,11 +158,6 @@ function IconButton({ children, label, onClick }: { children: React.ReactNode; l
   return <button type="button" onClick={onClick} disabled={!enabled} aria-label={label} title={enabled ? label : `${label} is unavailable`} className="grid h-9 w-9 place-items-center rounded-xl border border-[#dce1d9] bg-white text-[#526065] transition enabled:hover:border-[#a9c9c4] enabled:hover:text-[#1d6a69] enabled:active:scale-95 disabled:cursor-not-allowed disabled:opacity-45">{children}</button>;
 }
 
-function StatusDot({ tone = "sage" }: { tone?: "sage" | "gold" | "slate" | "rose" }) {
-  const color = { sage: "bg-[#75a997]", gold: "bg-[#d7a648]", slate: "bg-[#94a3a6]", rose: "bg-[#d78475]" }[tone];
-  return <span className={`inline-block h-2 w-2 rounded-full ${color}`} />;
-}
-
 export default function Home() {
   const { isAuthenticated } = useAuth();
   const utils = trpc.useUtils();
@@ -129,7 +177,6 @@ export default function Home() {
   const createPersistedProject = trpc.bookx.createProject.useMutation();
   const createChapter = trpc.bookx.createChapter.useMutation();
   const importPodcastSource = trpc.bookx.importPodcastSource.useMutation();
-  const transcribeAudio = trpc.bookx.transcribeAudioClip.useMutation();
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [projects, setProjects] = useState<Project[]>(() => {
     if (typeof window === "undefined") return initialProjects;
@@ -156,26 +203,39 @@ export default function Home() {
   const [pendingPodcastImport, setPendingPodcastImport] = useState<PodcastImport | null>(null);
   const [rules, setRules] = useState<Rule[]>([{ word: "Aurelia", alias: "aw-REE-lee-ah", phoneme: "ɔːˈriːliə" }, { word: "Kestrel", alias: "KES-truhl", phoneme: "ˈkɛstrəl" }]);
   const [ruleDraft, setRuleDraft] = useState<Rule>({ word: "", alias: "", phoneme: "" });
-  const [selectedChapters, setSelectedChapters] = useState(new Set(["Opening: The Still House", "Chapter 01: Undertow"]));
-  const [generating, setGenerating] = useState(false);
-  const [progress, setProgress] = useState(72);
+  // Generation state lives on the server now (see `NarrationRun`), because a long
+  // book must survive a closed tab.
   const [toolOpen, setToolOpen] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [exported, setExported] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [providerChecks, setProviderChecks] = useState<Record<string, { status: string; detail?: string }>>({});
   const [isCasting, setIsCasting] = useState(false);
-  const discoveredVoiceQuery = trpc.providers.voiceCatalog.useQuery({ provider: "ElevenLabs", query: voiceSearch }, { enabled: isAuthenticated });
+  // Timers are held in refs so unmounting (switching tab or leaving the
+  // workspace) cannot fire a setState or a toast against a dead component.
+  const settingsSavedTimer = useRef<number | undefined>(undefined);
+  // Debounced so the catalog is queried once the user stops typing rather than
+  // once per keystroke.
+  const [voiceQuery, setVoiceQuery] = useState("");
+  const catalogProvider = voiceCatalogProvider(activeProject.voiceProvider);
+  const discoveredVoiceQuery = trpc.providers.voiceCatalog.useQuery({ provider: catalogProvider, query: voiceQuery }, { enabled: isAuthenticated });
+  const creatingProject = createPersistedProject.isPending || createChapter.isPending || importPodcastSource.isPending;
   const activeProjectIsSaved = Boolean(isAuthenticated && persistedProjects.data?.some((project) => project.id === activeProject.id));
   const activeProjectCanPersist = Boolean(isAuthenticated && activeProject.id && !activeProject.id.startsWith("project-"));
   const workspaceQuery = trpc.bookx.getWorkspace.useQuery({ projectId: activeProject.id }, { enabled: activeProjectIsSaved });
 
-  const discoveredVoices: VoiceChoice[] = discoveredVoiceQuery.data?.length
-    ? discoveredVoiceQuery.data.map((voice, index) => ({ id: voice.id, name: voice.label, detail: voice.description, color: ["#d8a665", "#89b5c2", "#b7a0c8", "#8cab91", "#d48a7e"][index % 5]! }))
-    : voiceLibrary;
+  // An empty catalog response is a real "no match" answer while signed in, so
+  // only fall back to the starter library when there is no connected catalog to
+  // read from. Previously an empty search result silently presented the five
+  // starter voices as matches, and previewing one failed against the provider.
+  const catalogVoices: VoiceChoice[] | null = isAuthenticated && discoveredVoiceQuery.data
+    ? discoveredVoiceQuery.data.map((voice, index) => ({ id: voice.id, name: voice.label, detail: voice.description, color: paletteColor(index) }))
+    : null;
+  const discoveredVoices: VoiceChoice[] = catalogVoices ?? voiceLibrary;
   const filteredVoices = useMemo(() => {
     const terms = voiceSearch.toLowerCase().match(/[a-z0-9]+/g) || [];
-    if (!terms.length || isAuthenticated) return discoveredVoices;
+    // The server already ranks and filters a connected catalog; only the local
+    // starter library needs client-side matching.
+    if (!terms.length || catalogVoices) return discoveredVoices;
     return discoveredVoices
       .map((voice) => {
         const haystack = `${voice.id} ${voice.name} ${voice.detail}`.toLowerCase();
@@ -184,12 +244,39 @@ export default function Home() {
       .filter(({ score }) => score > 0)
       .sort((left, right) => right.score - left.score || left.voice.name.localeCompare(right.voice.name))
       .map(({ voice }) => voice);
-  }, [discoveredVoices, isAuthenticated, voiceSearch]);
-  const readiness = projectReadiness({ chapterCount: 4, generatedChapters: progress >= 94 ? 4 : 3, hasCast: characters.length >= 3, hasTimeline: true });
+  }, [catalogVoices, discoveredVoices, voiceSearch]);
+  // Readiness is derived from rendered audio, not from a simulated progress value,
+  // so Review and Export cannot report a book as ready before it is.
+  const narrationStatusQuery = trpc.bookx.narrationStatus.useQuery({ projectId: activeProject.id }, { enabled: activeProjectIsSaved });
+  const narrationAuditQuery = trpc.bookx.auditNarration.useQuery({ projectId: activeProject.id }, { enabled: activeProjectIsSaved });
+  const narrationChapters = narrationStatusQuery.data?.chapters ?? [];
+  const readiness = projectReadiness({
+    chapterCount: narrationChapters.length || workspaceQuery.data?.chapters.length || 0,
+    generatedChapters: narrationChapters.filter((chapter) => chapter.totalSegments > 0 && chapter.renderedSegments === chapter.totalSegments).length,
+    hasCast: characters.length >= 1 && characters.every((character) => Boolean(character.voiceId)),
+    hasTimeline: (workspaceQuery.data?.chapters.length ?? 0) > 0,
+  });
 
   useEffect(() => {
-    window.localStorage.setItem("bookx-projects", JSON.stringify(projects));
+    // A quota error or Safari private mode would otherwise throw during commit
+    // and replace the whole workspace with the error boundary.
+    try {
+      window.localStorage.setItem("bookx-projects", JSON.stringify(projects));
+    } catch {
+      // The shelf is a convenience cache; failing to persist it is not fatal.
+    }
   }, [projects]);
+
+  useEffect(() => {
+    const handle = window.setTimeout(() => setVoiceQuery(voiceSearch.trim()), 250);
+    return () => window.clearTimeout(handle);
+  }, [voiceSearch]);
+
+  useEffect(() => () => {
+    window.clearTimeout(settingsSavedTimer.current);
+    // Leaving the workspace should stop a running browser voice sample.
+    if (typeof window !== "undefined" && "speechSynthesis" in window) window.speechSynthesis.cancel();
+  }, []);
 
   useEffect(() => {
     if (!persistedProjects.data?.length) return;
@@ -217,21 +304,41 @@ export default function Home() {
     });
   }, [persistedProjects.data]);
 
+  // Rendered audio is addressed by character name and voice id, so it belongs to
+  // one project only. Without this reset, switching projects kept the previous
+  // project's `<audio>` sources under identically named characters.
   useEffect(() => {
-    const savedCharacters = workspaceQuery.data?.characters;
-    if (!activeProjectIsSaved || !savedCharacters?.length) return;
-    let localOverrides: Record<string, { voice: string; voiceId: string }> = activeProject.localCastOverrides || {};
-    try {
-      localOverrides = Object.keys(localOverrides).length ? localOverrides : JSON.parse(
-        window.localStorage.getItem(`bookx-cast-overrides:${activeProject.id}`)
-        || window.localStorage.getItem(`bookx-cast-overrides-title:${activeProject.title}`)
-        || "{}",
-      ) as Record<string, { voice: string; voiceId: string }>;
-    } catch {
-      localOverrides = {};
+    setPreviewUrls({});
+    setLibraryPreviewUrls({});
+  }, [activeProject.id]);
+
+  // Deliberately keyed on the project *id* rather than the `activeProject`
+  // object: `storeLocalCastOverride` replaces that object on every voice change,
+  // and re-running this would discard locally added speakers. Voice changes
+  // already update `characters` directly, so this only needs to run when the
+  // open project changes or its workspace finishes loading.
+  useEffect(() => {
+    const overrides = readCastOverrides(activeProject);
+
+    // Not a persisted project (or the workspace has not loaded yet): keep the
+    // starter cast and just apply any browser-local voice choices.
+    if (!activeProjectIsSaved || !workspaceQuery.data) {
+      setCharacters(applyCastOverrides(defaultCharacters, overrides));
+      return;
     }
+
+    const savedCharacters = workspaceQuery.data.characters;
+
+    // A saved project with no cast yet must still clear the previous project's
+    // characters. Leaving them in place let a voice change on a stale row write
+    // one project's character names into another project.
+    if (!savedCharacters.length) {
+      setCharacters(applyCastOverrides(defaultCharacters, overrides));
+      return;
+    }
+
     setCharacters(savedCharacters.map((character, index) => {
-      const localOverride = localOverrides[character.name];
+      const localOverride = overrides[character.name];
       return {
         name: character.name,
         role: character.role,
@@ -241,53 +348,69 @@ export default function Home() {
         rationale: localOverride ? "Manually selected by the creator." : character.voiceRationale || undefined,
         sampleLine: character.sampleLine || undefined,
         confidence: localOverride ? undefined : character.assignmentConfidence ?? undefined,
-        color: ["#d8a665", "#89b5c2", "#b7a0c8", "#8cab91", "#d48a7e"][index % 5]!,
+        color: paletteColor(index),
       };
     }));
     setPreviewUrls(Object.fromEntries(savedCharacters
       .filter((character) => Boolean(character.previewUrl))
       .map((character) => [character.name, character.previewUrl!])),
     );
-  }, [activeProjectIsSaved, workspaceQuery.data?.characters]);
-
-  useEffect(() => {
-    if (activeProjectIsSaved) return;
-    try {
-      const stored = window.localStorage.getItem(`bookx-cast-overrides:${activeProject.id}`)
-        || window.localStorage.getItem(`bookx-cast-overrides-title:${activeProject.title}`);
-      const overrides = activeProject.localCastOverrides || (stored ? JSON.parse(stored) as Record<string, { voice: string; voiceId: string }> : {});
-      if (!Object.keys(overrides).length) return;
-      setCharacters((previous) => previous.map((character) => {
-        const override = overrides[character.name];
-        return override ? { ...character, ...override, confidence: undefined, rationale: "Manually selected by the creator." } : character;
-      }));
-    } catch {
-      // A malformed local preference should never block the audio workspace.
-    }
-  }, [activeProject.id, activeProject.title, activeProjectIsSaved]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see note above
+  }, [activeProject.id, activeProjectIsSaved, workspaceQuery.data]);
 
   const updateDraft = <K extends keyof ProjectSetup>(key: K, value: ProjectSetup[K]) => setDraft((previous) => ({ ...previous, [key]: value }));
   const handleManuscript = (event: ChangeEvent<HTMLInputElement>) => updateDraft("manuscriptName", event.target.files?.[0]?.name || "");
   const persistProviderDefaults = (customEndpoint?: string) => {
-    providers.filter((provider) => provider.configured).forEach((provider) => {
-      const voice = provider.models.find((model) => model.capabilities.includes("text-to-speech"))?.id;
-      const stt = provider.models.find((model) => model.capabilities.includes("speech-to-text"))?.id;
-      const llm = provider.models.find((model) => model.capabilities.includes("language-model"))?.id;
-      saveProviderPreference.mutate({ provider: provider.id as "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio", defaultTtsModel: voice, defaultSttModel: stt, defaultLlmModel: llm, fallbackProvider: provider.id === "Cloudflare" ? "OpenAI" : "Cloudflare", fallbackEnabled: true, apiBaseUrl: provider.id === "OpenAI" ? customEndpoint : undefined });
-    });
-    setSettingsSaved(true); window.setTimeout(() => setSettingsSaved(false), 1800);
-    toast.success("Routing defaults saved for new projects.");
+    if (!isAuthenticated) { notify("Sign in to save your routing defaults."); return; }
+    const targets = providers.filter((provider) => provider.configured);
+    if (!targets.length) { notify("Connect a provider before saving routing defaults."); return; }
+    const savedPreferences = providerPreferencesQuery.data || [];
+    const firstModel = (provider: ProviderCatalog, capability: ProviderCapability) =>
+      provider.models.find((model) => model.capabilities.includes(capability))?.id;
+
+    Promise.all(targets.map((provider) => {
+      const saved = savedPreferences.find((preference) => preference.provider === provider.id);
+      return saveProviderPreference.mutateAsync({
+        provider: provider.id as "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio",
+        // Seed a default only where none is stored. Sending a catalog model for a
+        // provider that already has one would replace the custom model names
+        // typed into the connection panel above.
+        defaultTtsModel: saved?.defaultTtsModel ? undefined : firstModel(provider, "text-to-speech"),
+        defaultSttModel: saved?.defaultSttModel ? undefined : firstModel(provider, "speech-to-text"),
+        defaultLlmModel: saved?.defaultLlmModel ? undefined : firstModel(provider, "language-model"),
+        fallbackProvider: provider.id === "Cloudflare" ? "OpenAI" : "Cloudflare",
+        fallbackEnabled: true,
+        // Only the OpenAI row owns the custom base URL field; omitting the key
+        // for every other provider leaves their saved endpoint untouched.
+        ...(provider.id === "OpenAI" && customEndpoint ? { apiBaseUrl: customEndpoint } : {}),
+      });
+    }))
+      .then(() => {
+        utils.providers.listPreferences.invalidate();
+        setSettingsSaved(true);
+        window.clearTimeout(settingsSavedTimer.current);
+        settingsSavedTimer.current = window.setTimeout(() => setSettingsSaved(false), 1800);
+        toast.success("Routing defaults saved for new projects.");
+      })
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Bookx could not save the routing defaults."));
   };
-  const checkProvider = (provider: string) => validateProvider.mutate({ provider: provider as "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio" }, { onSuccess: (result) => setProviderChecks((current) => ({ ...current, [provider]: { status: result.status, detail: "detail" in result ? result.detail : undefined } })) });
+  const checkProvider = (provider: string) => validateProvider.mutate({ provider: provider as "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio" }, {
+    onSuccess: (result) => setProviderChecks((current) => ({ ...current, [provider]: { status: result.status, detail: "detail" in result ? result.detail : undefined } })),
+    // Without this the button sat on "Check" forever with no explanation.
+    onError: (error) => setProviderChecks((current) => ({ ...current, [provider]: { status: "degraded", detail: error.message || "Connection test failed" } })),
+  });
   const persistCloudflareConnection = (connection: CloudflareConnectionDraft) => {
     if (!isAuthenticated) { notify("Sign in to save your Cloudflare connection."); return; }
     saveProviderPreference.mutate({
       provider: "Cloudflare",
-      apiBaseUrl: connection.apiBaseUrl.trim() || undefined,
+      // This panel owns these fields, so an emptied input must clear the stored
+      // value. `savePreference` treats "" as clear and omission as leave-alone.
+      apiBaseUrl: connection.apiBaseUrl.trim(),
+      defaultTtsModel: connection.ttsModel.trim(),
+      defaultSttModel: connection.sttModel.trim(),
+      defaultLlmModel: connection.llmModel.trim(),
+      // A blank key means "keep the saved one", per the field's placeholder.
       apiKey: connection.apiKey.trim() || undefined,
-      defaultTtsModel: connection.ttsModel.trim() || undefined,
-      defaultSttModel: connection.sttModel.trim() || undefined,
-      defaultLlmModel: connection.llmModel.trim() || undefined,
       fallbackProvider: "OpenAI",
       fallbackEnabled: true,
     }, {
@@ -304,10 +427,20 @@ export default function Home() {
     setWizardOpen(false);
     setWizardStep(1);
     setDraft(initialDraft);
+    // Cancelling the wizard has to drop the staged import too. Keeping it meant
+    // the next podcast project silently inherited an abandoned script and
+    // re-uploaded its audio, and held up to 25 MB of base64 in memory.
+    setPendingPodcastImport(null);
   };
   const createProject = async () => {
+    // The wizard button is only disabled by `canContinue`, so without this a
+    // second click while the first save is in flight created two projects.
+    if (creatingProject) return;
     const parsed = projectSetupSchema.safeParse(draft);
-    if (!parsed.success) return;
+    if (!parsed.success) {
+      notify(parsed.error.issues[0]?.message || "Check the project details before continuing.");
+      return;
+    }
     let project: Project = { ...parsed.data, id: `project-${Date.now()}`, progress: 0, updated: "Just now", chapters: 0, duration: "—", cover: parsed.data.kind === "podcast" ? "linear-gradient(145deg,#412f49,#966b91 58%,#e6b47b)" : "linear-gradient(145deg,#183d43,#5e9a96 56%,#d8c886)" };
     if (isAuthenticated) {
       try {
@@ -331,27 +464,11 @@ export default function Home() {
     resetWizard();
     setScreen("workspace");
     setTab("manuscript");
-    setPendingPodcastImport(null);
   };
 
-  const readLocalCastOverrides = (project: Project) => {
-    if (project.localCastOverrides) return project.localCastOverrides;
-    try {
-      return JSON.parse(
-        window.localStorage.getItem(`bookx-cast-overrides:${project.id}`)
-        || window.localStorage.getItem(`bookx-cast-overrides-title:${project.title}`)
-        || "{}",
-      ) as Record<string, { voice: string; voiceId: string }>;
-    } catch {
-      return {} as Record<string, { voice: string; voiceId: string }>;
-    }
-  };
   const openProject = (project: Project) => {
-    const overrides = readLocalCastOverrides(project);
-    if (Object.keys(overrides).length) setCharacters((previous) => previous.map((character) => {
-      const override = overrides[character.name];
-      return override ? { ...character, ...override, confidence: undefined, rationale: "Manually selected by the creator." } : character;
-    }));
+    const overrides = readCastOverrides(project);
+    if (Object.keys(overrides).length) setCharacters((previous) => applyCastOverrides(previous, overrides));
     setActiveProject(project);
     setScreen("workspace");
     setTab("manuscript");
@@ -360,7 +477,10 @@ export default function Home() {
   const autoCast = () => {
     const applyFallback = (message: string) => {
       setCharacters((previous) => previous.map((character, index) => {
-        const voice = voiceLibrary[index] || voiceLibrary[3]!;
+        // Wrap around the library instead of collapsing every character past the
+        // fifth onto `voiceLibrary[3]`, which contradicted the "distinct
+        // assignment" the message promises.
+        const voice = voiceLibrary[index % voiceLibrary.length]!;
         return { ...character, voice: voice.name, voiceId: voice.id, confidence: 72, rationale: "A distinct fallback assignment was created from the current cast order." };
       }));
       notify(message);
@@ -370,7 +490,7 @@ export default function Home() {
     setIsCasting(true);
     recommendCast.mutate({ provider: activeProject.languageModelProvider === "OpenAI" ? "OpenAI" : "Cloudflare", model: activeProject.languageModel || "@cf/openai/gpt-oss-120b", text: manuscript.slice(0, 16_000), voices: voiceLibrary.map((voice) => ({ id: voice.id, label: voice.name, description: voice.detail })) }, {
       onSuccess: (result) => {
-        const next: Character[] = result.characters.map((character, index) => ({ name: character.name, role: character.role, voice: character.voiceName, voiceId: character.voiceId, accent: character.accent, rationale: character.rationale, sampleLine: character.sampleLine, confidence: character.confidence, color: ["#d8a665", "#89b5c2", "#b7a0c8", "#8cab91", "#d48a7e"][index % 5]! }));
+        const next: Character[] = result.characters.map((character, index) => ({ name: character.name, role: character.role, voice: character.voiceName, voiceId: character.voiceId, accent: character.accent, rationale: character.rationale, sampleLine: character.sampleLine, confidence: character.confidence, color: paletteColor(index) }));
         setCharacters(next);
         if (activeProjectIsSaved) replaceCharacters.mutate({ projectId: activeProject.id, characters: result.characters.map((character) => ({ name: character.name, role: character.role, voiceId: character.voiceId, voiceName: character.voiceName, accent: character.accent, voiceRationale: character.rationale, sampleLine: character.sampleLine, assignmentConfidence: Math.round(character.confidence), assignmentSource: "llm" })) }, {
           onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
@@ -382,7 +502,6 @@ export default function Home() {
       onSettled: () => setIsCasting(false),
     });
   };
-  const generate = () => { setGenerating(true); window.setTimeout(() => { setProgress(94); setGenerating(false); }, 850); };
   const addRule = () => { if (!ruleDraft.word.trim()) return; setRules((previous) => [...previous, ruleDraft]); setRuleDraft({ word: "", alias: "", phoneme: "" }); };
   const notify = (message: string) => toast(message);
   const addCharacter = () => setCharacters((previous) => [...previous, { name: `Character ${previous.length + 1}`, role: "Supporting character", voice: "Noor", voiceId: "noor-global", accent: "Velvet · Global", color: "#8cab91" }]);
@@ -395,11 +514,10 @@ export default function Home() {
       window.localStorage.setItem(key, next);
       window.localStorage.setItem(`bookx-cast-overrides-title:${activeProject.title}`, next);
       const localCastOverrides = { ...(activeProject.localCastOverrides || {}), [name]: { voice: voice.name, voiceId: voice.id } };
-      setProjects((previous) => {
-        const nextProjects = previous.map((project) => project.id === activeProject.id ? { ...project, localCastOverrides } : project);
-        window.localStorage.setItem("bookx-projects", JSON.stringify(nextProjects));
-        return nextProjects;
-      });
+      // No `localStorage` write here: React may call a state updater more than
+      // once, and it would run outside this try/catch. The effect on `projects`
+      // already persists the shelf.
+      setProjects((previous) => previous.map((project) => project.id === activeProject.id ? { ...project, localCastOverrides } : project));
       setActiveProject((previous) => previous.id === activeProject.id ? { ...previous, localCastOverrides } : previous);
       return true;
     } catch {
@@ -422,9 +540,9 @@ export default function Home() {
   };
   const previewCharacter = (character: Character) => {
     const persisted = workspaceQuery.data?.characters.find((value) => value.name === character.name);
-    const provider = activeProject.voiceProvider === "Fish Audio" ? undefined : activeProject.voiceProvider;
+    const provider = narrationProvider(activeProject.voiceProvider);
     if (!activeProjectIsSaved || !persisted || !provider) { playBrowserSample(character.voice); notify(`${character.name} browser preview is playing.`); return; }
-    previewCharacterVoice.mutate({ projectId: activeProject.id, characterId: persisted.id, provider: provider as "ElevenLabs" | "OpenAI" | "Deepgram" | "Cloudflare", voiceId: character.voiceId, model: activeProject.voiceModel }, {
+    previewCharacterVoice.mutate({ projectId: activeProject.id, characterId: persisted.id, provider, voiceId: character.voiceId, model: activeProject.voiceModel }, {
       onSuccess: (result) => { setPreviewUrls((current) => ({ ...current, [character.name]: result.audioUrl })); toast.success(`${character.name} preview is ready.`); },
       onError: () => toast.error("Bookx could not generate that preview.", { description: "You can choose another voice or provider." }),
     });
@@ -438,9 +556,9 @@ export default function Home() {
     notify(`Playing a browser sample for ${voiceName}. Sign in to render the selected provider voice.`);
   };
   const previewLibraryVoice = (voice: VoiceChoice) => {
-    const provider = activeProject.voiceProvider === "Fish Audio" ? undefined : activeProject.voiceProvider;
+    const provider = narrationProvider(activeProject.voiceProvider);
     if (!activeProjectIsSaved || !provider) { playBrowserSample(voice.name); notify(`${voice.name} browser preview is playing.`); return; }
-    previewVoice.mutate({ projectId: activeProject.id, provider: provider as "ElevenLabs" | "OpenAI" | "Deepgram" | "Cloudflare", voiceId: voice.id, model: activeProject.voiceModel, text: `This is a Bookx sample for ${voice.name}. A clear voice helps listeners follow every moment.` }, {
+    previewVoice.mutate({ projectId: activeProject.id, provider, voiceId: voice.id, model: activeProject.voiceModel, text: `This is a Bookx sample for ${voice.name}. A clear voice helps listeners follow every moment.` }, {
       onSuccess: (result) => { setLibraryPreviewUrls((current) => ({ ...current, [voice.id]: result.audioUrl })); toast.success(`${voice.name} provider preview is ready.`); },
       onError: () => toast.error("Bookx could not generate that provider preview.", { description: "Try another voice or provider." }),
     });
@@ -465,21 +583,37 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#f7f5ef] text-[#203038] noise-bg">
       {screen === "dashboard" ? (
-        <Dashboard projects={isAuthenticated ? projects.filter((project) => !demoProjectIds.has(project.id)) : projects} loading={isAuthenticated && persistedProjects.isLoading} isAuthenticated={isAuthenticated} onNew={() => { setDraft(initialDraft); setWizardOpen(true); setWizardStep(1); }} onImport={() => setImportOpen(true)} onOpen={openProject} />
+        <Dashboard projects={isAuthenticated ? projects.filter((project) => !demoProjectIds.has(project.id)) : projects} loading={isAuthenticated && persistedProjects.isLoading} isAuthenticated={isAuthenticated} onNew={() => { setDraft(initialDraft); setPendingPodcastImport(null); setWizardOpen(true); setWizardStep(1); }} onImport={() => setImportOpen(true)} onOpen={openProject} />
       ) : (
         <Workspace project={activeProject} tab={tab} setTab={setTab} onBack={() => setScreen("dashboard")} onShare={() => notify("Preview link prepared for sharing.")} onSettings={() => setTab("settings")}>
           {tab === "manuscript" && (activeProject.kind === "podcast" ? <PodcastScriptEditor text={manuscriptText} setText={setManuscriptText} onNext={() => setTab("cast")} /> : <Manuscript toolOpen={toolOpen} setToolOpen={setToolOpen} onNext={() => setTab("cast")} onFeedback={notify} />)}
           {tab === "cast" && <CastingReview characters={characters.map((character) => ({ ...character, previewUrl: previewUrls[character.name] }))} voices={filteredVoices} voicesLoading={isAuthenticated && discoveredVoiceQuery.isLoading} query={voiceSearch} setQuery={setVoiceSearch} prompt={voicePrompt} setPrompt={setVoicePrompt} onFindSimilar={findSimilarVoices} onAutoCast={autoCast} onAddCharacter={addCharacter} isCasting={isCasting} modelLabel={`${activeProject.languageModelProvider || "Cloudflare"} · ${activeProject.languageModel || "@cf/openai/gpt-oss-120b"}`} onPreview={previewCharacter} onPreviewVoice={previewLibraryVoice} onVoiceChange={changeCharacterVoice} libraryPreviewUrls={libraryPreviewUrls} />}
           {tab === "pronunciation" && <Pronunciation rules={rules} draft={ruleDraft} setDraft={setRuleDraft} onAdd={addRule} onDelete={deleteRule} />}
-          {tab === "generation" && <Generation chapters={selectedChapters} setChapters={setSelectedChapters} generating={generating} progress={progress} onGenerate={generate} />}
+          {tab === "generation" && (
+            <NarrationRun
+              projectId={activeProject.id}
+              canRender={activeProjectIsSaved}
+              disabledReason={isAuthenticated
+                ? "This project only exists in this browser. Create or open a saved project to render narration you can pause and resume."
+                : "Sign in to render narration. Runs are checkpointed on the server so a long book survives a closed tab or a dropped connection."}
+            />
+          )}
           {tab === "studio" && <EnhancedProduction kind={activeProject.kind} playing={playing} setPlaying={setPlaying} />}
-          {tab === "review" && <Review readiness={readiness} onOpenGeneration={() => setTab("generation")} />}
-          {tab === "export" && <Export readiness={readiness} exported={exported} onExport={() => setExported(true)} />}
+          {tab === "review" && <Review readiness={readiness} chapters={narrationChapters} characters={characters} audit={narrationAuditQuery.data} onOpenGeneration={() => setTab("generation")} />}
+          {tab === "export" && (
+            <ExportPackage
+              projectId={activeProject.id}
+              canExport={activeProjectIsSaved}
+              disabledReason={isAuthenticated
+                ? "This project only exists in this browser. Create or open a saved project to assemble a package."
+                : "Sign in to assemble a package. Bookx joins the rendered segments server-side and verifies nothing is missing first."}
+            />
+          )}
           {tab === "settings" && <ProviderSettings providers={providers} saved={settingsSaved} checks={providerChecks} onSave={persistProviderDefaults} onValidate={checkProvider} cloudflareSaved={savedCloudflare} onSaveCloudflare={persistCloudflareConnection} />}
         </Workspace>
       )}
 
-      {wizardOpen && <ProjectWizard step={wizardStep} setStep={setWizardStep} draft={draft} updateDraft={updateDraft} providers={providers} onClose={resetWizard} onCreate={createProject} onFile={handleManuscript} />}
+      {wizardOpen && <ProjectWizard step={wizardStep} setStep={setWizardStep} draft={draft} updateDraft={updateDraft} providers={providers} onClose={resetWizard} onCreate={createProject} onFile={handleManuscript} creating={creatingProject} />}
       {importOpen && <PodcastImportDialog onClose={() => setImportOpen(false)} onFinish={beginPodcastSetup} />}
     </main>
   );
@@ -489,7 +623,7 @@ function Dashboard({ projects, loading, isAuthenticated, onNew, onImport, onOpen
   return <div className="mx-auto min-h-screen max-w-[1440px] px-5 pb-12 pt-5 md:px-10">
     <header className="flex items-center justify-between border-b border-[#e2e4dd] pb-5">
       <button className="flex items-center gap-3 text-left" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><span className="grid h-10 w-10 place-items-center rounded-[14px] bg-[#245f63] text-white shadow-[0_8px_20px_rgba(36,95,99,.22)]"><Headphones size={19} /></span><span><span className="block text-[17px] font-bold tracking-[-.04em]">Bookx</span><span className="block text-[10px] tracking-[.14em] text-[#718084]">AUDIO WORKSPACE</span></span></button>
-      <nav aria-label="Workspace context" className="hidden items-center gap-2 md:flex"><button onClick={() => document.getElementById("recent-work")?.scrollIntoView({ behavior: "smooth" })} className="rounded-full bg-[#e3f0ed] px-4 py-2 text-sm font-semibold text-[#256d69]">Projects</button><span className="rounded-full px-4 py-2 text-sm text-[#6f7d80]">Library</span><span className="rounded-full px-4 py-2 text-sm text-[#6f7d80]">Series</span></nav>
+      <nav aria-label="Workspace context" className="hidden items-center gap-2 md:flex"><button aria-current="page" onClick={() => document.getElementById("recent-work")?.scrollIntoView({ behavior: "smooth" })} className="rounded-full bg-[#e3f0ed] px-4 py-2 text-sm font-semibold text-[#256d69]">Projects</button><button type="button" disabled title="Library is not available yet" className="rounded-full px-4 py-2 text-sm text-[#6f7d80] disabled:cursor-not-allowed">Library</button><button type="button" disabled title="Series is not available yet" className="rounded-full px-4 py-2 text-sm text-[#6f7d80] disabled:cursor-not-allowed">Series</button></nav>
       <div className="flex items-center gap-2"><IconButton label="Search"><Search size={16} /></IconButton>{isAuthenticated ? <div className="flex items-center gap-2" title="Signed in"><span className="rounded-full bg-[#edf4ef] px-2.5 py-1.5 text-[11px] font-bold text-[#3d716a]">Signed in</span><div className="grid h-9 w-9 place-items-center rounded-full bg-[#d9b66b] text-xs font-bold text-[#2a3537]">ME</div></div> : <button onClick={() => startLogin()} className="btn-primary">Sign in</button>}</div>
     </header>
 
@@ -514,7 +648,10 @@ function EmptyShelf({ onNew, onImport }: { onNew: () => void; onImport: () => vo
   return <div className="fade-up flex flex-col items-center justify-center rounded-[25px] border border-dashed border-[#b9cdc4] bg-[#fbfaf5] px-6 py-16 text-center md:col-span-2 xl:col-span-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-[#e7f2ee] text-[#3d7f75]"><BookOpen size={24} /></span><h3 className="serif mt-5 text-2xl tracking-[-.03em] text-[#25393c]">Your shelf is waiting</h3><p className="mt-2 max-w-sm text-sm leading-6 text-[#718084]">Start a new project or import an existing recording — it only takes a moment.</p><div className="mt-6 flex flex-wrap items-center justify-center gap-3"><button onClick={onNew} className="btn-primary btn-lg">Create your first project</button><button onClick={onImport} className="btn-soft btn-lg">Import audio</button></div></div>;
 }
 
-function ProjectWizard({ step, setStep, draft, updateDraft, providers, onClose, onCreate, onFile }: { step: number; setStep: (next: number) => void; draft: ProjectSetup; updateDraft: <K extends keyof ProjectSetup>(key: K, value: ProjectSetup[K]) => void; providers: ProviderCatalog[]; onClose: () => void; onCreate: () => void; onFile: (event: ChangeEvent<HTMLInputElement>) => void }) {
+function ProjectWizard({ step, setStep, draft, updateDraft, providers, onClose, onCreate, onFile, creating }: { step: number; setStep: (next: number) => void; draft: ProjectSetup; updateDraft: <K extends keyof ProjectSetup>(key: K, value: ProjectSetup[K]) => void; providers: ProviderCatalog[]; onClose: () => void; onCreate: () => void; onFile: (event: ChangeEvent<HTMLInputElement>) => void; creating: boolean }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = "project-wizard-title";
+
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
@@ -523,7 +660,12 @@ function ProjectWizard({ step, setStep, draft, updateDraft, providers, onClose, 
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [onClose]);
 
-  const canContinue = step !== 1 || Boolean(draft.title.trim());
+  // Move focus into the dialog so a keyboard user's next Tab stays inside it.
+  useEffect(() => {
+    dialogRef.current?.focus();
+  }, []);
+
+  const canContinue = (step !== 1 || Boolean(draft.title.trim())) && !creating;
   const modelsFor = (capability: ProviderCapability, providerId: string) => providers.find((provider) => provider.id === providerId)?.models.filter((model) => model.capabilities.includes(capability)) || [];
   const voiceModels = modelsFor("text-to-speech", draft.voiceProvider);
   const languageModels = modelsFor("language-model", draft.languageModelProvider);
@@ -532,11 +674,11 @@ function ProjectWizard({ step, setStep, draft, updateDraft, providers, onClose, 
     const firstModel = modelsFor(capability, providerId)[0];
     if (firstModel) updateDraft(key === "voiceProvider" ? "voiceModel" : "languageModel", firstModel.id);
   };
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#173034]/35 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}><div className="soft-shadow flex h-[calc(100dvh-2rem)] max-h-[800px] w-full max-w-3xl flex-col overflow-hidden rounded-[30px] border border-white/70 bg-[#fffefa]"><div className="shrink-0 flex items-start justify-between px-7 pb-5 pt-7"><div><p className="mono text-[10px] tracking-[.16em] text-[#5d918b]">START A NEW PROJECT</p><h2 className="serif mt-2 text-3xl tracking-[-.045em]">{step === 1 ? "Begin with the story." : step === 2 ? "Set the vocal character." : "Review the intent."}</h2></div><IconButton label="Close" onClick={onClose}><X size={17} /></IconButton></div><div className="shrink-0 px-7"><div className="grid grid-cols-3 border-y border-[#e3e7df] py-3">{[[1, "Basics"], [2, "Narration"], [3, "Review"]].map(([number, label]) => <div key={number} className="flex items-center gap-2 text-sm"><span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${step >= Number(number) ? "bg-[#286b69] text-white" : "bg-[#edf0eb] text-[#7a8787]"}`}>{step > Number(number) ? <Check size={13} /> : number}</span><span className={step >= Number(number) ? "font-semibold text-[#2b494b]" : "text-[#859093]"}>{label}</span></div>)}</div></div><div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#173034]/35 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}><div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="soft-shadow flex h-[calc(100dvh-2rem)] max-h-[800px] w-full max-w-3xl flex-col overflow-hidden rounded-[30px] border border-white/70 bg-[#fffefa] outline-none"><div className="shrink-0 flex items-start justify-between px-7 pb-5 pt-7"><div><p className="mono text-[10px] tracking-[.16em] text-[#5d918b]">START A NEW PROJECT</p><h2 id={titleId} className="serif mt-2 text-3xl tracking-[-.045em]">{step === 1 ? "Begin with the story." : step === 2 ? "Set the vocal character." : "Review the intent."}</h2></div><IconButton label="Close" onClick={onClose}><X size={17} /></IconButton></div><div className="shrink-0 px-7"><div className="grid grid-cols-3 border-y border-[#e3e7df] py-3">{[[1, "Basics"], [2, "Narration"], [3, "Review"]].map(([number, label]) => <div key={number} className="flex items-center gap-2 text-sm"><span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${step >= Number(number) ? "bg-[#286b69] text-white" : "bg-[#edf0eb] text-[#7a8787]"}`}>{step > Number(number) ? <Check size={13} /> : number}</span><span className={step >= Number(number) ? "font-semibold text-[#2b494b]" : "text-[#859093]"}>{label}</span></div>)}</div></div><div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
     {step === 1 && <div className="space-y-6"><div className="grid gap-3 sm:grid-cols-2">{[["audiobook", BookOpen, "Audiobook", "Long-form, chaptered narration"], ["podcast", Mic2, "Podcast", "Episodes, interviews, conversations"]].map(([kind, Icon, title, description]) => <button key={kind as string} onClick={() => updateDraft("kind", kind as "audiobook" | "podcast")} className={`rounded-2xl border p-4 text-left ${draft.kind === kind ? "border-[#7aa9a2] bg-[#edf7f4]" : "border-[#dfe5dc] bg-white"}`}>{createElement(Icon as typeof BookOpen, { size: 18, className: "mb-5 text-[#3c7d76]" })}<strong className="block">{title as string}</strong><span className="mt-1 block text-sm text-[#788588]">{description as string}</span></button>)}</div><div className="grid gap-4 sm:grid-cols-2"><Field label={draft.kind === "audiobook" ? "Book title" : "Episode / show title"}><input autoFocus value={draft.title} onChange={(event) => updateDraft("title", event.target.value)} placeholder="e.g. The quiet morning" className="input" /></Field><Field label={draft.kind === "audiobook" ? "Author" : "Host"} optional><input value={draft.author || ""} onChange={(event) => updateDraft("author", event.target.value)} placeholder="Add a name" className="input" /></Field></div><Field label="Narration style"><div className="grid gap-2 sm:grid-cols-3">{[["single", "Single narrator"], ["cast", "Full cast"], ["narrator-cast", "Narrator + cast"]].map(([value, label]) => <button key={value} onClick={() => updateDraft("narrationStyle", value as ProjectSetup["narrationStyle"])} className={`rounded-xl border px-3 py-3 text-left text-sm ${draft.narrationStyle === value ? "border-[#7aa9a2] bg-[#eaf4f0] text-[#2d6e69]" : "border-[#e1e5de] bg-white text-[#667477]"}`}>{label}</button>)}</div></Field></div>}
     {step === 2 && <div className="space-y-6"><div className="rounded-[22px] border border-[#dbe6df] bg-[#f6faf7] p-4"><div className="mb-4 flex items-center justify-between"><div><p className="mono text-[10px] tracking-[.14em] text-[#5b8b84]">MODEL ROUTING</p><p className="mt-1 text-sm text-[#596a6d]">Choose models by task. Bookx keeps the creative workflow independent of any one vendor.</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-[#4b7d76]">MODEL-AGNOSTIC</span></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Voice provider"><select value={draft.voiceProvider} onChange={(event) => chooseProvider("voiceProvider", "text-to-speech", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("text-to-speech")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Voice model"><select value={draft.voiceModel} onChange={(event) => updateDraft("voiceModel", event.target.value)} className="input select">{voiceModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language-model provider"><select value={draft.languageModelProvider} onChange={(event) => chooseProvider("languageModelProvider", "language-model", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("language-model")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Language model"><select value={draft.languageModel} onChange={(event) => updateDraft("languageModel", event.target.value)} className="input select">{languageModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language"><select value={draft.language} onChange={(event) => updateDraft("language", event.target.value)} className="input select"><option>Auto-detect</option><option>English</option><option>Spanish</option><option>French</option><option>German</option></select></Field></div></div><label className="group flex cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed border-[#87ada6] bg-[#f1f8f6] px-6 py-8 text-center"><Upload size={22} className="mb-3 text-[#3b7b75]" /><strong>{draft.manuscriptName || "Upload your manuscript"}</strong><span className="mt-2 text-sm text-[#718083]">EPUB, DOCX, TXT, Markdown, or HTML</span><input type="file" accept=".epub,.docx,.txt,.md,.html,.htm" onChange={onFile} className="hidden" /></label><p className="rounded-xl bg-[#fbf4e5] px-4 py-3 text-sm leading-6 text-[#8a6b37]"><Sparkles className="mr-2 inline" size={15} />Bookx will prepare chapters and narration paragraphs for your review. You can also add a manuscript later.</p></div>}
     {step === 3 && <div className="overflow-hidden rounded-[22px] border border-[#e0e5de] bg-[#fcfcf8]">{[["Project", draft.title || "Untitled project"], ["Type", `${draft.kind === "audiobook" ? "Audiobook" : "Podcast"} · ${draft.narrationStyle.replace("-", " ")}`], ["Voice model", draft.voiceModel], ["Language", draft.language], ["Manuscript", draft.manuscriptName || "Add later from Write"]].map(([label, value]) => <div key={label} className="flex items-center justify-between border-b border-[#e6e9e3] px-5 py-4 text-sm last:border-0"><span className="text-[#798689]">{label}</span><strong className="max-w-[62%] text-right capitalize text-[#334649]">{value}</strong></div>)}</div>}
-  </div><div className="flex items-center justify-between border-t border-[#e4e7e0] bg-[#fafaf5] px-7 py-5"><button onClick={() => step === 1 ? onClose() : setStep(step - 1)} className="inline-flex items-center gap-2 text-sm font-semibold text-[#667477] transition hover:text-[#3c5052]"><ArrowLeft size={15} /> {step === 1 ? "Cancel" : "Back"}</button><button disabled={!canContinue} onClick={() => step < 3 ? setStep(step + 1) : onCreate()} className="btn-primary btn-lg disabled:opacity-40">{step < 3 ? "Continue" : `Create ${draft.kind === "audiobook" ? "audiobook" : "podcast"}`} <ArrowRight size={16} /></button></div></div></div>;
+  </div><div className="flex items-center justify-between border-t border-[#e4e7e0] bg-[#fafaf5] px-7 py-5"><button onClick={() => step === 1 ? onClose() : setStep(step - 1)} className="inline-flex items-center gap-2 text-sm font-semibold text-[#667477] transition hover:text-[#3c5052]"><ArrowLeft size={15} /> {step === 1 ? "Cancel" : "Back"}</button><button disabled={!canContinue} onClick={() => step < 3 ? setStep(step + 1) : onCreate()} className="btn-primary btn-lg disabled:opacity-40">{step < 3 ? "Continue" : creating ? "Creating…" : `Create ${draft.kind === "audiobook" ? "audiobook" : "podcast"}`} {creating ? <LoaderCircle className="animate-spin" size={16} /> : <ArrowRight size={16} />}</button></div></div></div>;
 }
 
 function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="block"><span className="mb-2 block text-[12px] font-bold tracking-[.02em] text-[#526267]">{label} {optional && <em className="ml-1 font-normal not-italic text-[#97a0a1]">optional</em>}</span>{children}</label>; }
@@ -558,8 +700,50 @@ function Manuscript({ toolOpen, setToolOpen, onNext, onFeedback }: { toolOpen: b
 
 function Pronunciation({ rules, draft, setDraft, onAdd, onDelete }: { rules: Rule[]; draft: Rule; setDraft: (rule: Rule) => void; onAdd: () => void; onDelete: (word: string) => void }) { return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="02 · CAST" title="Pronounce every detail." description="Create word rules and phoneme overrides so names, places, and technical language sound exactly right." /><div className="grid flex-1 gap-6 p-6 md:grid-cols-[1fr_360px] md:p-9"><section><div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="flex items-center justify-between"><div><h3 className="font-bold">Project dictionary</h3><p className="mt-1 text-sm text-[#788689]">Applied anywhere the term appears in this project.</p></div><span className="rounded-full bg-[#e8f3ef] px-3 py-1 text-xs font-bold text-[#3c776f]">{rules.length} rules</span></div><div className="mt-5 overflow-hidden rounded-xl border border-[#e4e8e2]"><div className="grid grid-cols-[1.2fr_1fr_1fr_36px] bg-[#f4f6f1] px-4 py-3 mono text-[9px] tracking-[.12em] text-[#899594]"><span>WORD</span><span>ALIAS</span><span>PHONEME</span><span /></div>{rules.map((rule) => <div key={rule.word} className="grid grid-cols-[1.2fr_1fr_1fr_36px] items-center border-t border-[#edf0ea] px-4 py-4 text-sm"><strong>{rule.word}</strong><span className="text-[#5f7274]">{rule.alias}</span><span className="mono text-[11px] text-[#6f7e81]">{rule.phoneme || "—"}</span><button onClick={() => onDelete(rule.word)} aria-label={`Delete ${rule.word}`} className="text-[#9aa2a3] hover:text-[#af5d5d]"><Trash2 size={14} /></button></div>)}</div></div></section><aside className="rounded-[22px] border border-[#dfe5de] bg-[#fbfbf7] p-5"><span className="mono text-[10px] tracking-[.13em] text-[#658c87]">ADD A RULE</span><h3 className="serif mt-2 text-2xl">Teach Bookx a name.</h3><div className="mt-5 space-y-4"><Field label="Word"><input value={draft.word} onChange={(event) => setDraft({ ...draft, word: event.target.value })} placeholder="e.g. Aurelia" className="input" /></Field><Field label="Say it as"><input value={draft.alias} onChange={(event) => setDraft({ ...draft, alias: event.target.value })} placeholder="e.g. aw-REE-lee-ah" className="input" /></Field><Field label="Phoneme override" optional><input value={draft.phoneme} onChange={(event) => setDraft({ ...draft, phoneme: event.target.value })} placeholder="e.g. ɔːˈriːliə" className="input mono" /></Field><button onClick={onAdd} className="btn-primary btn-lg w-full">Add pronunciation rule</button></div></aside></div></div>; }
 
-function Generation({ chapters, setChapters, generating, progress, onGenerate }: { chapters: Set<string>; setChapters: (chapters: Set<string>) => void; generating: boolean; progress: number; onGenerate: () => void }) { const toggle = (name: string) => { const next = new Set(chapters); next.has(name) ? next.delete(name) : next.add(name); setChapters(next); }; return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="03 · PRODUCE" title="Generate narration." description="Choose the scope, create fresh audio, and keep a clear record of every generation pass." actions={<button disabled={generating} onClick={onGenerate} className="btn-primary">{generating ? <LoaderCircle className="mr-1 inline animate-spin" size={14} /> : <Sparkles className="mr-1 inline" size={14} />}{generating ? "Generating narration" : "Generate full audiobook"}</button>} /><div className="grid flex-1 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_330px] md:p-9"><section><div className="grid gap-3 sm:grid-cols-4">{[["34", "Paragraphs"], ["31", "Audio ready"], ["3", "Needs audio"], [`${progress}%`, "Project ready"]].map(([value, label]) => <div key={label} className="rounded-2xl border border-[#e0e5de] bg-[#fffefa] p-4"><span className="mono text-[10px] text-[#819092]">{label.toUpperCase()}</span><strong className="mt-3 block text-2xl tracking-[-.04em] text-[#304548]">{value}</strong></div>)}</div><div className="mt-6 rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="mb-4 flex items-center justify-between"><div><h3 className="font-bold">Chapter scope</h3><p className="mt-1 text-sm text-[#7b888a]">Select chapters, or generate the entire audiobook.</p></div><button onClick={() => setChapters(new Set(chapterRows.map(([name]) => name)))} className="text-xs font-bold text-[#34736d]">Select all</button></div>{chapterRows.map(([name, count, status]) => <label key={name} className="flex cursor-pointer items-center gap-3 border-t border-[#edf0eb] py-4"><input checked={chapters.has(name)} onChange={() => toggle(name)} type="checkbox" className="h-4 w-4 accent-[#3f827a]" /><div className="min-w-0 flex-1"><strong className="block text-sm">{name}</strong><span className="text-xs text-[#7e8b8d]">{count} narration segments</span></div><span className={`rounded-full px-2.5 py-1 text-[10px] ${status === "Ready" ? "bg-[#e7f2ec] text-[#428174]" : status === "Needs 1" ? "bg-[#fff1dc] text-[#a87528]" : "bg-[#eef0ed] text-[#819091]"}`}>{status}</span></label>)}</div></section><aside className="space-y-4"><div className="rounded-[22px] bg-[#225f61] p-5 text-white"><span className="mono text-[10px] tracking-[.13em] text-[#b7d9d2]">CURRENT PASS</span><h3 className="serif mt-3 text-2xl">Full audiobook<br />narration</h3><div className="mt-6 h-2 overflow-hidden rounded-full bg-white/15"><div className="h-full bg-[#d9c47a] transition-[width] duration-700 ease-out" style={{ width: `${progress}%` }} /></div><div className="mt-2 flex justify-between text-xs text-[#d4e7e1]"><span>{progress}% complete</span><span>31 of 34</span></div><button onClick={onGenerate} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-white/12 py-2.5 text-xs font-bold"><Play size={13} /> {generating ? "Working…" : "Run selected chapters"}</button></div><div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="mb-4 flex items-center gap-2"><Clock3 size={15} className="text-[#5b8b86]" /><h3 className="font-bold">Generation history</h3></div>{[["Full audiobook", "31 / 34 complete", "Now"], ["Chapter 01", "8 / 8 complete", "Today"], ["Opening", "6 / 6 complete", "Yesterday"]].map(([name, detail, when]) => <div key={name} className="flex items-start gap-3 border-t border-[#edf0eb] py-3"><StatusDot tone={name === "Full audiobook" ? "gold" : "sage"} /><div className="flex-1"><strong className="block text-xs">{name}</strong><span className="block text-[11px] text-[#7e8a8c]">{detail}</span></div><span className="text-[10px] text-[#98a1a1]">{when}</span></div>)}</div></aside></div></div>; }
+/**
+ * Pre-flight report. Every line is derived from stored state, so it cannot claim a
+ * stage is done when it is not — which was the point of removing the hardcoded
+ * "31 of 34 paragraphs are ready" that used to sit here.
+ */
+function Review({ readiness, chapters, characters, audit, onOpenGeneration }: {
+  readiness: ReturnType<typeof projectReadiness>;
+  chapters: Array<{ title: string; totalSegments: number; renderedSegments: number; failedSegments: number }>;
+  characters: Character[];
+  audit?: { totalSegments: number; renderedSegments: number; missingSegments: string[]; staleSegments: string[]; mismatchedVoiceSegments: string[]; suspectSegments: string[]; complete: boolean };
+  onOpenGeneration: () => void;
+}) {
+  const totalSegments = chapters.reduce((total, chapter) => total + chapter.totalSegments, 0);
+  const renderedSegments = chapters.reduce((total, chapter) => total + chapter.renderedSegments, 0);
+  const failedSegments = chapters.reduce((total, chapter) => total + chapter.failedSegments, 0);
+  const unvoiced = characters.filter((character) => !character.voiceId);
+  const outstanding = audit
+    ? audit.missingSegments.length + audit.staleSegments.length + audit.mismatchedVoiceSegments.length + audit.suspectSegments.length
+    : Math.max(0, totalSegments - renderedSegments);
 
-function Review({ readiness, onOpenGeneration }: { readiness: ReturnType<typeof projectReadiness>; onOpenGeneration: () => void }) { const checks = [["Manuscript structure", "4 chapters divided into narration paragraphs", true], ["Voice casting", "Narrator and 2 characters have assigned voices", true], ["Audio generation", "31 of 34 paragraphs are ready", false], ["Timeline arrangement", "Narration and ambience are aligned", true], ["Export readiness", "Resolve remaining narration before package creation", false]]; return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="05 · REVIEW" title="Give it a final listen." description="Bookx runs a calm, visible pre-flight before you deliver the finished work." /><div className="grid flex-1 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_330px] md:p-9"><section className="rounded-[24px] border border-[#dfe5de] bg-[#fffefa] p-5"><div className="mb-5 flex items-center justify-between"><div><h3 className="font-bold">Pre-flight validation</h3><p className="mt-1 text-sm text-[#7a8789]">Review every production stage before publishing.</p></div><span className="rounded-full bg-[#e8f3ef] px-3 py-1 text-xs font-bold text-[#3d796f]">{readiness.completed} of {readiness.total} complete</span></div>{checks.map(([name, detail, passed]) => <div key={name as string} className="flex items-start gap-4 border-t border-[#edf0eb] py-4"><span className={`mt-0.5 grid h-6 w-6 place-items-center rounded-full ${passed ? "bg-[#e3f1eb] text-[#3e826f]" : "bg-[#fff0dc] text-[#af7b2e]"}`}>{passed ? <Check size={14} /> : <AlertCircle size={14} />}</span><div className="flex-1"><strong className="block text-sm">{name}</strong><span className="mt-1 block text-xs leading-5 text-[#788689]">{detail}</span></div><ChevronRight size={16} className="text-[#99a3a3]" /></div>)}</section><aside className="rounded-[24px] bg-[#294f50] p-6 text-white"><span className="mono text-[10px] tracking-[.13em] text-[#c1d9d4]">REVIEW NOTE</span><h3 className="serif mt-3 text-3xl leading-tight">One final pass makes it yours.</h3><p className="mt-4 text-sm leading-6 text-[#d2e2df]">Listen in context. Resolve the remaining lines, then return here to prepare your package.</p><button onClick={onOpenGeneration} className="mt-6 rounded-xl bg-white/12 px-4 py-3 text-xs font-bold">Open unresolved narration</button></aside></div></div>; }
+  const checks: Array<[string, string, boolean]> = [
+    ["Manuscript structure",
+      totalSegments ? `${chapters.length} chapter(s) split into ${totalSegments} narration segments` : "No chapter text has been split into segments yet",
+      totalSegments > 0],
+    ["Voice casting",
+      unvoiced.length ? `${unvoiced.length} of ${characters.length} speaker(s) still need a voice` : `${characters.length} speaker(s) have an assigned voice`,
+      characters.length > 0 && unvoiced.length === 0],
+    ["Audio generation",
+      totalSegments ? `${renderedSegments} of ${totalSegments} segments rendered${failedSegments ? `, ${failedSegments} failed` : ""}` : "Nothing rendered yet",
+      totalSegments > 0 && renderedSegments === totalSegments],
+    ["Audio matches the manuscript",
+      audit
+        ? audit.staleSegments.length || audit.mismatchedVoiceSegments.length
+          ? `${audit.staleSegments.length} edited since rendering, ${audit.mismatchedVoiceSegments.length} in a different voice`
+          : "Every rendered segment matches its current text and voice"
+        : "Not checked yet",
+      Boolean(audit && audit.staleSegments.length === 0 && audit.mismatchedVoiceSegments.length === 0)],
+    ["Export readiness",
+      outstanding ? `${outstanding} segment(s) must be resolved before packaging` : "Ready to assemble a package",
+      outstanding === 0 && totalSegments > 0],
+  ];
 
-function Export({ readiness, exported, onExport }: { readiness: ReturnType<typeof projectReadiness>; exported: boolean; onExport: () => void }) { const [format, setFormat] = useState("ACX"); const packageLabel = format === "InAudio package" ? format : `${format} package`; return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="06 · PUBLISH" title="Publish & export." description="Package audio, metadata, and chapter structure for the way your audience listens." /><div className="grid flex-1 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_330px] md:p-9"><section><div className="grid gap-3 md:grid-cols-3">{[["ACX", "Audiobook delivery", BookOpen], ["Podcast", "Episode package", Mic2], ["InAudio package", "Chaptered distribution", Headphones]].map(([name, detail, Icon]) => <button key={name as string} onClick={() => setFormat(name as string)} className={`rounded-[20px] border p-5 text-left ${format === name ? "border-[#8eb8ae] bg-[#edf7f3]" : "border-[#dfe5de] bg-[#fffefa]"}`}>{createElement(Icon as typeof BookOpen, { size: 18, className: "mb-5 text-[#4d887f]" })}<strong className="block text-sm">{name as string}</strong><span className="mt-1 block text-xs text-[#788688]">{detail as string}</span></button>)}</div><div className="mt-5 rounded-[22px] border border-[#dfe5de] bg-[#fffefa] p-5"><span className="mono text-[10px] tracking-[.13em] text-[#7e8d8e]">{packageLabel.toUpperCase()}</span><h3 className="serif mt-2 text-2xl">Ready when the last line is.</h3><div className="mt-5 space-y-3 text-sm text-[#5d6f71]">{["Chapter audio in a consistent final mix", "Delivery-ready file naming and metadata", "Cover art and chapter sequence", "Validation report included with the package"].map((line) => <div key={line} className="flex items-center gap-3"><CheckCircle2 size={16} className="text-[#5c9688]" />{line}</div>)}</div></div></section><aside className="rounded-[24px] border border-[#dfe5de] bg-[#fbfbf7] p-6"><span className="mono text-[10px] tracking-[.13em] text-[#688f8a]">DELIVERY STATUS</span><div className="mt-4 flex items-center gap-3"><span className={`grid h-10 w-10 place-items-center rounded-full ${readiness.readyToExport ? "bg-[#e2f1eb] text-[#3d806f]" : "bg-[#fff0da] text-[#ae7b2d]"}`}>{readiness.readyToExport ? <Check size={19} /> : <AlertCircle size={19} />}</span><div><strong className="block text-sm">{readiness.readyToExport ? "Ready to package" : "One item remains"}</strong><span className="block text-xs text-[#7c898a]">{readiness.completed} of {readiness.total} pre-flight checks</span></div></div><button onClick={onExport} className="btn-primary btn-lg mt-6 w-full"><Download size={15} /> Create {packageLabel}</button>{exported && <div className="mt-4 rounded-xl bg-[#e7f4ef] p-3 text-xs font-semibold text-[#3f7e70]"><CheckCircle2 className="mr-1 inline" size={14} /> Package prepared. Download is ready in your library.</div>}<p className="mt-5 text-xs leading-5 text-[#7c898a]">The exact delivery label is preserved for every export: ACX, Podcast, and InAudio package.</p></aside></div></div>; }
+  const passed = checks.filter(([, , ok]) => ok).length;
+
+  return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="05 · REVIEW" title="Give it a final listen." description="A visible pre-flight, computed from the stored audio rather than from a progress counter." /><div className="grid flex-1 gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_330px] md:p-9"><section className="rounded-[24px] border border-[#dfe5de] bg-[#fffefa] p-5"><div className="mb-5 flex items-center justify-between"><div><h3 className="font-bold">Pre-flight validation</h3><p className="mt-1 text-sm text-[#7a8789]">Every stage is checked against what is actually stored.</p></div><span className="rounded-full bg-[#e8f3ef] px-3 py-1 text-xs font-bold text-[#3d796f]">{passed} of {checks.length} complete</span></div>{checks.map(([name, detail, ok]) => <div key={name} className="flex items-start gap-4 border-t border-[#edf0eb] py-4"><span className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full ${ok ? "bg-[#e3f1eb] text-[#3e826f]" : "bg-[#fff0dc] text-[#af7b2e]"}`}>{ok ? <Check size={14} /> : <AlertCircle size={14} />}</span><div className="min-w-0 flex-1"><strong className="block text-sm">{name}</strong><span className="mt-1 block text-xs leading-5 text-[#788689]">{detail}</span></div></div>)}<p className="mt-4 border-t border-[#edf0eb] pt-4 text-xs text-[#8a9492]">Readiness score: {readiness.completed} of {readiness.total}.</p></section><aside className="rounded-[24px] bg-[#294f50] p-6 text-white"><span className="mono text-[10px] tracking-[.13em] text-[#c1d9d4]">REVIEW NOTE</span><h3 className="serif mt-3 text-3xl leading-tight">One final pass makes it yours.</h3><p className="mt-4 text-sm leading-6 text-[#d2e2df]">{outstanding ? `${outstanding} segment(s) still need attention. Resolving them re-renders only those, not the whole book.` : "Everything matches. Listen through, then assemble your package."}</p>{outstanding > 0 && <button onClick={onOpenGeneration} className="mt-6 rounded-xl bg-white/12 px-4 py-3 text-xs font-bold">Open unresolved narration</button>}</aside></div></div>;
+}
+

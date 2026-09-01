@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
@@ -20,6 +20,22 @@ import { synthesizeNarration } from "../tts";
 import { storagePut } from "../storage";
 import { transcribeAudioRoute } from "../providerRouting";
 import { redactProviderApiKey } from "../providerCredentials";
+import {
+  auditProjectAudio,
+  ensureChapterSegments,
+  requestCancel,
+  requestPause,
+  resumeNarrationRun,
+  retryFailedSegments,
+  startNarrationRun,
+} from "../narrationWorker";
+import { isTerminalJobStatus, type AudioAudit, type ChapterProgress, type NarrationProgress } from "../../shared/narration";
+import {
+  checkExportReadiness,
+  getExportDownloadUrl,
+  projectAudioSummary,
+  requestProjectExport,
+} from "../audioExport";
 
 const projectId = z.object({ projectId: z.string().min(1).max(32) });
 const chapterInput = z.object({ projectId: z.string().min(1), title: z.string().min(1).max(255), body: z.string().optional(), orderIndex: z.number().int().min(0).optional() });
@@ -233,18 +249,141 @@ export const bookxRouter = router({
     return { success: true };
   }),
 
-  startGeneration: protectedProcedure.input(z.object({ projectId: z.string(), scope: z.enum(["project", "chapter", "segment"]), totalSegments: z.number().int().min(0), detail: z.object({ chapterIds: z.array(z.string()).optional() }).optional() })).mutation(async ({ ctx, input }) => {
-    const { db } = await requireProject(ctx.user.id, input.projectId);
-    const id = nanoid();
-    await db.insert(bookxGenerationJobs).values({ id, projectId: input.projectId, scope: input.scope, status: "queued", totalSegments: input.totalSegments, detail: input.detail || null });
-    return { id, status: "queued" as const };
+  // ---- Narration runs ----------------------------------------------------
+  // The worker owns a job's status; clients only express intent (start, pause,
+  // resume, cancel) and read progress. There is deliberately no route that lets a
+  // client write a job's status, because that could contradict a live run.
+
+  /**
+   * Splits chapter text into render units and starts (or resumes) the run.
+   * Returns immediately: a book takes far longer than a request.
+   */
+  startNarration: protectedProcedure.input(z.object({
+    projectId: z.string(),
+    chapterIds: z.array(z.string()).max(500).optional(),
+    force: z.boolean().optional(),
+    rewindSegments: z.number().int().min(0).max(20).optional(),
+  })).mutation(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    return startNarrationRun({
+      projectId: input.projectId,
+      ownerId: ctx.user.id,
+      chapterIds: input.chapterIds,
+      force: input.force,
+      rewindSegments: input.rewindSegments,
+    });
   }),
 
-  updateGeneration: protectedProcedure.input(z.object({ projectId: z.string(), jobId: z.string(), status: z.enum(["queued", "running", "completed", "failed", "cancelled"]), completedSegments: z.number().int().min(0).optional(), failedSegments: z.number().int().min(0).optional() })).mutation(async ({ ctx, input }) => {
+  /** Live progress for the newest run, computed from segments rather than a timer. */
+  narrationStatus: protectedProcedure.input(projectId).query(async ({ ctx, input }): Promise<NarrationProgress> => {
     const { db } = await requireProject(ctx.user.id, input.projectId);
-    const { projectId: _projectId, jobId, ...updates } = input;
-    await db.update(bookxGenerationJobs).set({ ...updates, updatedAt: new Date() }).where(and(eq(bookxGenerationJobs.id, jobId), eq(bookxGenerationJobs.projectId, input.projectId)));
+
+    const chapters = await db.select().from(bookxChapters).where(eq(bookxChapters.projectId, input.projectId)).orderBy(bookxChapters.orderIndex);
+    const segments = chapters.length
+      ? await db.select().from(bookxSegments).where(inArray(bookxSegments.chapterId, chapters.map((chapter) => chapter.id)))
+      : [];
+
+    const chapterProgress: ChapterProgress[] = chapters.map((chapter) => {
+      const own = segments.filter((segment) => segment.chapterId === chapter.id);
+      return {
+        chapterId: chapter.id,
+        title: chapter.title,
+        orderIndex: chapter.orderIndex,
+        totalSegments: own.length,
+        renderedSegments: own.filter((segment) => segment.audioStorageKey).length,
+        failedSegments: own.filter((segment) => !segment.audioStorageKey && segment.lastError).length,
+        durationMs: own.reduce((total, segment) => total + (segment.audioDurationMs || 0), 0),
+      };
+    });
+
+    const [job] = await db.select().from(bookxGenerationJobs)
+      .where(eq(bookxGenerationJobs.projectId, input.projectId))
+      .orderBy(desc(bookxGenerationJobs.createdAt))
+      .limit(1);
+
+    const renderedSegments = chapterProgress.reduce((total, chapter) => total + chapter.renderedSegments, 0);
+    const totalSegments = job?.totalSegments || segments.length;
+    const detail = (job?.detail || {}) as { failures?: NarrationProgress["failures"]; events?: NarrationProgress["events"]; pinnedVoice?: NarrationProgress["pinnedVoice"] };
+
+    if (!job) {
+      return {
+        jobId: null, status: "idle", totalSegments, completedSegments: renderedSegments, failedSegments: 0,
+        skippedSegments: 0, percent: totalSegments ? Math.round((renderedSegments / totalSegments) * 100) : 0,
+        renderedDurationMs: chapterProgress.reduce((total, chapter) => total + chapter.durationMs, 0),
+        renderedBytes: 0, cursorIndex: 0, cursorSegmentId: null, pinnedVoice: null, stopping: false,
+        secondsSinceHeartbeat: null, startedAt: null, finishedAt: null, chapters: chapterProgress,
+        failures: [], events: [], resumable: renderedSegments < totalSegments && totalSegments > 0,
+      };
+    }
+
+    // Progress is reported from stored audio, not from the job's own counter, so a
+    // lost or stale counter cannot overstate how much of the book actually exists.
+    const completed = Math.max(job.completedSegments, renderedSegments);
+
+    return {
+      jobId: job.id,
+      status: job.status,
+      totalSegments,
+      completedSegments: completed,
+      failedSegments: job.failedSegments,
+      skippedSegments: job.skippedSegments,
+      percent: totalSegments ? Math.min(100, Math.round((completed / totalSegments) * 100)) : 0,
+      renderedDurationMs: chapterProgress.reduce((total, chapter) => total + chapter.durationMs, 0),
+      renderedBytes: Number(job.renderedBytes || 0),
+      cursorIndex: job.cursorIndex,
+      cursorSegmentId: job.cursorSegmentId,
+      pinnedVoice: detail.pinnedVoice || (job.provider && job.model ? { provider: job.provider, model: job.model } : null),
+      stopping: Boolean(job.pauseRequested || job.cancelRequested),
+      secondsSinceHeartbeat: job.heartbeatAt ? Math.round((Date.now() - new Date(job.heartbeatAt).getTime()) / 1000) : null,
+      startedAt: job.startedAt ? new Date(job.startedAt).toISOString() : null,
+      finishedAt: job.finishedAt ? new Date(job.finishedAt).toISOString() : null,
+      chapters: chapterProgress,
+      failures: detail.failures || [],
+      events: detail.events || [],
+      resumable: !isTerminalJobStatus(job.status) || (job.status === "failed" && completed < totalSegments),
+    };
+  }),
+
+  /** Stops at the next segment boundary; everything already rendered is kept. */
+  pauseNarration: protectedProcedure.input(z.object({ projectId: z.string(), jobId: z.string() })).mutation(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    await requestPause(input.jobId);
     return { success: true };
+  }),
+
+  resumeNarration: protectedProcedure.input(z.object({ projectId: z.string(), jobId: z.string() })).mutation(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    await resumeNarrationRun({ jobId: input.jobId, ownerId: ctx.user.id });
+    return { success: true };
+  }),
+
+  cancelNarration: protectedProcedure.input(z.object({ projectId: z.string(), jobId: z.string() })).mutation(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    await requestCancel(input.jobId);
+    return { success: true };
+  }),
+
+  /** Re-queues only the segments that never rendered. */
+  retryFailedNarration: protectedProcedure.input(projectId).mutation(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    const reset = await retryFailedSegments({ projectId: input.projectId, ownerId: ctx.user.id });
+    const started = await startNarrationRun({ projectId: input.projectId, ownerId: ctx.user.id });
+    return { ...started, reset };
+  }),
+
+  /**
+   * "Is my book actually intact?" — derived from stored hashes and voices, so it
+   * stays correct even if job records were lost.
+   */
+  auditNarration: protectedProcedure.input(projectId).query(async ({ ctx, input }): Promise<AudioAudit> => {
+    await requireProject(ctx.user.id, input.projectId);
+    return auditProjectAudio({ projectId: input.projectId, ownerId: ctx.user.id });
+  }),
+
+  /** Rebuilds render units from chapter text, carrying over unchanged audio. */
+  resegmentChapters: protectedProcedure.input(z.object({ projectId: z.string(), chapterIds: z.array(z.string()).max(500).optional() })).mutation(async ({ ctx, input }) => {
+    const { project } = await requireProject(ctx.user.id, input.projectId);
+    return ensureChapterSegments({ projectId: input.projectId, chapterIds: input.chapterIds, model: project.voiceModel });
   }),
 
   previewCharacterVoice: protectedProcedure.input(z.object({ projectId: z.string(), characterId: z.string(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"]), voiceId: z.string().min(1).max(160).optional(), model: z.string().max(160).optional() })).mutation(async ({ ctx, input }) => {
@@ -295,18 +434,37 @@ export const bookxRouter = router({
     return transcribeAudioRoute({ ...route, ownerId: ctx.user.id });
   }),
 
+  /**
+   * Assembles the rendered segments into per-chapter files plus one combined file.
+   *
+   * Rejects up front when the audit finds anything missing, stale, or voiced
+   * differently: shipping a partial book is the failure this pipeline exists to
+   * prevent, so it fails loudly with a specific reason instead of queueing.
+   */
   requestExport: protectedProcedure.input(z.object({ projectId: z.string(), format: z.enum(["ACX", "Podcast", "InAudio package"]) })).mutation(async ({ ctx, input }) => {
-    const { db } = await requireProject(ctx.user.id, input.projectId);
-    const id = nanoid();
-    await db.insert(bookxExports).values({ id, projectId: input.projectId, format: input.format, status: "queued" });
-    return { id, status: "queued" as const };
+    await requireProject(ctx.user.id, input.projectId);
+    return requestProjectExport({ projectId: input.projectId, ownerId: ctx.user.id, format: input.format });
   }),
 
-  updateExport: protectedProcedure.input(z.object({ projectId: z.string(), exportId: z.string(), status: z.enum(["queued", "ready", "failed"]), storageKey: z.string().nullable().optional() })).mutation(async ({ ctx, input }) => {
+  /** Whether an export can succeed right now, and why not if it cannot. */
+  exportReadiness: protectedProcedure.input(projectId).query(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    const [readiness, summary] = await Promise.all([
+      checkExportReadiness({ projectId: input.projectId, ownerId: ctx.user.id }),
+      projectAudioSummary({ projectId: input.projectId, ownerId: ctx.user.id }),
+    ]);
+    return { ...readiness, ...summary };
+  }),
+
+  /** Signed URL for a finished export. */
+  exportDownloadUrl: protectedProcedure.input(z.object({ projectId: z.string(), exportId: z.string() })).mutation(async ({ ctx, input }) => {
+    await requireProject(ctx.user.id, input.projectId);
+    return { url: await getExportDownloadUrl({ projectId: input.projectId, ownerId: ctx.user.id, exportId: input.exportId }) };
+  }),
+
+  listExports: protectedProcedure.input(projectId).query(async ({ ctx, input }) => {
     const { db } = await requireProject(ctx.user.id, input.projectId);
-    const { projectId: _projectId, exportId, ...updates } = input;
-    await db.update(bookxExports).set({ ...updates, updatedAt: new Date() }).where(and(eq(bookxExports.id, exportId), eq(bookxExports.projectId, input.projectId)));
-    return { success: true };
+    return db.select().from(bookxExports).where(eq(bookxExports.projectId, input.projectId)).orderBy(desc(bookxExports.createdAt));
   }),
 
   listStudio: protectedProcedure.input(projectId).query(async ({ ctx, input }) => {
