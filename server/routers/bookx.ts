@@ -133,7 +133,12 @@ export const bookxRouter = router({
     const { db, project } = await requireProject(ctx.user.id, input.projectId);
     const chapters = await db.select().from(bookxChapters).where(eq(bookxChapters.projectId, input.projectId)).orderBy(bookxChapters.orderIndex);
     const chapterIds = chapters.map((chapter) => chapter.id);
-    const segments = chapterIds.length ? await db.select().from(bookxSegments).where(eq(bookxSegments.chapterId, chapterIds[0]!)).orderBy(bookxSegments.orderIndex) : [];
+    // Every chapter's segments, not just the first one's. Returning only
+    // `chapterIds[0]` meant the Write screen could never show segments for any
+    // chapter but the opening one.
+    const segments = chapterIds.length
+      ? await db.select().from(bookxSegments).where(inArray(bookxSegments.chapterId, chapterIds)).orderBy(bookxSegments.orderIndex)
+      : [];
     const [characters, pronunciations, generationJobs, exports] = await Promise.all([
       db.select().from(bookxCharacters).where(eq(bookxCharacters.projectId, input.projectId)),
       db.select().from(bookxPronunciations).where(eq(bookxPronunciations.projectId, input.projectId)),

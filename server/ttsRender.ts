@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import { AURA_2_SPEAKERS, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint } from "./providerCredentials";
+import { AURA_2_SPEAKERS, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint, requireProviderApiKey } from "./providerCredentials";
 import type { ProviderId } from "./providerRouting";
 import { storagePut } from "./storage";
 import { verifyAudioPayload, type AudioInspection } from "./audioIntegrity";
@@ -160,8 +160,7 @@ async function buildProviderCall(request: PinnedRenderRequest, signal: AbortSign
   }
 
   if (provider === "ElevenLabs") {
-    const key = process.env.ELEVENLABS_API_KEY;
-    if (!key) throw new Error("ELEVENLABS_API_KEY is not configured");
+    const key = await requireProviderApiKey("ElevenLabs", request.ownerId);
     return {
       url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId || "21m00Tcm4TlvDq8ikWAM"}`,
       init: {
@@ -175,8 +174,7 @@ async function buildProviderCall(request: PinnedRenderRequest, signal: AbortSign
   }
 
   if (provider === "Deepgram") {
-    const key = process.env.DEEPGRAM_API_KEY;
-    if (!key) throw new Error("DEEPGRAM_API_KEY is not configured");
+    const key = await requireProviderApiKey("Deepgram", request.ownerId);
     return {
       url: `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}`,
       init: {
@@ -190,8 +188,7 @@ async function buildProviderCall(request: PinnedRenderRequest, signal: AbortSign
   }
 
   if (provider === "OpenAI") {
-    const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error("OPENAI_API_KEY is not configured");
+    const key = await requireProviderApiKey("OpenAI", request.ownerId);
     return {
       url: "https://api.openai.com/v1/audio/speech",
       init: {

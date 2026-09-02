@@ -20,13 +20,10 @@ import {
   Plus,
   Search,
   Settings2,
-  SlidersHorizontal,
   Sparkles,
-  Split,
   Trash2,
   Upload,
   Users,
-  Wand2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -37,9 +34,10 @@ import { EnhancedProduction } from "@/components/EnhancedProduction";
 import { CastingReview, type CastingCharacter } from "@/components/CastingReview";
 import { PodcastImportDialog, type PodcastImport } from "@/components/PodcastImportDialog";
 import { PodcastScriptEditor } from "@/components/PodcastScriptEditor";
-import { ProviderSettings, type CloudflareConnectionDraft } from "@/components/ProviderSettings";
+import { ProviderSettings, type CloudflareConnectionDraft, type ProviderCatalog } from "@/components/ProviderSettings";
 import { NarrationRun } from "@/components/NarrationRun";
 import { ExportPackage } from "@/components/ExportPackage";
+import { ManuscriptEditor } from "@/components/ManuscriptEditor";
 import { projectReadiness, projectSetupSchema, type ProjectSetup } from "@shared/bookx";
 
 type Screen = "dashboard" | "workspace";
@@ -49,7 +47,6 @@ type Project = ProjectSetup & { id: string; progress: number; updated: string; c
 type Character = CastingCharacter;
 type Rule = { word: string; alias: string; phoneme: string };
 type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
-type ProviderCatalog = { id: string; label: string; configured: boolean; status: "connected" | "available" | "optional"; capabilities: ProviderCapability[]; models: { id: string; label: string; capabilities: ProviderCapability[]; detail?: string }[] };
 type VoiceChoice = { id: string; name: string; detail: string; color: string };
 
 const catalogProviders = ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "Fish Audio"] as const;
@@ -117,13 +114,6 @@ const defaultCharacters: Character[] = [
   { name: "June", role: "Supporting character", voice: "Sage", voiceId: "sage-conversational", accent: "Bright · American", color: "#b7a0c8", confidence: 84, rationale: "Clear, energetic cadence adds contrast in dialogue scenes.", sampleLine: "Then we stop waiting and make the call ourselves." },
 ];
 
-const chapterRows = [
-  ["Opening: The Still House", "6 / 6", "Ready"],
-  ["Chapter 02: Undertow", "8 / 8", "Ready"],
-  ["Chapter 03: The Missing Light", "7 / 8", "Needs 1"],
-  ["Chapter 04: What Remains", "0 / 9", "Draft"],
-];
-
 const voiceLibrary: VoiceChoice[] = [
   { id: "iris-narrative", name: "Iris", detail: "Narrative · Warm · intimate", color: "#d8a665" },
   { id: "theo-dramatic", name: "Theo", detail: "Dramatic · British · measured", color: "#89b5c2" },
@@ -132,12 +122,18 @@ const voiceLibrary: VoiceChoice[] = [
   { id: "rowan-deep", name: "Rowan", detail: "Measured · Deep · grounded", color: "#d48a7e" },
 ];
 
+/**
+ * Model options shown before sign-in, so the wizard is usable without a session.
+ * Every entry is `configured: false` on purpose: nothing is actually connected
+ * until the server says so, and claiming otherwise made the wizard read
+ * "Connected" for providers that had no key at all.
+ */
 const previewProviders: ProviderCatalog[] = [
-  { id: "ElevenLabs", label: "ElevenLabs", configured: true, status: "connected", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "eleven_multilingual_v2", label: "Multilingual v2", capabilities: ["text-to-speech"], detail: "Long-form narration" }, { id: "eleven_v3", label: "Eleven v3", capabilities: ["text-to-speech"], detail: "Expressive dialogue" }, { id: "scribe_v2", label: "Scribe v2", capabilities: ["speech-to-text"], detail: "Timed transcripts" }] },
-  { id: "Deepgram", label: "Deepgram", configured: true, status: "connected", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "aura-2-thalia-en", label: "Aura-2 Thalia", capabilities: ["text-to-speech"], detail: "Natural voice" }, { id: "nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Podcast transcription" }] },
-  { id: "Cloudflare", label: "Cloudflare Workers AI", configured: true, status: "connected", capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: [{ id: "@cf/deepgram/aura-2-en", label: "Aura-2", capabilities: ["text-to-speech"], detail: "Cloudflare-hosted voice" }, { id: "@cf/openai/gpt-oss-120b", label: "GPT OSS 120B", capabilities: ["language-model"], detail: "Story organisation" }, { id: "@cf/openai/whisper", label: "Whisper", capabilities: ["speech-to-text"], detail: "Audio transcription" }] },
-  { id: "OpenAI", label: "OpenAI", configured: true, status: "connected", capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: [{ id: "gpt-4o-mini-tts", label: "GPT-4o mini TTS", capabilities: ["text-to-speech"], detail: "Narration" }, { id: "gpt-5", label: "GPT-5", capabilities: ["language-model"], detail: "Editorial planning" }] },
-  { id: "Fish Audio", label: "Fish Audio", configured: false, status: "optional", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Connect when ready" }] },
+  { id: "ElevenLabs", label: "ElevenLabs", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "eleven_multilingual_v2", label: "Multilingual v2", capabilities: ["text-to-speech"], detail: "Long-form narration" }, { id: "eleven_v3", label: "Eleven v3", capabilities: ["text-to-speech"], detail: "Expressive dialogue" }, { id: "scribe_v2", label: "Scribe v2", capabilities: ["speech-to-text"], detail: "Timed transcripts" }] },
+  { id: "Deepgram", label: "Deepgram", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "aura-2-thalia-en", label: "Aura-2 Thalia", capabilities: ["text-to-speech"], detail: "Natural voice" }, { id: "nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Podcast transcription" }] },
+  { id: "Cloudflare", label: "Cloudflare Workers AI", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: [{ id: "@cf/deepgram/aura-2-en", label: "Aura-2", capabilities: ["text-to-speech"], detail: "Cloudflare-hosted voice" }, { id: "@cf/zai-org/glm-5.3-flash", label: "GLM-5.3 Flash", capabilities: ["language-model"], detail: "Story organisation" }, { id: "@cf/deepgram/nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Audio transcription" }] },
+  { id: "OpenAI", label: "OpenAI", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: [{ id: "gpt-4o-mini-tts", label: "GPT-4o mini TTS", capabilities: ["text-to-speech"], detail: "Narration" }, { id: "gpt-5", label: "GPT-5", capabilities: ["language-model"], detail: "Editorial planning" }] },
+  { id: "Fish Audio", label: "Fish Audio", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" }] },
 ];
 
 const nav: Array<{ id: WorkspaceTab; label: string; icon: typeof FileText; group: string }> = [
@@ -203,12 +199,12 @@ export default function Home() {
   const [pendingPodcastImport, setPendingPodcastImport] = useState<PodcastImport | null>(null);
   const [rules, setRules] = useState<Rule[]>([{ word: "Aurelia", alias: "aw-REE-lee-ah", phoneme: "ɔːˈriːliə" }, { word: "Kestrel", alias: "KES-truhl", phoneme: "ˈkɛstrəl" }]);
   const [ruleDraft, setRuleDraft] = useState<Rule>({ word: "", alias: "", phoneme: "" });
-  // Generation state lives on the server now (see `NarrationRun`), because a long
-  // book must survive a closed tab.
-  const [toolOpen, setToolOpen] = useState(false);
+  // Manuscript, generation and export state all live on the server now, so a long
+  // book survives a closed tab.
   const [playing, setPlaying] = useState(false);
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [providerChecks, setProviderChecks] = useState<Record<string, { status: string; detail?: string }>>({});
+  const [savingKeyFor, setSavingKeyFor] = useState<string | null>(null);
   const [isCasting, setIsCasting] = useState(false);
   // Timers are held in refs so unmounting (switching tab or leaving the
   // workspace) cannot fire a setState or a toast against a dead component.
@@ -399,6 +395,28 @@ export default function Home() {
     // Without this the button sat on "Check" forever with no explanation.
     onError: (error) => setProviderChecks((current) => ({ ...current, [provider]: { status: "degraded", detail: error.message || "Connection test failed" } })),
   });
+  /**
+   * Saves an API key for any provider. The key is write-only server-side, so the
+   * only feedback is the provider flipping to "connected" once the catalog
+   * refreshes.
+   */
+  const persistProviderKey = (provider: string, apiKey: string) => {
+    if (!isAuthenticated) { notify("Sign in to save provider keys."); return; }
+    if (!apiKey) return;
+    setSavingKeyFor(provider);
+    saveProviderPreference.mutate({ provider: provider as CatalogProvider, apiKey }, {
+      onSuccess: async () => {
+        await Promise.all([
+          utils.providers.catalog.invalidate(),
+          utils.providers.listPreferences.invalidate(),
+          utils.providers.voiceCatalog.invalidate(),
+        ]);
+        toast.success(`${provider} key saved.`, { description: "Use Check to verify it against the provider." });
+      },
+      onError: (error) => toast.error(error.message || `Bookx could not save the ${provider} key.`),
+      onSettled: () => setSavingKeyFor(null),
+    });
+  };
   const persistCloudflareConnection = (connection: CloudflareConnectionDraft) => {
     if (!isAuthenticated) { notify("Sign in to save your Cloudflare connection."); return; }
     saveProviderPreference.mutate({
@@ -586,7 +604,16 @@ export default function Home() {
         <Dashboard projects={isAuthenticated ? projects.filter((project) => !demoProjectIds.has(project.id)) : projects} loading={isAuthenticated && persistedProjects.isLoading} isAuthenticated={isAuthenticated} onNew={() => { setDraft(initialDraft); setPendingPodcastImport(null); setWizardOpen(true); setWizardStep(1); }} onImport={() => setImportOpen(true)} onOpen={openProject} />
       ) : (
         <Workspace project={activeProject} tab={tab} setTab={setTab} onBack={() => setScreen("dashboard")} onShare={() => notify("Preview link prepared for sharing.")} onSettings={() => setTab("settings")}>
-          {tab === "manuscript" && (activeProject.kind === "podcast" ? <PodcastScriptEditor text={manuscriptText} setText={setManuscriptText} onNext={() => setTab("cast")} /> : <Manuscript toolOpen={toolOpen} setToolOpen={setToolOpen} onNext={() => setTab("cast")} onFeedback={notify} />)}
+          {tab === "manuscript" && (
+            <ManuscriptEditor
+              projectId={activeProject.id}
+              canEdit={activeProjectIsSaved}
+              disabledReason={isAuthenticated
+                ? "This project only exists in this browser. Create or open a saved project to write chapters that Bookx can narrate."
+                : "Sign in to write chapters. The manuscript is stored server-side so narration and export can read it."}
+              onNext={() => setTab("cast")}
+            />
+          )}
           {tab === "cast" && <CastingReview characters={characters.map((character) => ({ ...character, previewUrl: previewUrls[character.name] }))} voices={filteredVoices} voicesLoading={isAuthenticated && discoveredVoiceQuery.isLoading} query={voiceSearch} setQuery={setVoiceSearch} prompt={voicePrompt} setPrompt={setVoicePrompt} onFindSimilar={findSimilarVoices} onAutoCast={autoCast} onAddCharacter={addCharacter} isCasting={isCasting} modelLabel={`${activeProject.languageModelProvider || "Cloudflare"} · ${activeProject.languageModel || "@cf/openai/gpt-oss-120b"}`} onPreview={previewCharacter} onPreviewVoice={previewLibraryVoice} onVoiceChange={changeCharacterVoice} libraryPreviewUrls={libraryPreviewUrls} />}
           {tab === "pronunciation" && <Pronunciation rules={rules} draft={ruleDraft} setDraft={setRuleDraft} onAdd={addRule} onDelete={deleteRule} />}
           {tab === "generation" && (
@@ -609,7 +636,20 @@ export default function Home() {
                 : "Sign in to assemble a package. Bookx joins the rendered segments server-side and verifies nothing is missing first."}
             />
           )}
-          {tab === "settings" && <ProviderSettings providers={providers} saved={settingsSaved} checks={providerChecks} onSave={persistProviderDefaults} onValidate={checkProvider} cloudflareSaved={savedCloudflare} onSaveCloudflare={persistCloudflareConnection} />}
+          {tab === "settings" && (
+            <ProviderSettings
+              providers={providers}
+              preferences={providerPreferencesQuery.data ?? []}
+              saved={settingsSaved}
+              checks={providerChecks}
+              onSave={persistProviderDefaults}
+              onSaveKey={persistProviderKey}
+              onValidate={checkProvider}
+              cloudflareSaved={savedCloudflare}
+              onSaveCloudflare={persistCloudflareConnection}
+              savingKey={savingKeyFor}
+            />
+          )}
         </Workspace>
       )}
 
@@ -687,16 +727,6 @@ function Workspace({ project, tab, setTab, onBack, onShare, onSettings, children
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions?: React.ReactNode }) { return <div className="flex flex-col gap-5 border-b border-[#e1e5de] bg-[#fffefa] px-6 py-6 md:flex-row md:items-end md:justify-between md:px-9"><div><p className="mono text-[10px] tracking-[.15em] text-[#5a918b]">{eyebrow}</p><h2 className="serif mt-2 text-3xl tracking-[-.04em] text-[#25393c]">{title}</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-[#738084]">{description}</p></div>{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}</div>; }
 
-function Manuscript({ toolOpen, setToolOpen, onNext, onFeedback }: { toolOpen: boolean; setToolOpen: (value: boolean) => void; onNext: () => void; onFeedback: (message: string) => void }) {
-  const [selected, setSelected] = useState(1);
-  const chapterContent = [
-    { title: "Opening: The Still House", text: "The house had been waiting for its name to be spoken again. Rain collected along the ledge, and the porch light sighed in the dark.", words: "318 words · ~2 min read", segments: ["The house had been waiting for its name to be spoken again.", "Rain collected along the ledge.", "The porch light sighed in the dark."] },
-    { title: "Undertow", text: "The house was still awake when Mara returned.\n\nNot alive in any way that could be explained, but listening. The old windows held the rain in their frames, and the corridor hummed with a current that seemed to know her name.\n\nShe set the key on the hall table. It rolled once, then stopped.", words: "487 words · ~3 min read", segments: ["The house was still awake when Mara returned.", "Not alive in any way that could be explained, but listening.", "She set the key on the hall table."] },
-    { title: "The Missing Light", text: "Elias found the lantern in the empty kitchen. Its glass was cold, but a pale light moved beneath the wick like a small, patient tide.", words: "402 words · ~3 min read", segments: ["Elias found the lantern in the empty kitchen.", "Its glass was cold.", "A pale light moved beneath the wick like a patient tide."] },
-    { title: "What Remains", text: "By morning, the hall was quiet. Mara kept the key in her palm and listened for the house to decide whether it would let her leave.", words: "276 words · ~2 min read", segments: ["By morning, the hall was quiet.", "Mara kept the key in her palm.", "The house decided whether it would let her leave."] },
-  ];
-  const activeChapter = chapterContent[selected] || chapterContent[0];
-  return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="01 · WRITE" title="The manuscript" description="Shape the narrative, split it into narration paragraphs, and give every line a clear voice." actions={<><button onClick={() => setToolOpen(!toolOpen)} className="btn-soft"><SlidersHorizontal className="mr-1 inline" size={14} /> Tools</button><button onClick={onNext} className="btn-primary">Continue to cast <ArrowRight className="ml-1 inline" size={13} /></button></>} />{toolOpen && <div className="flex flex-wrap gap-2 border-b border-[#dde5dd] bg-[#edf6f2] px-6 py-3 md:px-9"><button className="rounded-lg bg-white px-3 py-1.5 text-xs text-[#51706e]">Mood: Calm narration</button><button className="rounded-lg bg-white px-3 py-1.5 text-xs text-[#51706e]">Pacing: Natural</button><button onClick={() => onFeedback("A delivery tag has been added to this local draft.")} className="rounded-lg bg-white px-3 py-1.5 text-xs text-[#51706e] transition hover:bg-[#eef4f0]">Add delivery tag</button><button onClick={() => onFeedback("Bookx added a suggested delivery direction.")} className="rounded-lg bg-white px-3 py-1.5 text-xs text-[#51706e] transition hover:bg-[#eef4f0]"><Wand2 className="mr-1 inline" size={12} /> Suggest direction</button></div>}<div className="grid min-h-0 flex-1 lg:grid-cols-[230px_minmax(0,1fr)_300px]"><aside className="border-b border-[#e1e5de] bg-[#fafbf7] p-4 lg:border-b-0 lg:border-r"><div className="mb-3 flex items-center justify-between"><span className="mono text-[10px] tracking-[.12em] text-[#899494]">CHAPTERS</span><button onClick={() => onFeedback("A new chapter is ready to configure in this local draft.")} aria-label="Add chapter" className="rounded-lg bg-[#e5f0ec] p-1.5 text-[#36746e] transition hover:bg-[#d9ebe4]"><Plus size={14} /></button></div>{chapterRows.map(([name, count, status], index) => <button key={name} onClick={() => setSelected(index)} className={`mb-1 w-full rounded-xl p-3 text-left ${selected === index ? "bg-[#e5f0ed]" : "hover:bg-[#f0f2ee]"}`}><span className="line-clamp-2 text-xs font-semibold text-[#3c5052]">{index + 1}. {name}</span><span className="mt-2 flex items-center justify-between text-[10px] text-[#7f8a8c]"><span>{count} segments</span><span className={status === "Ready" ? "text-[#4a8e7b]" : status === "Needs 1" ? "text-[#bd8432]" : "text-[#829092]"}>{status}</span></span></button>)}</aside><section className="min-w-0 border-b border-[#e1e5de] bg-[#fffefa] p-5 lg:border-b-0 lg:p-7"><div className="mb-5 flex items-center justify-between"><div><span className="mono text-[10px] tracking-[.12em] text-[#90a0a0]">CHAPTER {String(selected + 1).padStart(2, "0")}</span><h3 className="mt-1 text-base font-bold">{activeChapter.title}</h3></div><span className="rounded-full bg-[#eef2ed] px-3 py-1 text-[10px] text-[#6f7f7f]">Auto-saved</span></div><textarea value={activeChapter.text} readOnly className="h-[360px] w-full resize-none border-0 bg-transparent text-[16px] leading-8 text-[#35474a] outline-none" /><div className="mt-3 flex justify-between border-t border-[#edf0eb] pt-3 text-[11px] text-[#849092]"><span>{activeChapter.words}</span><span>English · Natural pacing</span></div></section><aside className="bg-[#fafbf7] p-4"><div className="mb-4 flex items-center justify-between"><span className="mono text-[10px] tracking-[.12em] text-[#899494]">NARRATION SEGMENTS</span><button className="rounded-lg bg-[#e5f0ec] p-1.5 text-[#36746e]"><Split size={14} /></button></div><button onClick={() => onFeedback("Narration paragraphs are ready for review.")} className="btn-primary mb-3 w-full"><Sparkles size={14} /> Split into paragraphs</button>{activeChapter.segments.map((text, index) => <div key={text} className="mb-2 rounded-xl border border-[#e1e5de] bg-white p-3"><div className="mb-2 flex items-center justify-between"><span className="mono text-[10px] text-[#899494]">{String(index + 1).padStart(2, "0")}</span><span className={`rounded-full px-2 py-0.5 text-[9px] ${index === 2 ? "bg-[#fbefd9] text-[#9e722c]" : "bg-[#e7f3ef] text-[#397b70]"}`}>{index === 2 ? "Needs voice" : "Iris"}</span></div><p className="text-xs leading-5 text-[#516064]">{text}</p><button onClick={() => onFeedback("Preview is ready in the current workspace.")} className="mt-3 flex items-center gap-1 text-[10px] font-bold text-[#457b77] transition hover:text-[#2d615c]"><Play size={11} /> Preview</button></div>)}</aside></div></div>; }
 
 function Pronunciation({ rules, draft, setDraft, onAdd, onDelete }: { rules: Rule[]; draft: Rule; setDraft: (rule: Rule) => void; onAdd: () => void; onDelete: (word: string) => void }) { return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="02 · CAST" title="Pronounce every detail." description="Create word rules and phoneme overrides so names, places, and technical language sound exactly right." /><div className="grid flex-1 gap-6 p-6 md:grid-cols-[1fr_360px] md:p-9"><section><div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="flex items-center justify-between"><div><h3 className="font-bold">Project dictionary</h3><p className="mt-1 text-sm text-[#788689]">Applied anywhere the term appears in this project.</p></div><span className="rounded-full bg-[#e8f3ef] px-3 py-1 text-xs font-bold text-[#3c776f]">{rules.length} rules</span></div><div className="mt-5 overflow-hidden rounded-xl border border-[#e4e8e2]"><div className="grid grid-cols-[1.2fr_1fr_1fr_36px] bg-[#f4f6f1] px-4 py-3 mono text-[9px] tracking-[.12em] text-[#899594]"><span>WORD</span><span>ALIAS</span><span>PHONEME</span><span /></div>{rules.map((rule) => <div key={rule.word} className="grid grid-cols-[1.2fr_1fr_1fr_36px] items-center border-t border-[#edf0ea] px-4 py-4 text-sm"><strong>{rule.word}</strong><span className="text-[#5f7274]">{rule.alias}</span><span className="mono text-[11px] text-[#6f7e81]">{rule.phoneme || "—"}</span><button onClick={() => onDelete(rule.word)} aria-label={`Delete ${rule.word}`} className="text-[#9aa2a3] hover:text-[#af5d5d]"><Trash2 size={14} /></button></div>)}</div></div></section><aside className="rounded-[22px] border border-[#dfe5de] bg-[#fbfbf7] p-5"><span className="mono text-[10px] tracking-[.13em] text-[#658c87]">ADD A RULE</span><h3 className="serif mt-2 text-2xl">Teach Bookx a name.</h3><div className="mt-5 space-y-4"><Field label="Word"><input value={draft.word} onChange={(event) => setDraft({ ...draft, word: event.target.value })} placeholder="e.g. Aurelia" className="input" /></Field><Field label="Say it as"><input value={draft.alias} onChange={(event) => setDraft({ ...draft, alias: event.target.value })} placeholder="e.g. aw-REE-lee-ah" className="input" /></Field><Field label="Phoneme override" optional><input value={draft.phoneme} onChange={(event) => setDraft({ ...draft, phoneme: event.target.value })} placeholder="e.g. ɔːˈriːliə" className="input mono" /></Field><button onClick={onAdd} className="btn-primary btn-lg w-full">Add pronunciation rule</button></div></aside></div></div>; }
 

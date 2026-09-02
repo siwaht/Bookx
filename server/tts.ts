@@ -1,7 +1,7 @@
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
 import { resolveProvider, type ProviderId } from "./providerRouting";
-import { AURA_2_SPEAKERS, DEFAULT_CLOUDFLARE_TTS_MODEL, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint } from "./providerCredentials";
+import { AURA_2_SPEAKERS, DEFAULT_CLOUDFLARE_TTS_MODEL, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint, requireProviderApiKey } from "./providerCredentials";
 
 export type TtsProvider = ProviderId;
 
@@ -48,17 +48,19 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
   const provider = resolved.provider;
   tried.add(provider);
 
+  // Keys resolve app-saved-first, so a key entered on the Settings screen is used
+  // in preference to a deployment-wide environment value.
   const response = provider === "ElevenLabs"
     ? await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${request.voiceId || "21m00Tcm4TlvDq8ikWAM"}`, {
       method: "POST",
-      headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY || "", "content-type": "application/json", accept: "audio/mpeg" },
+      headers: { "xi-api-key": await requireProviderApiKey("ElevenLabs", request.ownerId), "content-type": "application/json", accept: "audio/mpeg" },
       body: JSON.stringify({ text: request.text, model_id: request.model || "eleven_multilingual_v2", voice_settings: { stability: 0.45, similarity_boost: 0.75 } }),
       signal: AbortSignal.timeout(120_000),
     })
     : provider === "Deepgram"
       ? await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(request.model || "aura-2-thalia-en")}`, {
         method: "POST",
-        headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY || ""}`, "content-type": "application/json", accept: "audio/mpeg" },
+        headers: { Authorization: `Token ${await requireProviderApiKey("Deepgram", request.ownerId)}`, "content-type": "application/json", accept: "audio/mpeg" },
         body: JSON.stringify({ text: request.text }),
         signal: AbortSignal.timeout(120_000),
       })
@@ -66,7 +68,7 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
         ? await synthesizeWithCloudflare(request)
         : await fetch("https://api.openai.com/v1/audio/speech", {
       method: "POST",
-      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY || ""}`, "content-type": "application/json" },
+      headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenAI", request.ownerId)}`, "content-type": "application/json" },
       body: JSON.stringify({ model: request.model || "gpt-4o-mini-tts", voice: request.voiceId || "alloy", input: request.text, response_format: "mp3" }),
       signal: AbortSignal.timeout(120_000),
     });

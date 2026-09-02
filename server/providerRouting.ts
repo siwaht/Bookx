@@ -6,6 +6,7 @@ import {
   extractCloudflareTranscript,
   getCloudflareEndpoint,
   isWebsocketOnlyCloudflareModel,
+  requireProviderApiKey,
 } from "./providerCredentials";
 
 export type ProviderId = "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio";
@@ -51,7 +52,7 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
   if (resolved.provider === "Deepgram") {
     const response = await fetch(`https://api.deepgram.com/v1/listen?model=${encodeURIComponent(input.model || "nova-3")}&smart_format=true`, {
       method: "POST",
-      headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY || ""}`, "content-type": "application/json" },
+      headers: { Authorization: `Token ${await requireProviderApiKey("Deepgram", input.ownerId)}`, "content-type": "application/json" },
       body: JSON.stringify({ url: audioUrl }),
       signal: AbortSignal.timeout(45_000),
     });
@@ -67,7 +68,7 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
     body.set("file", new Blob([await audio.arrayBuffer()], { type: audio.headers.get("content-type") || "audio/mpeg" }), "recording.mp3");
     body.set("model", input.model || "gpt-4o-transcribe");
     if (language) body.set("language", language);
-    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY || ""}` }, body, signal: AbortSignal.timeout(45_000) });
+    const response = await fetch("https://api.openai.com/v1/audio/transcriptions", { method: "POST", headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenAI", input.ownerId)}` }, body, signal: AbortSignal.timeout(45_000) });
     if (!response.ok) throw new Error(`OpenAI transcription failed with HTTP ${response.status}`);
     const payload = await response.json() as { text?: string };
     return { text: payload.text || "", provider: resolved.provider, fallback: resolved.fallback };

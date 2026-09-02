@@ -4,8 +4,8 @@ import { nanoid } from "nanoid";
 import { protectedProcedure, router } from "../_core/trpc";
 import { bookxProviderSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
-import { configuredProviders, providerCapabilities, resolveProvider, type RoutingCapability } from "../providerRouting";
-import { AURA_2_SPEAKERS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, isWebsocketOnlyCloudflareModel, redactProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { providerCapabilities, resolveProvider, type ProviderId, type RoutingCapability } from "../providerRouting";
+import { AURA_2_SPEAKERS, PROVIDER_ENV_KEYS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, getProviderApiKey, isWebsocketOnlyCloudflareModel, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
 
 export type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 
@@ -21,6 +21,10 @@ type ProviderCatalogItem = {
   label: string;
   configured: boolean;
   status: "connected" | "available" | "optional";
+  /** Whether the key came from the Settings screen or the environment. */
+  keySource?: "app" | "environment";
+  /** Set when live model discovery failed, so the UI can explain the short list. */
+  discoveryError?: string;
   capabilities: ProviderCapability[];
   models: ProviderModel[];
 };
@@ -103,20 +107,36 @@ async function cloudflareModels(endpoint: CloudflareEndpoint | null): Promise<Pr
 }
 
 async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
+  const keys = await providerKeyStates(ownerId);
   const endpoint = await getCloudflareEndpoint(ownerId);
   const cloudflareConfigured = Boolean(endpoint);
+
   let cloudflare: ProviderModel[] = cloudflareStaticModels;
+  let cloudflareError: string | undefined;
   if (cloudflareConfigured) {
     try {
       cloudflare = await cloudflareModels(endpoint);
-    } catch {
+    } catch (error) {
+      // Previously swallowed, which left the screen showing only the handful of
+      // static models with no hint that discovery had failed.
+      cloudflareError = error instanceof Error ? error.message : "Model discovery failed";
       cloudflare = cloudflareStaticModels;
     }
   }
 
+  /** Connection state plus where the key came from, so the UI can say so. */
+  const state = (provider: ProviderId) => {
+    const configured = Boolean(keys[provider].apiKey);
+    return {
+      configured,
+      status: (configured ? "connected" : "available") as ProviderCatalogItem["status"],
+      keySource: keys[provider].source ?? undefined,
+    };
+  };
+
   return [
     {
-      id: "ElevenLabs", label: "ElevenLabs", configured: Boolean(process.env.ELEVENLABS_API_KEY), status: process.env.ELEVENLABS_API_KEY ? "connected" : "available",
+      id: "ElevenLabs", label: "ElevenLabs", ...state("ElevenLabs"),
       capabilities: ["text-to-speech", "speech-to-text"],
       models: [
         { id: "eleven_multilingual_v2", label: "Multilingual v2", capabilities: ["text-to-speech"], detail: "Stable long-form narration" },
@@ -126,20 +146,26 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
       ],
     },
     {
-      id: "Deepgram", label: "Deepgram", configured: Boolean(process.env.DEEPGRAM_API_KEY), status: process.env.DEEPGRAM_API_KEY ? "connected" : "available",
+      id: "Deepgram", label: "Deepgram", ...state("Deepgram"),
       capabilities: ["text-to-speech", "speech-to-text"],
       models: [
-        { id: "aura-2-thalia-en", label: "Aura-2 Thalia", capabilities: ["text-to-speech"], detail: "Natural English voice" },
+        { id: "aura-2-thalia-en", label: "Aura-2 Thalia", capabilities: ["text-to-speech"], detail: "Natural English narration" },
+        { id: "aura-2-andromeda-en", label: "Aura-2 Andromeda", capabilities: ["text-to-speech"], detail: "Warm English narration" },
+        { id: "aura-2-orpheus-en", label: "Aura-2 Orpheus", capabilities: ["text-to-speech"], detail: "Measured English narration" },
         { id: "nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Pre-recorded transcription" },
-        { id: "flux-general-en", label: "Flux", capabilities: ["speech-to-text"], detail: "Realtime turn-based transcription" },
+        // `flux` is intentionally absent: it is realtime/WebSocket only and cannot
+        // transcribe a stored file, so offering it would only fail later.
       ],
     },
     {
-      id: "Cloudflare", label: "Cloudflare Workers AI", configured: cloudflareConfigured, status: cloudflareConfigured ? "connected" : "available",
+      id: "Cloudflare", label: "Cloudflare Workers AI", configured: cloudflareConfigured,
+      status: cloudflareConfigured ? "connected" : "available",
+      keySource: keys.Cloudflare.source ?? undefined,
+      discoveryError: cloudflareError,
       capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: cloudflare,
     },
     {
-      id: "OpenAI", label: "OpenAI", configured: Boolean(process.env.OPENAI_API_KEY), status: process.env.OPENAI_API_KEY ? "connected" : "available",
+      id: "OpenAI", label: "OpenAI", ...state("OpenAI"),
       capabilities: ["text-to-speech", "speech-to-text", "language-model"],
       models: [
         { id: "gpt-4o-mini-tts", label: "GPT-4o mini TTS", capabilities: ["text-to-speech"], detail: "Narration and voice responses" },
@@ -148,8 +174,11 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
       ],
     },
     {
-      id: "Fish Audio", label: "Fish Audio", configured: false, status: "optional", capabilities: ["text-to-speech", "speech-to-text"],
-      models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Connect an API key to enable" }],
+      // No longer hardcoded to unconfigured: a saved key now enables it like any
+      // other provider.
+      id: "Fish Audio", label: "Fish Audio", ...state("Fish Audio"),
+      capabilities: ["text-to-speech", "speech-to-text"],
+      models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" }],
     },
   ];
 }
@@ -205,10 +234,11 @@ export function rankVoiceMatches(voices: DiscoverableVoice[], query: string) {
   });
 }
 
-async function discoverElevenLabsVoices(): Promise<DiscoverableVoice[]> {
-  if (!process.env.ELEVENLABS_API_KEY) return starterVoices;
+async function discoverElevenLabsVoices(ownerId?: number): Promise<DiscoverableVoice[]> {
+  const key = await getProviderApiKey("ElevenLabs", ownerId);
+  if (!key) return starterVoices;
   const response = await fetch("https://api.elevenlabs.io/v1/voices", {
-    headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY },
+    headers: { "xi-api-key": key },
     signal: AbortSignal.timeout(15_000),
   });
   if (!response.ok) throw new Error(`ElevenLabs voice discovery returned HTTP ${response.status}`);
@@ -294,11 +324,11 @@ async function languageModelText(input: { provider: z.infer<typeof providerId>; 
     }
     return result;
   }
-  if (!process.env.OPENAI_API_KEY) throw new Error("OpenAI is not configured");
+  const openAiKey = await requireProviderApiKey("OpenAI", input.ownerId);
   const base = (await getOpenAiCompatibleBaseUrl(input.ownerId)) || "https://api.openai.com/v1";
   const response = await fetch(`${base}/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, "content-type": "application/json" },
+    headers: { Authorization: `Bearer ${openAiKey}`, "content-type": "application/json" },
     body: JSON.stringify({ model: input.model, messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }], temperature: 0.25, response_format: { type: "json_object" } }),
     signal: AbortSignal.timeout(45_000),
   });
@@ -351,7 +381,8 @@ export const providersRouter = router({
     // caller just supplied one, or one is already stored. Deriving this from the
     // request alone marked an existing saved connection unconfigured.
     const effectiveKey = input.apiKey !== undefined ? input.apiKey : existing?.apiKey;
-    values.secretConfigured = configuredProviders().includes(input.provider) || Boolean(effectiveKey) ? 1 : 0;
+    const envKey = process.env[PROVIDER_ENV_KEYS[input.provider]]?.trim();
+    values.secretConfigured = Boolean(effectiveKey) || Boolean(envKey) ? 1 : 0;
 
     if (existing) { await db.update(bookxProviderSettings).set(values).where(eq(bookxProviderSettings.id, existing.id)); return { id: existing.id }; }
     const id = nanoid();
@@ -362,10 +393,28 @@ export const providersRouter = router({
     const available = await availableProviders(ctx.user.id);
     if (!available.includes(input.provider)) return { provider: input.provider, status: "not-configured" as const, capabilities: providerCapabilities[input.provider] };
     try {
+      // Each check reports the provider's own error text, so "Check" tells the
+      // user what is actually wrong with the key rather than just failing.
+      const failIfNotOk = async (response: Response) => {
+        if (response.ok) return;
+        const detail = await response.text().catch(() => "");
+        throw new Error(`HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+      };
+
       if (input.provider === "Cloudflare") await cloudflareModels(await getCloudflareEndpoint(ctx.user.id));
-      if (input.provider === "Deepgram") { const response = await fetch("https://api.deepgram.com/v1/projects", { headers: { Authorization: `Token ${process.env.DEEPGRAM_API_KEY || ""}` }, signal: AbortSignal.timeout(15_000) }); if (!response.ok) throw new Error(`HTTP ${response.status}`); }
-      if (input.provider === "ElevenLabs") { const response = await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": process.env.ELEVENLABS_API_KEY || "" }, signal: AbortSignal.timeout(15_000) }); if (!response.ok) throw new Error(`HTTP ${response.status}`); }
-      if (input.provider === "OpenAI") { const base = (await getOpenAiCompatibleBaseUrl(ctx.user.id)) || "https://api.openai.com/v1"; const response = await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY || ""}` }, signal: AbortSignal.timeout(15_000) }); if (!response.ok) throw new Error(`HTTP ${response.status}`); }
+      if (input.provider === "Deepgram") {
+        await failIfNotOk(await fetch("https://api.deepgram.com/v1/projects", { headers: { Authorization: `Token ${await requireProviderApiKey("Deepgram", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+      }
+      if (input.provider === "ElevenLabs") {
+        await failIfNotOk(await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": await requireProviderApiKey("ElevenLabs", ctx.user.id) }, signal: AbortSignal.timeout(15_000) }));
+      }
+      if (input.provider === "OpenAI") {
+        const base = (await getOpenAiCompatibleBaseUrl(ctx.user.id)) || "https://api.openai.com/v1";
+        await failIfNotOk(await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenAI", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+      }
+      if (input.provider === "Fish Audio") {
+        await failIfNotOk(await fetch("https://api.fish.audio/model", { headers: { Authorization: `Bearer ${await requireProviderApiKey("Fish Audio", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+      }
       return { provider: input.provider, status: "connected" as const, capabilities: providerCapabilities[input.provider] };
     } catch (error) {
       return { provider: input.provider, status: "degraded" as const, capabilities: providerCapabilities[input.provider], detail: error instanceof Error ? error.message : "Connection test failed" };
@@ -375,7 +424,7 @@ export const providersRouter = router({
   voiceCatalog: protectedProcedure.input(z.object({ provider: providerId.default("ElevenLabs"), query: z.string().trim().max(160).optional() })).query(async ({ ctx, input }) => {
     let voices: DiscoverableVoice[];
     if (input.provider === "ElevenLabs") {
-      voices = await discoverElevenLabsVoices();
+      voices = await discoverElevenLabsVoices(ctx.user.id);
     } else if (input.provider === "Cloudflare") {
       const personas = starterVoices.map((voice) => ({ ...voice, provider: "Cloudflare" as const }));
       const endpoint = await getCloudflareEndpoint(ctx.user.id);

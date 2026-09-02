@@ -182,10 +182,90 @@ export function redactProviderApiKey<T extends { apiKey?: string | null }>(row: 
   return { ...rest, apiKeyConfigured: Boolean(apiKey) };
 }
 
-/** Configured providers including in-app Cloudflare endpoint configuration. */
+// ---------------------------------------------------------------------------
+// Provider API keys
+// ---------------------------------------------------------------------------
+
+/**
+ * Environment variable that supplies each provider's key when one has not been
+ * saved in the app.
+ */
+export const PROVIDER_ENV_KEYS: Record<ProviderId, string> = {
+  ElevenLabs: "ELEVENLABS_API_KEY",
+  Deepgram: "DEEPGRAM_API_KEY",
+  OpenAI: "OPENAI_API_KEY",
+  Cloudflare: "CLOUDFLARE_API_TOKEN",
+  "Fish Audio": "FISH_AUDIO_API_KEY",
+};
+
+const ALL_PROVIDERS = Object.keys(PROVIDER_ENV_KEYS) as ProviderId[];
+
+export type ProviderKeySource = "app" | "environment";
+
+export type ProviderKeyState = {
+  apiKey: string | null;
+  source: ProviderKeySource | null;
+};
+
+/**
+ * Resolves every provider's key in one query.
+ *
+ * A key saved in the app wins over the environment, so a user can override a
+ * deployment-wide key with their own. Previously only Cloudflare consulted the
+ * stored column, which meant a key entered for ElevenLabs, Deepgram, OpenAI or
+ * Fish Audio was written to the database and then silently ignored everywhere —
+ * the provider still reported itself unconfigured and every request used the
+ * (missing) environment value.
+ */
+export async function providerKeyStates(ownerId?: number): Promise<Record<ProviderId, ProviderKeyState>> {
+  const states = Object.fromEntries(
+    ALL_PROVIDERS.map(provider => {
+      const fromEnv = process.env[PROVIDER_ENV_KEYS[provider]]?.trim();
+      return [provider, fromEnv ? { apiKey: fromEnv, source: "environment" as const } : { apiKey: null, source: null }];
+    }),
+  ) as Record<ProviderId, ProviderKeyState>;
+
+  const db = await getDb();
+  if (!db) return states;
+
+  const rows = await db.select().from(bookxProviderSettings);
+  for (const provider of ALL_PROVIDERS) {
+    const owned = rows.filter(row => row.provider === provider);
+    const row = (ownerId != null ? owned.find(candidate => candidate.ownerId === ownerId) : undefined) || owned[0];
+    const stored = row?.apiKey?.trim();
+    if (stored) states[provider] = { apiKey: stored, source: "app" };
+  }
+
+  return states;
+}
+
+export async function getProviderApiKey(provider: ProviderId, ownerId?: number): Promise<string | null> {
+  return (await providerKeyStates(ownerId))[provider].apiKey;
+}
+
+/** Same, but with an error that tells the user where to put the key. */
+export async function requireProviderApiKey(provider: ProviderId, ownerId?: number): Promise<string> {
+  const key = await getProviderApiKey(provider, ownerId);
+  if (!key) {
+    throw new Error(
+      `${provider} is not connected. Add its API key on the Settings screen, or set ${PROVIDER_ENV_KEYS[provider]} in the environment.`,
+    );
+  }
+  return key;
+}
+
+/**
+ * Providers usable right now, from either an app-saved key or the environment.
+ * Cloudflare additionally counts when an endpoint URL is configured.
+ */
 export async function availableProviders(ownerId?: number): Promise<ProviderId[]> {
-  const available = new Set(configuredProviders());
+  const states = await providerKeyStates(ownerId);
+  const available = new Set<ProviderId>(configuredProviders());
+  for (const provider of ALL_PROVIDERS) {
+    if (states[provider].apiKey) available.add(provider);
+  }
   if (await getCloudflareEndpoint(ownerId)) available.add("Cloudflare");
+  else available.delete("Cloudflare"); // a bare token is not enough without an account URL
   return Array.from(available);
 }
 
