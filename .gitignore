@@ -13,6 +13,14 @@ build/
 .env.development.local
 .env.test.local
 .env.production.local
+# Wrangler local secrets and state
+.dev.vars*
+!.dev.vars.example
+.wrangler/
+
+# Local app data (SQLite database, stored audio, exports)
+data/
+.manus-logs/
 
 # IDE and editor files
 .vscode/

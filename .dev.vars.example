@@ -1,0 +1,14 @@
+# Secrets for `wrangler dev`. Copy to .dev.vars (git-ignored) and fill in.
+# In production these are Worker secrets: `npx wrangler secret put NAME`.
+
+# Shared by the Worker and the app container; any random string of 32+ characters.
+BOOKX_INTERNAL_SECRET=
+
+# Voice and AI providers (each is optional; keys can also be saved in the app).
+ELEVENLABS_API_KEY=
+OPENAI_API_KEY=
+DEEPGRAM_API_KEY=
+FISH_AUDIO_API_KEY=
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_GATEWAY_ID=

@@ -1,0 +1,18 @@
+{
+  // Type-checks the Worker against the Workers runtime (not Node or the DOM).
+  // Regenerate the runtime types after changing wrangler.jsonc:
+  //   pnpm run cf:types
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2023"],
+    "types": ["./worker-configuration.d.ts"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "allowImportingTsExtensions": true
+  },
+  "include": ["./**/*.ts"]
+}

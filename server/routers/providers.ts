@@ -5,7 +5,9 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { bookxProviderSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { providerCapabilities, resolveProvider, type ProviderId, type RoutingCapability } from "../providerRouting";
-import { AURA_2_SPEAKERS, PROVIDER_ENV_KEYS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, getProviderApiKey, isWebsocketOnlyCloudflareModel, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { PROVIDER_ENV_KEYS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, isWebsocketOnlyCloudflareModel, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { extractJson, languageModelText } from "../languageModel";
+import { rankCatalogVoices, voiceCatalogFor } from "../voiceCatalog";
 
 export type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 
@@ -192,63 +194,9 @@ export type DiscoverableVoice = {
   provider: "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio";
 };
 
-const starterVoices: DiscoverableVoice[] = [
-  { id: "iris-narrative", label: "Iris", description: "Warm, calm, intimate narrative delivery", provider: "ElevenLabs" },
-  { id: "theo-dramatic", label: "Theo", description: "Measured British dramatic delivery", provider: "ElevenLabs" },
-  { id: "sage-conversational", label: "Sage", description: "Bright, friendly American conversational delivery", provider: "ElevenLabs" },
-  { id: "noor-global", label: "Noor", description: "Velvet, global, reflective delivery", provider: "ElevenLabs" },
-  { id: "rowan-deep", label: "Rowan", description: "Deep, grounded, thoughtful delivery", provider: "ElevenLabs" },
-];
-
-/** Aura-2 speakers exposed as selectable Cloudflare voices (native mode). */
-const cloudflareAuraVoices: DiscoverableVoice[] = AURA_2_SPEAKERS.map((speaker) => ({
-  id: speaker,
-  label: speaker.charAt(0).toUpperCase() + speaker.slice(1),
-  description: "Cloudflare Aura-2 narration voice",
-  provider: "Cloudflare" as const,
-}));
-
-/** Standard OpenAI voice names for OpenAI-compatible Cloudflare endpoints. */
-const openAiCompatVoices: DiscoverableVoice[] = [
-  { id: "alloy", label: "Alloy", description: "Neutral balanced delivery", provider: "Cloudflare" as const },
-  { id: "echo", label: "Echo", description: "Grounded male delivery", provider: "Cloudflare" as const },
-  { id: "fable", label: "Fable", description: "Storytelling British delivery", provider: "Cloudflare" as const },
-  { id: "onyx", label: "Onyx", description: "Deep authoritative delivery", provider: "Cloudflare" as const },
-  { id: "nova", label: "Nova", description: "Bright energetic delivery", provider: "Cloudflare" as const },
-  { id: "shimmer", label: "Shimmer", description: "Soft airy delivery", provider: "Cloudflare" as const },
-];
-
-function tokenize(value: string) {
-  return value.toLowerCase().match(/[a-z0-9]+/g) || [];
-}
-
+/** Keyword ranking over a voice list; kept under its old name for callers and tests. */
 export function rankVoiceMatches(voices: DiscoverableVoice[], query: string) {
-  const terms = tokenize(query);
-  if (!terms.length) return voices;
-  return [...voices].sort((left, right) => {
-    const score = (voice: DiscoverableVoice) => {
-      const haystack = `${voice.id} ${voice.label} ${voice.description}`.toLowerCase();
-      return terms.reduce((total, term) => total + (haystack.includes(term) ? 1 : 0), 0);
-    };
-    return score(right) - score(left) || left.label.localeCompare(right.label);
-  });
-}
-
-async function discoverElevenLabsVoices(ownerId?: number): Promise<DiscoverableVoice[]> {
-  const key = await getProviderApiKey("ElevenLabs", ownerId);
-  if (!key) return starterVoices;
-  const response = await fetch("https://api.elevenlabs.io/v1/voices", {
-    headers: { "xi-api-key": key },
-    signal: AbortSignal.timeout(15_000),
-  });
-  if (!response.ok) throw new Error(`ElevenLabs voice discovery returned HTTP ${response.status}`);
-  const payload = await response.json() as { voices?: Array<{ voice_id?: string; name?: string; description?: string; labels?: Record<string, string> }> };
-  const voices = (payload.voices || []).flatMap((voice) => {
-    if (!voice.voice_id || !voice.name) return [];
-    const labels = Object.values(voice.labels || {}).filter(Boolean).join(" · ");
-    return [{ id: voice.voice_id, label: voice.name, description: voice.description || labels || "Provider voice", provider: "ElevenLabs" as const }];
-  });
-  return voices.length ? voices : starterVoices;
+  return rankCatalogVoices(voices, query);
 }
 
 export function normalizeCastConfidence(value: number) {
@@ -266,78 +214,7 @@ const castRecommendation = z.object({
   confidence: z.number().min(0).max(100).transform(normalizeCastConfidence),
 });
 
-/**
- * Budget and deadline for a casting call.
- *
- * Both are sized for reasoning models, which are the norm on Workers AI now:
- * measured on `@cf/zai-org/glm-5.3-flash`, a 240-character manuscript produced
- * 14,000 characters of reasoning and took 56 seconds.
- */
-const LANGUAGE_MODEL_MAX_TOKENS = 16_384;
-const LANGUAGE_MODEL_TIMEOUT_MS = 180_000;
 
-function extractJson(value: string) {
-  const fenced = value.match(/```json\s*([\s\S]*?)```/i)?.[1];
-  const candidate = fenced || value.match(/\{[\s\S]*\}/)?.[0];
-  if (!candidate) throw new Error("Language model did not return a structured cast plan");
-  return JSON.parse(candidate) as unknown;
-}
-
-async function languageModelText(input: { provider: z.infer<typeof providerId>; model: string; system: string; text: string; ownerId?: number }) {
-  if (input.provider === "Cloudflare") {
-    const endpoint = await getCloudflareEndpoint(input.ownerId);
-    if (!endpoint) throw new Error("Cloudflare is not configured");
-    // Native mode uses the Workers AI OpenAI-compatible chat endpoint; custom
-    // endpoints (AI Gateway / proxies) expose `/chat/completions` directly.
-    const url = endpoint.mode === "native" ? `${endpoint.apiBaseUrl}/v1/chat/completions` : `${endpoint.apiBaseUrl}/chat/completions`;
-    const response = await fetch(url, {
-      method: "POST",
-      headers: cloudflareHeaders(endpoint),
-      // Reasoning models (GLM, Kimi) emit a long `reasoning_content` that is billed
-      // against the same completion budget as the answer. Measured against the
-      // casting prompt, reasoning alone ran to ~3,400 tokens on a 240-character
-      // manuscript, so a 4,096 ceiling left nothing for the JSON and returned an
-      // empty `content`.
-      body: JSON.stringify({ model: input.model, max_tokens: LANGUAGE_MODEL_MAX_TOKENS, messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }] }),
-      // Those same models took 56s for a short prompt, so the old 45s deadline
-      // aborted calls that were about to succeed.
-      signal: AbortSignal.timeout(LANGUAGE_MODEL_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new Error(`Cloudflare language model request failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
-    }
-    const payload = await response.json() as {
-      choices?: Array<{ finish_reason?: string; message?: { content?: string; reasoning_content?: string } }>;
-      result?: { response?: string; text?: string };
-    };
-    const choice = payload.choices?.[0];
-    const result = choice?.message?.content || payload.result?.response || payload.result?.text;
-    if (!result) {
-      // Distinguish "the model thought until it ran out of room" from "the model
-      // said nothing", because the fix for the first one is a bigger budget or a
-      // shorter excerpt, not a retry.
-      if (choice?.finish_reason === "length" && choice.message?.reasoning_content) {
-        throw new Error(`${input.model} used its entire ${LANGUAGE_MODEL_MAX_TOKENS}-token budget on internal reasoning and returned no answer. Try a shorter excerpt or a non-reasoning model.`);
-      }
-      throw new Error("Cloudflare returned no model text");
-    }
-    return result;
-  }
-  const openAiKey = await requireProviderApiKey("OpenAI", input.ownerId);
-  const base = (await getOpenAiCompatibleBaseUrl(input.ownerId)) || "https://api.openai.com/v1";
-  const response = await fetch(`${base}/chat/completions`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${openAiKey}`, "content-type": "application/json" },
-    body: JSON.stringify({ model: input.model, messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }], temperature: 0.25, response_format: { type: "json_object" } }),
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!response.ok) throw new Error(`OpenAI language model request failed with HTTP ${response.status}`);
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
-  const result = payload.choices?.[0]?.message?.content;
-  if (!result) throw new Error("OpenAI returned no model text");
-  return result;
-}
 
 export const providersRouter = router({
   catalog: protectedProcedure.query(({ ctx }) => catalog(ctx.user.id)),
@@ -422,17 +299,12 @@ export const providersRouter = router({
   }),
   resolve: protectedProcedure.input(z.object({ requested: providerId, capability })).query(async ({ ctx, input }) => ({ ...resolveProvider(input.requested, input.capability as RoutingCapability, await availableProviders(ctx.user.id)), capability: input.capability })),
   voiceCatalog: protectedProcedure.input(z.object({ provider: providerId.default("ElevenLabs"), query: z.string().trim().max(160).optional() })).query(async ({ ctx, input }) => {
-    let voices: DiscoverableVoice[];
-    if (input.provider === "ElevenLabs") {
-      voices = await discoverElevenLabsVoices(ctx.user.id);
-    } else if (input.provider === "Cloudflare") {
-      const personas = starterVoices.map((voice) => ({ ...voice, provider: "Cloudflare" as const }));
-      const endpoint = await getCloudflareEndpoint(ctx.user.id);
-      voices = endpoint?.mode === "openai-compatible" ? [...personas, ...openAiCompatVoices] : [...personas, ...cloudflareAuraVoices];
-    } else {
-      voices = starterVoices.filter((voice) => voice.provider === "ElevenLabs").map((voice) => ({ ...voice, provider: input.provider }));
-    }
-    return rankVoiceMatches(voices, input.query || "").slice(0, 30);
+    // Real provider voices with their gender, age and accent. The starter
+    // personas are only offered when the provider has no catalog of its own.
+    const voices = await voiceCatalogFor(input.provider, ctx.user.id);
+    // Searching narrows; an empty query lists the whole catalog so every voice
+    // is reachable from the assignment dropdowns.
+    return rankCatalogVoices(voices, input.query || "").slice(0, input.query ? 40 : 200);
   }),
   recommendCast: protectedProcedure.input(z.object({
     provider: z.enum(["Cloudflare", "OpenAI"]).optional(),

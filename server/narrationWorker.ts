@@ -7,9 +7,11 @@ import {
   bookxGenerationJobs,
   bookxProjects,
   bookxSegments,
+  bookxSoundCues,
   type GenerationJobDetail,
+  type SegmentDelivery,
 } from "../drizzle/schema";
-import { getDb } from "./db";
+import { forEachChunk, getDb, insertMany, projectChapterIds } from "./db";
 import { auditSegments, planNarrationRun, type PlannableSegment } from "./narrationPlan";
 import {
   DEFAULT_MAX_ATTEMPTS,
@@ -21,7 +23,8 @@ import {
 } from "./narrationRetry";
 import type { ProviderId } from "./providerRouting";
 import { availableProviders } from "./providerCredentials";
-import { hashSegmentText, segmentProse } from "./textSegmentation";
+import { hashSegmentText, segmentChapter, type SegmentUnit } from "./textSegmentation";
+import { attributeSpeakersHeuristically, type CastMember } from "./speakerAttribution";
 import { renderSegmentAudio } from "./ttsRender";
 import { textLimitForModel } from "../shared/narration";
 
@@ -61,16 +64,13 @@ const activeRuns = new Map<string, AbortController>();
 
 export const isRunLocal = (jobId: string): boolean => activeRuns.has(jobId);
 
+/** Narration runs executing in this process, so the host is not stopped mid-way. */
+export const narrationRunsInProgress = (): number => activeRuns.size;
+
 async function requireDb(): Promise<Db> {
   const db = await getDb();
   if (!db) throw new Error("Database unavailable");
   return db;
-}
-
-/** `affectedRows` from a drizzle mysql2 write, used for conditional updates. */
-function affectedRows(result: unknown): number {
-  const header = Array.isArray(result) ? result[0] : result;
-  return (header as { affectedRows?: number } | undefined)?.affectedRows ?? 0;
 }
 
 const nowPlus = (ms: number) => new Date(Date.now() + ms);
@@ -85,11 +85,60 @@ function appendCapped<T>(existing: T[] | undefined, entry: T): T[] {
 // ---------------------------------------------------------------------------
 
 /**
+ * Chapters that are part of the audiobook.
+ *
+ * Excluded chapters (front matter, anything the creator switched off) keep their
+ * text and any audio they already have, but narration, the audit and export all
+ * behave as if they were not there.
+ */
+export async function includedChapters(db: Db, projectId: string) {
+  return db
+    .select()
+    .from(bookxChapters)
+    .where(and(eq(bookxChapters.projectId, projectId), eq(bookxChapters.included, 1)))
+    .orderBy(bookxChapters.orderIndex);
+}
+
+/** Layout hints for a unit, keeping performance fields a creator or analysis set. */
+function deliveryFor(unit: SegmentUnit, previous?: SegmentDelivery | null): SegmentDelivery {
+  const delivery: SegmentDelivery = {
+    ...(previous?.pace ? { pace: previous.pace } : {}),
+    ...(previous?.tags?.length ? { tags: previous.tags } : {}),
+    ...(previous?.speakerSource ? { speakerSource: previous.speakerSource } : {}),
+    kind: unit.kind,
+    paragraph: unit.paragraph,
+    pauseMs: unit.pauseMs,
+  };
+  if (unit.sceneBreakBefore) delivery.sceneBreakBefore = true;
+  if (unit.continuesQuote) delivery.continuesQuote = true;
+  return delivery;
+}
+
+const sameDelivery = (left: SegmentDelivery | null | undefined, right: SegmentDelivery) =>
+  JSON.stringify(left ?? {}) === JSON.stringify(right);
+
+/** Pops the first queued entry for a text, so duplicate lines each keep their own. */
+function takeQueued<T>(map: Map<string, T[]>, key: string): T | undefined {
+  const queue = map.get(key);
+  if (!queue?.length) return undefined;
+  return queue.shift();
+}
+
+function enqueue<T>(map: Map<string, T[]>, key: string, value: T) {
+  const queue = map.get(key) ?? [];
+  queue.push(value);
+  map.set(key, queue);
+}
+
+/**
  * Ensures every chapter in scope has segments to render.
  *
- * A chapter body is split into units sized for the target model. Existing segments
- * are left alone when they already match the split, because replacing them would
- * throw away valid audio; they are rebuilt only when the text genuinely changed.
+ * A chapter body is split into units sized for the target model; for a
+ * multi-voice project, quoted speech becomes its own unit so a character can
+ * voice it. Existing segments are left alone when they already match the split,
+ * because replacing them would throw away valid audio; they are rebuilt only when
+ * the text genuinely changed, and even then audio, speakers and sound cues are
+ * carried over for every unit whose text is unchanged.
  */
 export async function ensureChapterSegments(input: {
   projectId: string;
@@ -99,55 +148,94 @@ export async function ensureChapterSegments(input: {
   const db = await requireDb();
   const limit = textLimitForModel(input.model);
 
-  const chapters = await db.select().from(bookxChapters).where(eq(bookxChapters.projectId, input.projectId));
+  const [project] = await db
+    .select({ narrationStyle: bookxProjects.narrationStyle })
+    .from(bookxProjects)
+    .where(eq(bookxProjects.id, input.projectId))
+    .limit(1);
+  const splitDialogue = (project?.narrationStyle ?? "single") !== "single";
+
+  const chapters = await includedChapters(db, input.projectId);
   const scoped = input.chapterIds?.length ? chapters.filter(chapter => input.chapterIds!.includes(chapter.id)) : chapters;
+
+  let cast: CastMember[] | null = null;
+  const loadCast = async () => {
+    cast ??= (await db.select().from(bookxCharacters).where(eq(bookxCharacters.projectId, input.projectId)))
+      .map(character => ({ id: character.id, name: character.name, aliases: character.aliases, gender: character.gender, isNarrator: character.isNarrator }));
+    return cast;
+  };
 
   let created = 0;
   const rebuiltChapters: string[] = [];
 
   for (const chapter of scoped) {
-    const desired = segmentProse(chapter.body || "", { maxChars: limit });
-    if (!desired.length) continue;
-
+    const units = segmentChapter(chapter.body || "", { maxChars: limit, splitDialogue });
     const existing = await db
       .select()
       .from(bookxSegments)
       .where(eq(bookxSegments.chapterId, chapter.id))
       .orderBy(bookxSegments.orderIndex);
 
-    // The split already matches, so keep the rows (and their audio) as they are.
-    const matches =
-      existing.length === desired.length &&
-      existing.every((segment, index) => segment.text === desired[index]);
-    if (matches) {
+    if (!units.length) {
+      // The chapter's text was removed, so its segments narrate text that no
+      // longer exists. Leaving them in place used to keep narrating it.
+      if (existing.length) {
+        await db.delete(bookxSegments).where(eq(bookxSegments.chapterId, chapter.id));
+        await db.delete(bookxSoundCues).where(eq(bookxSoundCues.chapterId, chapter.id));
+        rebuiltChapters.push(chapter.id);
+      }
       await db
         .update(bookxChapters)
-        .set({ totalSegments: desired.length, updatedAt: new Date() })
+        .set({ totalSegments: 0, generatedSegments: 0, updatedAt: new Date() })
         .where(eq(bookxChapters.id, chapter.id));
       continue;
     }
 
-    // The manuscript changed. Rebuild the chapter's segments, carrying audio
-    // across for any unit whose text is unchanged so a small edit does not force
-    // a full re-render of the chapter.
-    const audioByText = new Map(
-      existing
-        .filter(segment => segment.audioStorageKey)
-        .map(segment => [segment.text, segment] as const),
-    );
+    // The split already matches, so keep the rows (and their audio) as they are,
+    // refreshing only the layout hints.
+    const matches =
+      existing.length === units.length &&
+      existing.every((segment, index) => segment.text === units[index]!.text);
+    if (matches) {
+      for (const [index, segment] of existing.entries()) {
+        const delivery = deliveryFor(units[index]!, segment.delivery);
+        if (!sameDelivery(segment.delivery, delivery)) {
+          await db.update(bookxSegments).set({ delivery }).where(eq(bookxSegments.id, segment.id));
+        }
+      }
+      await db
+        .update(bookxChapters)
+        .set({ totalSegments: units.length, updatedAt: new Date() })
+        .where(eq(bookxChapters.id, chapter.id));
+      continue;
+    }
 
-    await db.delete(bookxSegments).where(eq(bookxSegments.chapterId, chapter.id));
+    // The manuscript changed. Rebuild, carrying audio and speakers across for any
+    // unit whose text is unchanged so a small edit does not force a full
+    // re-render or lose the creator's casting of a line.
+    const audioByText = new Map<string, Array<(typeof existing)[number]>>();
+    const speakerByText = new Map<string, Array<{ characterId: string | null; speakerSource?: SegmentDelivery["speakerSource"] }>>();
+    for (const segment of existing) {
+      if (segment.audioStorageKey) enqueue(audioByText, segment.text, segment);
+      if (segment.characterId || segment.delivery?.speakerSource) {
+        enqueue(speakerByText, segment.text, { characterId: segment.characterId, speakerSource: segment.delivery?.speakerSource });
+      }
+    }
 
-    await db.insert(bookxSegments).values(desired.map((text, index) => {
-      const carried = audioByText.get(text);
+    const rows = units.map((unit, index) => {
+      const carried = takeQueued(audioByText, unit.text);
+      const speaker = takeQueued(speakerByText, unit.text);
+      const delivery = deliveryFor(unit);
+      if (speaker?.speakerSource) delivery.speakerSource = speaker.speakerSource;
       return {
         id: nanoid(),
         chapterId: chapter.id,
-        characterId: carried?.characterId ?? null,
-        text,
+        characterId: speaker?.characterId ?? null,
+        text: unit.text,
         orderIndex: index,
+        delivery,
         audioStorageKey: carried?.audioStorageKey ?? null,
-        textHash: carried?.audioStorageKey ? hashSegmentText(text) : null,
+        textHash: carried?.audioStorageKey ? hashSegmentText(unit.text) : null,
         voiceProvider: carried?.voiceProvider ?? null,
         voiceModel: carried?.voiceModel ?? null,
         voiceId: carried?.voiceId ?? null,
@@ -156,36 +244,94 @@ export async function ensureChapterSegments(input: {
         audioDurationMs: carried?.audioDurationMs ?? null,
         renderedAt: carried?.renderedAt ?? null,
       };
-    }));
+    });
 
-    created += desired.length;
+    // New dialogue gets an instant rule-based speaker; the cast analysis refines it.
+    const needsSpeaker = (row: (typeof rows)[number]) =>
+      row.delivery.kind === "dialogue" && !row.characterId && !row.delivery.speakerSource;
+    if (splitDialogue && rows.some(needsSpeaker)) {
+      const members = await loadCast();
+      if (members.some(member => !member.isNarrator)) {
+        const guesses = attributeSpeakersHeuristically(units, members);
+        rows.forEach((row, index) => {
+          if (needsSpeaker(row) && guesses[index]) {
+            row.characterId = guesses[index]!;
+            row.delivery.speakerSource = "heuristic";
+          }
+        });
+      }
+    }
+
+    const cues = await db.select().from(bookxSoundCues).where(eq(bookxSoundCues.chapterId, chapter.id));
+    const oldTextById = new Map(existing.map(segment => [segment.id, segment.text]));
+
+    await db.delete(bookxSegments).where(eq(bookxSegments.chapterId, chapter.id));
+    await insertMany(db, bookxSegments, rows);
+
+    // Sound cues follow their anchor line; a cue whose line was deleted goes too.
+    for (const cue of cues) {
+      const anchorText = oldTextById.get(cue.segmentId);
+      const target = anchorText === undefined ? undefined : rows.find(row => row.text === anchorText);
+      if (target) await db.update(bookxSoundCues).set({ segmentId: target.id, updatedAt: new Date() }).where(eq(bookxSoundCues.id, cue.id));
+      else await db.delete(bookxSoundCues).where(eq(bookxSoundCues.id, cue.id));
+    }
+
+    created += rows.length;
     rebuiltChapters.push(chapter.id);
 
     await db
       .update(bookxChapters)
-      .set({ totalSegments: desired.length, updatedAt: new Date() })
+      .set({ totalSegments: rows.length, generatedSegments: rows.filter(row => row.audioStorageKey).length, updatedAt: new Date() })
       .where(eq(bookxChapters.id, chapter.id));
   }
 
   return { created, rebuiltChapters };
 }
 
+/**
+ * The voice each segment must be narrated in.
+ *
+ * Narration, and any dialogue whose speaker is unknown, uses the narrator's
+ * voice. A single-narrator project uses it for everything, whatever the
+ * segments are attributed to.
+ */
+export function resolveTargetVoice(input: {
+  narrationStyle: string | null | undefined;
+  characterId: string | null;
+  voiceByCharacter: Map<string, string | null>;
+  narratorVoiceId: string | null;
+}): string | null {
+  if (input.narrationStyle === "single") return input.narratorVoiceId;
+  const characterVoice = input.characterId ? input.voiceByCharacter.get(input.characterId) ?? null : null;
+  return characterVoice ?? input.narratorVoiceId;
+}
+
 /** Loads the segments in scope, joined to the voice their character requires. */
 export async function loadPlannableSegments(projectId: string, chapterIds?: string[]): Promise<PlannableSegment[]> {
   const db = await requireDb();
 
-  const chapters = await db.select().from(bookxChapters).where(eq(bookxChapters.projectId, projectId));
+  const chapters = await includedChapters(db, projectId);
   const scoped = chapterIds?.length ? chapters.filter(chapter => chapterIds.includes(chapter.id)) : chapters;
   if (!scoped.length) return [];
+
+  const [project] = await db
+    .select({ narrationStyle: bookxProjects.narrationStyle })
+    .from(bookxProjects)
+    .where(eq(bookxProjects.id, projectId))
+    .limit(1);
 
   const chapterOrder = new Map(scoped.map(chapter => [chapter.id, chapter.orderIndex]));
   const characters = await db.select().from(bookxCharacters).where(eq(bookxCharacters.projectId, projectId));
   const voiceByCharacter = new Map(characters.map(character => [character.id, character.voiceId]));
+  const narratorVoiceId = characters.find(character => character.isNarrator)?.voiceId ?? null;
 
-  const rows = await db
+  // A subquery keeps this one statement however many chapters the book has.
+  const inScope = new Set(scoped.map(chapter => chapter.id));
+  const rows = (await db
     .select()
     .from(bookxSegments)
-    .where(inArray(bookxSegments.chapterId, scoped.map(chapter => chapter.id)));
+    .where(inArray(bookxSegments.chapterId, projectChapterIds(db, projectId, { includedOnly: true }))))
+    .filter(row => inScope.has(row.chapterId));
 
   return rows.map(row => ({
     id: row.id,
@@ -198,7 +344,10 @@ export async function loadPlannableSegments(projectId: string, chapterIds?: stri
     voiceProvider: row.voiceProvider,
     voiceModel: row.voiceModel,
     voiceId: row.voiceId,
-    targetVoiceId: (row.characterId ? voiceByCharacter.get(row.characterId) : null) ?? null,
+    targetVoiceId: resolveTargetVoice({ narrationStyle: project?.narrationStyle, characterId: row.characterId, voiceByCharacter, narratorVoiceId }),
+    pauseMs: row.delivery?.pauseMs ?? null,
+    sceneBreakBefore: Boolean(row.delivery?.sceneBreakBefore),
+    kind: row.delivery?.kind ?? "narration",
   }));
 }
 
@@ -324,18 +473,18 @@ export async function requestCancel(jobId: string): Promise<void> {
  * Takes the lease for a job.
  *
  * The `WHERE` clause is the whole point: only a job with no owner or an expired
- * lease can be claimed, and MySQL decides the winner, so two processes racing to
- * resume the same book cannot both proceed.
+ * lease can be claimed, and the database decides the winner, so two processes
+ * racing to resume the same book cannot both proceed.
  */
 async function claimJob(db: Db, jobId: string): Promise<boolean> {
-  const result = await db
+  const claimed = await db
     .update(bookxGenerationJobs)
     .set({
       leaseOwner: WORKER_ID,
       leaseExpiresAt: nowPlus(LEASE_MS),
       heartbeatAt: new Date(),
       status: "running",
-      startedAt: sql`COALESCE(${bookxGenerationJobs.startedAt}, NOW())`,
+      startedAt: sql`COALESCE(${bookxGenerationJobs.startedAt}, ${Date.now()})`,
       updatedAt: new Date(),
     })
     .where(
@@ -348,9 +497,10 @@ async function claimJob(db: Db, jobId: string): Promise<boolean> {
           lt(bookxGenerationJobs.leaseExpiresAt, new Date()),
         ),
       ),
-    );
+    )
+    .returning({ id: bookxGenerationJobs.id });
 
-  return affectedRows(result) > 0;
+  return claimed.length > 0;
 }
 
 async function releaseLease(db: Db, jobId: string): Promise<void> {
@@ -416,6 +566,8 @@ async function renderWithRetries(input: {
   projectId: string;
   ownerId: number;
   segment: PlannableSegment;
+  previousText?: string;
+  nextText?: string;
   provider: ProviderId;
   model: string;
   language?: string | null;
@@ -441,6 +593,8 @@ async function renderWithRetries(input: {
         model: input.model,
         voiceId: segment.targetVoiceId,
         text: segment.text,
+        previousText: input.previousText,
+        nextText: input.nextText,
         language: input.language,
         ownerId: input.ownerId,
         requestTimeoutMs: input.requestTimeoutMs,
@@ -597,6 +751,7 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
     let renderedDurationMs = 0;
     let currentChapter: string | null = null;
     const touchedChapters = new Set<string>();
+    const orderedPosition = new Map(plan.ordered.map((candidate, index) => [candidate.id, index]));
 
     for (const [position, segment] of plan.pending.entries()) {
       const stop = await readStopRequest(db, jobId);
@@ -626,7 +781,15 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
       // Record the cursor *before* rendering. If the process dies during this
       // segment, the resume knows exactly which one was in flight and rewinds
       // from there rather than guessing.
-      const orderedIndex = plan.ordered.findIndex(candidate => candidate.id === segment.id);
+      const orderedIndex = orderedPosition.get(segment.id) ?? -1;
+      // Neighbouring text in the same chapter lets the provider match intonation
+      // across the join, which matters once dialogue and its tag are separate units.
+      const previousUnit = orderedIndex > 0 ? plan.ordered[orderedIndex - 1] : undefined;
+      const nextUnit = orderedIndex >= 0 ? plan.ordered[orderedIndex + 1] : undefined;
+      const continuity = {
+        previousText: previousUnit?.chapterId === segment.chapterId ? previousUnit.text : undefined,
+        nextText: nextUnit?.chapterId === segment.chapterId ? nextUnit.text : undefined,
+      };
       await db
         .update(bookxGenerationJobs)
         .set({
@@ -644,6 +807,7 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         projectId: job.projectId,
         ownerId: project.ownerId,
         segment,
+        ...continuity,
         provider,
         model,
         language: project.language,
@@ -824,7 +988,7 @@ export async function resumeNarrationRun(input: { jobId: string; ownerId: number
  * Nothing that rendered successfully is touched, which is the point: one bad
  * paragraph should not cost a re-render of the book.
  */
-export async function retryFailedSegments(input: { projectId: string; ownerId: number }): Promise<number> {
+export async function retryFailedSegments(input: { projectId: string; ownerId: number; chapterIds?: string[] }): Promise<number> {
   const db = await requireDb();
   const [project] = await db
     .select({ id: bookxProjects.id })
@@ -833,18 +997,20 @@ export async function retryFailedSegments(input: { projectId: string; ownerId: n
     .limit(1);
   if (!project) throw new Error("Project not found");
 
-  const chapters = await db
-    .select({ id: bookxChapters.id })
-    .from(bookxChapters)
-    .where(eq(bookxChapters.projectId, input.projectId));
-  if (!chapters.length) return 0;
+  const chapters = await includedChapters(db, input.projectId);
+  const scoped = input.chapterIds?.length ? chapters.filter(chapter => input.chapterIds!.includes(chapter.id)) : chapters;
+  if (!scoped.length) return 0;
 
-  const result = await db
-    .update(bookxSegments)
-    .set({ renderAttempts: 0, lastError: null, updatedAt: new Date() })
-    .where(and(inArray(bookxSegments.chapterId, chapters.map(chapter => chapter.id)), isNull(bookxSegments.audioStorageKey)));
-
-  return affectedRows(result);
+  let reset = 0;
+  await forEachChunk(scoped.map(chapter => chapter.id), async part => {
+    const rows = await db
+      .update(bookxSegments)
+      .set({ renderAttempts: 0, lastError: null, updatedAt: new Date() })
+      .where(and(inArray(bookxSegments.chapterId, part), isNull(bookxSegments.audioStorageKey)))
+      .returning({ id: bookxSegments.id });
+    reset += rows.length;
+  });
+  return reset;
 }
 
 /** Audits a project's rendered audio against its current text and voice. */
@@ -858,17 +1024,14 @@ export async function auditProjectAudio(input: { projectId: string; ownerId: num
   if (!project) throw new Error("Project not found");
 
   const segments = await loadPlannableSegments(input.projectId);
-  const chapters = await db
-    .select({ id: bookxChapters.id })
-    .from(bookxChapters)
-    .where(eq(bookxChapters.projectId, input.projectId));
+  const chapters = await includedChapters(db, input.projectId);
 
   const durations = new Map<string, number | null>();
   if (chapters.length) {
     const rows = await db
       .select({ id: bookxSegments.id, audioDurationMs: bookxSegments.audioDurationMs, audioStorageKey: bookxSegments.audioStorageKey })
       .from(bookxSegments)
-      .where(inArray(bookxSegments.chapterId, chapters.map(chapter => chapter.id)));
+      .where(inArray(bookxSegments.chapterId, projectChapterIds(db, input.projectId, { includedOnly: true })));
     for (const row of rows) {
       // `null` marks "audio present but never measured", which the audit surfaces
       // as suspect rather than counting as good.

@@ -1,0 +1,1 @@
+ALTER TABLE `bookxExports` MODIFY COLUMN `format` varchar(40) NOT NULL;

@@ -37,7 +37,9 @@ import { PodcastScriptEditor } from "@/components/PodcastScriptEditor";
 import { ProviderSettings, type CloudflareConnectionDraft, type ProviderCatalog } from "@/components/ProviderSettings";
 import { NarrationRun } from "@/components/NarrationRun";
 import { ExportPackage } from "@/components/ExportPackage";
+import { SoundDesign } from "@/components/SoundDesign";
 import { ManuscriptEditor } from "@/components/ManuscriptEditor";
+import { MANUSCRIPT_ACCEPT, readManuscriptFile, type ManuscriptUpload } from "@/lib/files";
 import { projectReadiness, projectSetupSchema, type ProjectSetup } from "@shared/bookx";
 
 type Screen = "dashboard" | "workspace";
@@ -147,7 +149,7 @@ const nav: Array<{ id: WorkspaceTab; label: string; icon: typeof FileText; group
   { id: "settings", label: "Settings", icon: Settings2, group: "SYSTEM" },
 ];
 
-const initialDraft: ProjectSetup = { title: "", author: "", kind: "audiobook", narrationStyle: "single", voiceProvider: "ElevenLabs", voiceModel: "eleven_multilingual_v2", languageModelProvider: "Cloudflare", languageModel: "@cf/openai/gpt-oss-120b", language: "Auto-detect", manuscriptName: "" };
+const initialDraft: ProjectSetup = { title: "", author: "", kind: "audiobook", narrationStyle: "narrator-cast", voiceProvider: "ElevenLabs", voiceModel: "eleven_multilingual_v2", languageModelProvider: "Cloudflare", languageModel: "@cf/openai/gpt-oss-120b", language: "Auto-detect", manuscriptName: "" };
 
 function IconButton({ children, label, onClick }: { children: React.ReactNode; label: string; onClick?: () => void }) {
   const enabled = Boolean(onClick);
@@ -164,8 +166,12 @@ export default function Home() {
   const savedCloudflare = providerPreferencesQuery.data?.find((preference) => preference.provider === "Cloudflare") || null;
   const saveProviderPreference = trpc.providers.savePreference.useMutation();
   const validateProvider = trpc.providers.validate.useMutation();
-  const recommendCast = trpc.providers.recommendCast.useMutation();
-  const replaceCharacters = trpc.bookx.replaceCharacters.useMutation();
+  const startCastAnalysis = trpc.bookx.startCastAnalysis.useMutation();
+  const cancelAnalysis = trpc.bookx.cancelAnalysis.useMutation();
+  const assignDefaultVoices = trpc.bookx.assignDefaultVoices.useMutation();
+  const createCharacterMutation = trpc.bookx.createCharacter.useMutation();
+  const deleteCharacterMutation = trpc.bookx.deleteCharacter.useMutation();
+  const updateProjectMutation = trpc.bookx.updateProject.useMutation();
   const updateCharacter = trpc.bookx.updateCharacter.useMutation();
   const updateCharacterByName = trpc.bookx.updateCharacterByName.useMutation();
   const previewCharacterVoice = trpc.bookx.previewCharacterVoice.useMutation();
@@ -173,6 +179,8 @@ export default function Home() {
   const createPersistedProject = trpc.bookx.createProject.useMutation();
   const createChapter = trpc.bookx.createChapter.useMutation();
   const importPodcastSource = trpc.bookx.importPodcastSource.useMutation();
+  const importManuscript = trpc.bookx.importManuscript.useMutation();
+  const [manuscriptUpload, setManuscriptUpload] = useState<ManuscriptUpload | null>(null);
   const [screen, setScreen] = useState<Screen>("dashboard");
   const [projects, setProjects] = useState<Project[]>(() => {
     if (typeof window === "undefined") return initialProjects;
@@ -214,10 +222,17 @@ export default function Home() {
   const [voiceQuery, setVoiceQuery] = useState("");
   const catalogProvider = voiceCatalogProvider(activeProject.voiceProvider);
   const discoveredVoiceQuery = trpc.providers.voiceCatalog.useQuery({ provider: catalogProvider, query: voiceQuery }, { enabled: isAuthenticated });
-  const creatingProject = createPersistedProject.isPending || createChapter.isPending || importPodcastSource.isPending;
+  const creatingProject = createPersistedProject.isPending || createChapter.isPending || importPodcastSource.isPending || importManuscript.isPending;
   const activeProjectIsSaved = Boolean(isAuthenticated && persistedProjects.data?.some((project) => project.id === activeProject.id));
   const activeProjectCanPersist = Boolean(isAuthenticated && activeProject.id && !activeProject.id.startsWith("project-"));
   const workspaceQuery = trpc.bookx.getWorkspace.useQuery({ projectId: activeProject.id }, { enabled: activeProjectIsSaved });
+  // Cast analysis runs in the background; poll only while it is in flight.
+  const castAnalysisQuery = trpc.bookx.analysisStatus.useQuery({ projectId: activeProject.id, kind: "cast" }, {
+    enabled: activeProjectIsSaved,
+    refetchInterval: (query) => (["queued", "running"].includes(query.state.data?.status ?? "idle") ? 1500 : false),
+  });
+  const castRunning = ["queued", "running"].includes(castAnalysisQuery.data?.status ?? "idle");
+  const narrationStyle = (workspaceQuery.data?.project.narrationStyle ?? activeProject.narrationStyle) as ProjectSetup["narrationStyle"];
 
   // An empty catalog response is a real "no match" answer while signed in, so
   // only fall back to the starter library when there is no connected catalog to
@@ -323,28 +338,30 @@ export default function Home() {
       return;
     }
 
-    const savedCharacters = workspaceQuery.data.characters;
-
-    // A saved project with no cast yet must still clear the previous project's
-    // characters. Leaving them in place let a voice change on a stale row write
-    // one project's character names into another project.
-    if (!savedCharacters.length) {
-      setCharacters(applyCastOverrides(defaultCharacters, overrides));
-      return;
-    }
+    // A saved project shows exactly its own cast, which is empty until the book
+    // is analysed. The demo cast only ever belongs to the local preview.
+    const savedCharacters = [...workspaceQuery.data.characters].sort((left, right) =>
+      Number(right.isNarrator) - Number(left.isNarrator) || right.lineCount - left.lineCount || left.name.localeCompare(right.name));
 
     setCharacters(savedCharacters.map((character, index) => {
       const localOverride = overrides[character.name];
       return {
+        id: character.id,
         name: character.name,
         role: character.role,
-        voice: localOverride?.voice || character.voiceName || character.voiceId || "Iris",
+        voice: localOverride?.voice || character.voiceName || character.voiceId || "No voice yet",
         voiceId: localOverride?.voiceId || character.voiceId || undefined,
-        accent: character.accent || "Neutral",
+        accent: character.accent || "",
         rationale: localOverride ? "Manually selected by the creator." : character.voiceRationale || undefined,
         sampleLine: character.sampleLine || undefined,
         confidence: localOverride ? undefined : character.assignmentConfidence ?? undefined,
         color: paletteColor(index),
+        isNarrator: Boolean(character.isNarrator),
+        lineCount: character.lineCount,
+        gender: character.gender,
+        ageGroup: character.ageGroup,
+        description: character.description,
+        assignmentSource: localOverride ? "manual" : character.assignmentSource,
       };
     }));
     setPreviewUrls(Object.fromEntries(savedCharacters
@@ -354,8 +371,43 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see note above
   }, [activeProject.id, activeProjectIsSaved, workspaceQuery.data]);
 
+  // When a cast analysis finishes, reload the cast and segment speakers and say
+  // how it went. Keyed on the transition, so it fires once per run.
+  const lastCastStatus = useRef<{ projectId: string; status: string } | null>(null);
+  useEffect(() => {
+    const status = castAnalysisQuery.data?.status;
+    if (!status) return;
+    const previous = lastCastStatus.current;
+    lastCastStatus.current = { projectId: activeProject.id, status };
+    if (!previous || previous.projectId !== activeProject.id || previous.status === status) return;
+    if (previous.status !== "running" && previous.status !== "queued") return;
+    utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id });
+    utils.bookx.narrationStatus.invalidate({ projectId: activeProject.id });
+    utils.bookx.auditNarration.invalidate({ projectId: activeProject.id });
+    const message = castAnalysisQuery.data?.message || undefined;
+    if (status === "completed") toast.success("The cast is ready.", { description: message });
+    else if (status === "cancelled") toast("Cast analysis stopped.", { description: message });
+    else if (status === "failed") toast.error("The cast analysis did not finish.", { description: message });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- react to status transitions only
+  }, [castAnalysisQuery.data?.status, activeProject.id]);
+
   const updateDraft = <K extends keyof ProjectSetup>(key: K, value: ProjectSetup[K]) => setDraft((previous) => ({ ...previous, [key]: value }));
-  const handleManuscript = (event: ChangeEvent<HTMLInputElement>) => updateDraft("manuscriptName", event.target.files?.[0]?.name || "");
+  // The file itself is kept (not just its name) so the book can be imported as
+  // soon as the project exists.
+  const handleManuscript = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    try {
+      const upload = await readManuscriptFile(file);
+      setManuscriptUpload(upload);
+      updateDraft("manuscriptName", upload.name);
+    } catch (error) {
+      setManuscriptUpload(null);
+      updateDraft("manuscriptName", "");
+      notify(error instanceof Error ? error.message : "Bookx could not read that file.");
+    }
+  };
   const persistProviderDefaults = (customEndpoint?: string) => {
     if (!isAuthenticated) { notify("Sign in to save your routing defaults."); return; }
     const targets = providers.filter((provider) => provider.configured);
@@ -449,6 +501,7 @@ export default function Home() {
     // the next podcast project silently inherited an abandoned script and
     // re-uploaded its audio, and held up to 25 MB of base64 in memory.
     setPendingPodcastImport(null);
+    setManuscriptUpload(null);
   };
   const createProject = async () => {
     // The wizard button is only disabled by `canContinue`, so without this a
@@ -460,10 +513,26 @@ export default function Home() {
       return;
     }
     let project: Project = { ...parsed.data, id: `project-${Date.now()}`, progress: 0, updated: "Just now", chapters: 0, duration: "—", cover: parsed.data.kind === "podcast" ? "linear-gradient(145deg,#412f49,#966b91 58%,#e6b47b)" : "linear-gradient(145deg,#183d43,#5e9a96 56%,#d8c886)" };
+    if (!isAuthenticated && manuscriptUpload) {
+      notify("Sign in to import the manuscript. This preview project only lives in your browser.");
+    }
     if (isAuthenticated) {
       try {
         const saved = await createPersistedProject.mutateAsync(parsed.data);
         project = { ...project, id: saved.id };
+        if (manuscriptUpload) {
+          try {
+            const imported = await importManuscript.mutateAsync({ projectId: saved.id, filename: manuscriptUpload.name, base64: manuscriptUpload.base64, mode: "replace" });
+            project = { ...project, chapters: imported.included };
+            toast.success(`Imported ${imported.imported} section${imported.imported === 1 ? "" : "s"}; ${imported.included} are in the audiobook.`, {
+              description: imported.excluded
+                ? `${imported.excluded} front- or back-matter section${imported.excluded === 1 ? " was" : "s were"} left out. Review the chapter list in Write.`
+                : "Review the chapter list in Write.",
+            });
+          } catch (error) {
+            notify(error instanceof Error ? `The project was created, but the manuscript could not be imported: ${error.message}` : "The project was created, but the manuscript could not be imported.");
+          }
+        }
         if (parsed.data.kind === "podcast" && pendingPodcastImport) {
           if (pendingPodcastImport.text.trim()) {
             await createChapter.mutateAsync({ projectId: saved.id, title: "Episode script", body: pendingPodcastImport.text.trim(), orderIndex: 0 });
@@ -491,7 +560,16 @@ export default function Home() {
     setScreen("workspace");
     setTab("manuscript");
   };
-  const sampleCastText = "Mara Vale returned to the still house after midnight. Elias warned her not to open the red door. June refused to leave either of them behind.";
+  const invalidateCast = () => {
+    utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id });
+    utils.bookx.narrationStatus.invalidate({ projectId: activeProject.id });
+    utils.bookx.auditNarration.invalidate({ projectId: activeProject.id });
+  };
+  /**
+   * Starts the whole-book cast analysis. It runs on the server (finding the
+   * cast, attributing every line, picking default voices), so the button only
+   * starts it and the status banner follows it.
+   */
   const autoCast = () => {
     const applyFallback = (message: string) => {
       setCharacters((previous) => previous.map((character, index) => {
@@ -504,25 +582,69 @@ export default function Home() {
       notify(message);
     };
     if (!isAuthenticated) { applyFallback("Preview casting assigned distinct voices. Sign in to analyze your manuscript with the selected language model."); return; }
-    const manuscript = workspaceQuery.data?.chapters.map((chapter) => chapter.body || "").filter(Boolean).join("\n\n") || sampleCastText;
+    if (!activeProjectIsSaved) { notify("This project only exists in this browser. Open a saved project to analyze its manuscript."); return; }
     setIsCasting(true);
-    recommendCast.mutate({ provider: activeProject.languageModelProvider === "OpenAI" ? "OpenAI" : "Cloudflare", model: activeProject.languageModel || "@cf/openai/gpt-oss-120b", text: manuscript.slice(0, 16_000), voices: voiceLibrary.map((voice) => ({ id: voice.id, label: voice.name, description: voice.detail })) }, {
+    // A re-run after a finished analysis re-reads every chapter; your own voice
+    // and speaker choices are kept either way.
+    const force = castAnalysisQuery.data?.status === "completed";
+    startCastAnalysis.mutate({ projectId: activeProject.id, force }, {
       onSuccess: (result) => {
-        const next: Character[] = result.characters.map((character, index) => ({ name: character.name, role: character.role, voice: character.voiceName, voiceId: character.voiceId, accent: character.accent, rationale: character.rationale, sampleLine: character.sampleLine, confidence: character.confidence, color: paletteColor(index) }));
-        setCharacters(next);
-        if (activeProjectIsSaved) replaceCharacters.mutate({ projectId: activeProject.id, characters: result.characters.map((character) => ({ name: character.name, role: character.role, voiceId: character.voiceId, voiceName: character.voiceName, accent: character.accent, voiceRationale: character.rationale, sampleLine: character.sampleLine, assignmentConfidence: Math.round(character.confidence), assignmentSource: "llm" })) }, {
-          onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
-          onError: () => notify("Voice recommendations are ready, but Bookx could not save them yet."),
-        });
-        toast.success(`${next.length} characters analyzed with ${result.model}.`, { description: "Review or override any voice before generation." });
+        void castAnalysisQuery.refetch();
+        toast(result.reused ? "The cast analysis is already running." : "Reading the whole book to find the cast…", { description: "You can keep working; the cast appears here when it is ready." });
       },
-      onError: () => applyFallback("The language model was unavailable, so Bookx created a distinct fallback cast. You can still adjust every voice."),
+      onError: (error) => toast.error(error.message || "Bookx could not start the cast analysis."),
       onSettled: () => setIsCasting(false),
+    });
+  };
+  const cancelCastAnalysis = () => {
+    const jobId = castAnalysisQuery.data?.jobId;
+    if (!jobId) return;
+    cancelAnalysis.mutate({ projectId: activeProject.id, jobId }, { onSuccess: () => { void castAnalysisQuery.refetch(); toast("Stopping after the current chapter."); } });
+  };
+  const assignDefaults = () => {
+    if (!activeProjectIsSaved) { notify("Open a saved project to assign voices."); return; }
+    assignDefaultVoices.mutate({ projectId: activeProject.id }, {
+      onSuccess: (result) => { invalidateCast(); toast.success(result.assigned ? `Chose default voices for ${result.assigned} character${result.assigned === 1 ? "" : "s"}.` : "Every character already has the voice you chose."); },
+      onError: (error) => toast.error(error.message || "Bookx could not assign voices."),
+    });
+  };
+  const changeNarrationStyle = (style: ProjectSetup["narrationStyle"]) => {
+    if (!activeProjectIsSaved) { notify("Open a saved project to change how it is narrated."); return; }
+    updateProjectMutation.mutate({ projectId: activeProject.id, narrationStyle: style }, {
+      onSuccess: () => {
+        setActiveProject((previous) => ({ ...previous, narrationStyle: style }));
+        setProjects((previous) => previous.map((project) => project.id === activeProject.id ? { ...project, narrationStyle: style } : project));
+        invalidateCast();
+        utils.bookx.listProjects.invalidate();
+        toast.success(style === "single" ? "One narrator will read everything." : "Characters will speak their own lines.", {
+          description: style === "single" ? "Existing speaker choices are kept in case you switch back." : "Analyze the book to find the cast and attribute the dialogue.",
+        });
+      },
+      onError: (error) => toast.error(error.message || "Bookx could not change the narration style."),
+    });
+  };
+  const removeCharacter = (character: Character) => {
+    if (!character.id || !activeProjectIsSaved) { setCharacters((previous) => previous.filter((item) => item.name !== character.name)); return; }
+    if (!window.confirm(`Remove ${character.name}? Their lines will be read by the narrator.`)) return;
+    deleteCharacterMutation.mutate({ projectId: activeProject.id, characterId: character.id }, {
+      onSuccess: () => { invalidateCast(); toast(`${character.name} removed. Their lines now use the narrator's voice.`); },
+      onError: (error) => toast.error(error.message || "Bookx could not remove that character."),
     });
   };
   const addRule = () => { if (!ruleDraft.word.trim()) return; setRules((previous) => [...previous, ruleDraft]); setRuleDraft({ word: "", alias: "", phoneme: "" }); };
   const notify = (message: string) => toast(message);
-  const addCharacter = () => setCharacters((previous) => [...previous, { name: `Character ${previous.length + 1}`, role: "Supporting character", voice: "Noor", voiceId: "noor-global", accent: "Velvet · Global", color: "#8cab91" }]);
+  const addCharacter = () => {
+    if (!activeProjectIsSaved) {
+      setCharacters((previous) => [...previous, { name: `Character ${previous.length + 1}`, role: "Supporting character", voice: "Noor", voiceId: "noor-global", accent: "Velvet · Global", color: "#8cab91" }]);
+      return;
+    }
+    const name = window.prompt("Name of the new speaker, as the book calls them")?.trim();
+    if (!name) return;
+    createCharacterMutation.mutate({ projectId: activeProject.id, name: name.slice(0, 160), role: "Supporting character", assignmentSource: "manual" }, {
+      onSuccess: () => { invalidateCast(); toast.success(`${name} added. Choose their voice, then assign lines to them from the Write screen.`); },
+      onError: (error) => toast.error(error.message || "Bookx could not add that speaker."),
+    });
+  };
   const deleteRule = (word: string) => setRules((previous) => previous.filter((rule) => rule.word !== word));
   const storeLocalCastOverride = (name: string, voice: VoiceChoice) => {
     try {
@@ -614,7 +736,7 @@ export default function Home() {
               onNext={() => setTab("cast")}
             />
           )}
-          {tab === "cast" && <CastingReview characters={characters.map((character) => ({ ...character, previewUrl: previewUrls[character.name] }))} voices={filteredVoices} voicesLoading={isAuthenticated && discoveredVoiceQuery.isLoading} query={voiceSearch} setQuery={setVoiceSearch} prompt={voicePrompt} setPrompt={setVoicePrompt} onFindSimilar={findSimilarVoices} onAutoCast={autoCast} onAddCharacter={addCharacter} isCasting={isCasting} modelLabel={`${activeProject.languageModelProvider || "Cloudflare"} · ${activeProject.languageModel || "@cf/openai/gpt-oss-120b"}`} onPreview={previewCharacter} onPreviewVoice={previewLibraryVoice} onVoiceChange={changeCharacterVoice} libraryPreviewUrls={libraryPreviewUrls} />}
+          {tab === "cast" && <CastingReview characters={characters.map((character) => ({ ...character, previewUrl: previewUrls[character.name] }))} voices={filteredVoices} voicesLoading={isAuthenticated && discoveredVoiceQuery.isLoading} query={voiceSearch} setQuery={setVoiceSearch} prompt={voicePrompt} setPrompt={setVoicePrompt} onFindSimilar={findSimilarVoices} onAutoCast={autoCast} onAddCharacter={addCharacter} isCasting={isCasting || castRunning} modelLabel={`${activeProject.languageModelProvider || "Cloudflare"} · ${activeProject.languageModel || "@cf/openai/gpt-oss-120b"}`} onPreview={previewCharacter} onPreviewVoice={previewLibraryVoice} onVoiceChange={changeCharacterVoice} libraryPreviewUrls={libraryPreviewUrls} analysis={activeProjectIsSaved && castAnalysisQuery.data ? castAnalysisQuery.data : null} onCancelAnalysis={cancelCastAnalysis} narrationStyle={narrationStyle} onNarrationStyleChange={activeProjectIsSaved ? changeNarrationStyle : undefined} onAssignDefaults={activeProjectIsSaved ? assignDefaults : undefined} assigningDefaults={assignDefaultVoices.isPending} onRemoveCharacter={removeCharacter} />}
           {tab === "pronunciation" && <Pronunciation rules={rules} draft={ruleDraft} setDraft={setRuleDraft} onAdd={addRule} onDelete={deleteRule} />}
           {tab === "generation" && (
             <NarrationRun
@@ -625,7 +747,17 @@ export default function Home() {
                 : "Sign in to render narration. Runs are checkpointed on the server so a long book survives a closed tab or a dropped connection."}
             />
           )}
-          {tab === "studio" && <EnhancedProduction kind={activeProject.kind} playing={playing} setPlaying={setPlaying} />}
+          {tab === "studio" && (activeProject.kind === "audiobook" ? (
+            <SoundDesign
+              projectId={activeProject.id}
+              canEdit={activeProjectIsSaved}
+              disabledReason={isAuthenticated
+                ? "This project only exists in this browser. Create or open a saved project to add background sounds and music."
+                : "Sign in to add background sounds and music. Sounds are planned, made and mixed on the server."}
+            />
+          ) : (
+            <EnhancedProduction kind={activeProject.kind} playing={playing} setPlaying={setPlaying} />
+          ))}
           {tab === "review" && <Review readiness={readiness} chapters={narrationChapters} characters={characters} audit={narrationAuditQuery.data} onOpenGeneration={() => setTab("generation")} />}
           {tab === "export" && (
             <ExportPackage
@@ -716,7 +848,7 @@ function ProjectWizard({ step, setStep, draft, updateDraft, providers, onClose, 
   };
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#173034]/35 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}><div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="soft-shadow flex h-[calc(100dvh-2rem)] max-h-[800px] w-full max-w-3xl flex-col overflow-hidden rounded-[30px] border border-white/70 bg-[#fffefa] outline-none"><div className="shrink-0 flex items-start justify-between px-7 pb-5 pt-7"><div><p className="mono text-[10px] tracking-[.16em] text-[#5d918b]">START A NEW PROJECT</p><h2 id={titleId} className="serif mt-2 text-3xl tracking-[-.045em]">{step === 1 ? "Begin with the story." : step === 2 ? "Set the vocal character." : "Review the intent."}</h2></div><IconButton label="Close" onClick={onClose}><X size={17} /></IconButton></div><div className="shrink-0 px-7"><div className="grid grid-cols-3 border-y border-[#e3e7df] py-3">{[[1, "Basics"], [2, "Narration"], [3, "Review"]].map(([number, label]) => <div key={number} className="flex items-center gap-2 text-sm"><span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${step >= Number(number) ? "bg-[#286b69] text-white" : "bg-[#edf0eb] text-[#7a8787]"}`}>{step > Number(number) ? <Check size={13} /> : number}</span><span className={step >= Number(number) ? "font-semibold text-[#2b494b]" : "text-[#859093]"}>{label}</span></div>)}</div></div><div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
     {step === 1 && <div className="space-y-6"><div className="grid gap-3 sm:grid-cols-2">{[["audiobook", BookOpen, "Audiobook", "Long-form, chaptered narration"], ["podcast", Mic2, "Podcast", "Episodes, interviews, conversations"]].map(([kind, Icon, title, description]) => <button key={kind as string} onClick={() => updateDraft("kind", kind as "audiobook" | "podcast")} className={`rounded-2xl border p-4 text-left ${draft.kind === kind ? "border-[#7aa9a2] bg-[#edf7f4]" : "border-[#dfe5dc] bg-white"}`}>{createElement(Icon as typeof BookOpen, { size: 18, className: "mb-5 text-[#3c7d76]" })}<strong className="block">{title as string}</strong><span className="mt-1 block text-sm text-[#788588]">{description as string}</span></button>)}</div><div className="grid gap-4 sm:grid-cols-2"><Field label={draft.kind === "audiobook" ? "Book title" : "Episode / show title"}><input autoFocus value={draft.title} onChange={(event) => updateDraft("title", event.target.value)} placeholder="e.g. The quiet morning" className="input" /></Field><Field label={draft.kind === "audiobook" ? "Author" : "Host"} optional><input value={draft.author || ""} onChange={(event) => updateDraft("author", event.target.value)} placeholder="Add a name" className="input" /></Field></div><Field label="Narration style"><div className="grid gap-2 sm:grid-cols-3">{[["single", "Single narrator"], ["cast", "Full cast"], ["narrator-cast", "Narrator + cast"]].map(([value, label]) => <button key={value} onClick={() => updateDraft("narrationStyle", value as ProjectSetup["narrationStyle"])} className={`rounded-xl border px-3 py-3 text-left text-sm ${draft.narrationStyle === value ? "border-[#7aa9a2] bg-[#eaf4f0] text-[#2d6e69]" : "border-[#e1e5de] bg-white text-[#667477]"}`}>{label}</button>)}</div></Field></div>}
-    {step === 2 && <div className="space-y-6"><div className="rounded-[22px] border border-[#dbe6df] bg-[#f6faf7] p-4"><div className="mb-4 flex items-center justify-between"><div><p className="mono text-[10px] tracking-[.14em] text-[#5b8b84]">MODEL ROUTING</p><p className="mt-1 text-sm text-[#596a6d]">Choose models by task. Bookx keeps the creative workflow independent of any one vendor.</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-[#4b7d76]">MODEL-AGNOSTIC</span></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Voice provider"><select value={draft.voiceProvider} onChange={(event) => chooseProvider("voiceProvider", "text-to-speech", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("text-to-speech")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Voice model"><select value={draft.voiceModel} onChange={(event) => updateDraft("voiceModel", event.target.value)} className="input select">{voiceModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language-model provider"><select value={draft.languageModelProvider} onChange={(event) => chooseProvider("languageModelProvider", "language-model", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("language-model")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Language model"><select value={draft.languageModel} onChange={(event) => updateDraft("languageModel", event.target.value)} className="input select">{languageModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language"><select value={draft.language} onChange={(event) => updateDraft("language", event.target.value)} className="input select"><option>Auto-detect</option><option>English</option><option>Spanish</option><option>French</option><option>German</option></select></Field></div></div><label className="group flex cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed border-[#87ada6] bg-[#f1f8f6] px-6 py-8 text-center"><Upload size={22} className="mb-3 text-[#3b7b75]" /><strong>{draft.manuscriptName || "Upload your manuscript"}</strong><span className="mt-2 text-sm text-[#718083]">EPUB, DOCX, TXT, Markdown, or HTML</span><input type="file" accept=".epub,.docx,.txt,.md,.html,.htm" onChange={onFile} className="hidden" /></label><p className="rounded-xl bg-[#fbf4e5] px-4 py-3 text-sm leading-6 text-[#8a6b37]"><Sparkles className="mr-2 inline" size={15} />Bookx will prepare chapters and narration paragraphs for your review. You can also add a manuscript later.</p></div>}
+    {step === 2 && <div className="space-y-6"><div className="rounded-[22px] border border-[#dbe6df] bg-[#f6faf7] p-4"><div className="mb-4 flex items-center justify-between"><div><p className="mono text-[10px] tracking-[.14em] text-[#5b8b84]">MODEL ROUTING</p><p className="mt-1 text-sm text-[#596a6d]">Choose models by task. Bookx keeps the creative workflow independent of any one vendor.</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-[#4b7d76]">MODEL-AGNOSTIC</span></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Voice provider"><select value={draft.voiceProvider} onChange={(event) => chooseProvider("voiceProvider", "text-to-speech", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("text-to-speech")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Voice model"><select value={draft.voiceModel} onChange={(event) => updateDraft("voiceModel", event.target.value)} className="input select">{voiceModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language-model provider"><select value={draft.languageModelProvider} onChange={(event) => chooseProvider("languageModelProvider", "language-model", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("language-model")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Language model"><select value={draft.languageModel} onChange={(event) => updateDraft("languageModel", event.target.value)} className="input select">{languageModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language"><select value={draft.language} onChange={(event) => updateDraft("language", event.target.value)} className="input select"><option>Auto-detect</option><option>English</option><option>Spanish</option><option>French</option><option>German</option></select></Field></div></div><label className="group flex cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed border-[#87ada6] bg-[#f1f8f6] px-6 py-8 text-center"><Upload size={22} className="mb-3 text-[#3b7b75]" /><strong>{draft.manuscriptName || "Upload your manuscript"}</strong><span className="mt-2 text-sm text-[#718083]">EPUB, DOCX, TXT, Markdown, or HTML · up to 30 MB</span><input type="file" accept={MANUSCRIPT_ACCEPT} onChange={onFile} className="hidden" /></label><p className="rounded-xl bg-[#fbf4e5] px-4 py-3 text-sm leading-6 text-[#8a6b37]"><Sparkles className="mr-2 inline" size={15} />Bookx will prepare chapters and narration paragraphs for your review. You can also add a manuscript later.</p></div>}
     {step === 3 && <div className="overflow-hidden rounded-[22px] border border-[#e0e5de] bg-[#fcfcf8]">{[["Project", draft.title || "Untitled project"], ["Type", `${draft.kind === "audiobook" ? "Audiobook" : "Podcast"} · ${draft.narrationStyle.replace("-", " ")}`], ["Voice model", draft.voiceModel], ["Language", draft.language], ["Manuscript", draft.manuscriptName || "Add later from Write"]].map(([label, value]) => <div key={label} className="flex items-center justify-between border-b border-[#e6e9e3] px-5 py-4 text-sm last:border-0"><span className="text-[#798689]">{label}</span><strong className="max-w-[62%] text-right capitalize text-[#334649]">{value}</strong></div>)}</div>}
   </div><div className="flex items-center justify-between border-t border-[#e4e7e0] bg-[#fafaf5] px-7 py-5"><button onClick={() => step === 1 ? onClose() : setStep(step - 1)} className="inline-flex items-center gap-2 text-sm font-semibold text-[#667477] transition hover:text-[#3c5052]"><ArrowLeft size={15} /> {step === 1 ? "Cancel" : "Back"}</button><button disabled={!canContinue} onClick={() => step < 3 ? setStep(step + 1) : onCreate()} className="btn-primary btn-lg disabled:opacity-40">{step < 3 ? "Continue" : creating ? "Creating…" : `Create ${draft.kind === "audiobook" ? "audiobook" : "podcast"}`} {creating ? <LoaderCircle className="animate-spin" size={16} /> : <ArrowRight size={16} />}</button></div></div></div>;
 }

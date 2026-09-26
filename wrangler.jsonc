@@ -1,0 +1,50 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Bookx on Cloudflare: a Worker serves the web app, checks Cloudflare Access,
+  // and streams audio and ZIPs from R2; the Node app (narration, casting,
+  // ffmpeg mixing and exports) runs in a container behind it, with its data in
+  // D1 and its files in R2.
+  "name": "bookx",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+  // Builds the web app and the container's server bundle before every
+  // `wrangler dev` and `wrangler deploy` (npm, so no global pnpm is needed).
+  "build": { "command": "npm run build:cloudflare" },
+  "assets": {
+    "directory": "dist/public",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*", "/manus-storage/*"]
+  },
+  // Streaming a large ZIP spends CPU on checksums as it goes.
+  "limits": { "cpu_ms": 300000 },
+  "containers": [
+    {
+      "class_name": "BookxContainer",
+      "image": "./Dockerfile",
+      // 4 vCPU, 12 GiB memory, 20 GB disk: the largest standard type.
+      "instance_type": "standard-4",
+      // One app instance: in-process job state and the export queue assume it.
+      "max_instances": 1,
+      // Next to the D1 database and R2 bucket, which are created in APAC.
+      "constraints": { "regions": ["APAC"] }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "APP", "class_name": "BookxContainer" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BookxContainer"] }],
+  // The app applies its own migrations (drizzle/sqlite) when it starts, so
+  // `wrangler d1 migrations apply` is never needed and should not be used.
+  "d1_databases": [{ "binding": "DB", "database_name": "bookx", "database_id": "71f5b0e1-5e64-4132-8e0c-283065a56c76" }],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "bookx-audio" }],
+  // Local `wrangler dev` only: pretends Cloudflare Access signed this person in.
+  "access": {
+    "dev": {
+      "aud": "bookx-local-dev",
+      "identity": { "email": "creator@bookx.local", "name": "Local creator" }
+    }
+  }
+}

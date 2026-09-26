@@ -97,7 +97,7 @@ export function splitSentences(paragraph: string): string[] {
  * Tries clause punctuation first, then falls back to whitespace. Never splits a
  * word; a word longer than the limit is emitted alone and reported by the caller.
  */
-function splitLongRun(run: string, limit: number): string[] {
+export function splitLongRun(run: string, limit: number): string[] {
   if (run.length <= limit) return [run];
 
   const pieces: string[] = [];
@@ -226,6 +226,231 @@ function mergeShortNeighbours(units: string[], limit: number, minChars: number):
 /** Stable content hash. Any text change flips this and invalidates stored audio. */
 export function hashSegmentText(text: string): string {
   return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+// ---------------------------------------------------------------------------
+// Scene breaks and dialogue
+// ---------------------------------------------------------------------------
+
+/** The paragraph used to mark a scene break inside a chapter body. */
+export const SCENE_BREAK = "* * *";
+
+/** Paragraph-level text that is only a scene-break ornament ("* * *", "#", "⁂"). */
+export function isSceneBreakText(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 24) return false;
+  return /^[\s*#~⁂•·.\-–—_=+o0]+$/u.test(trimmed) && !/^\d+\.?$/.test(trimmed) && /[*#~⁂•·\-–—_=+]/u.test(trimmed);
+}
+
+/** Silence after a unit, by what follows it. */
+export const PAUSE_WITHIN_PARAGRAPH_MS = 150;
+export const PAUSE_SENTENCE_SPLIT_MS = 200;
+export const PAUSE_PARAGRAPH_MS = 350;
+export const PAUSE_SCENE_BREAK_MS = 1_400;
+
+export type SegmentKind = "narration" | "dialogue";
+
+export type SegmentUnit = {
+  text: string;
+  kind: SegmentKind;
+  /** Index of the source paragraph within the chapter (-1 when unknown). */
+  paragraph: number;
+  /** Silence after this unit in the assembled chapter. */
+  pauseMs: number;
+  /** A scene break precedes this unit. */
+  sceneBreakBefore: boolean;
+  /** The quote is still open at the end of the paragraph (it continues in the next). */
+  continuesQuote?: boolean;
+};
+
+type QuoteSpan = { text: string; kind: SegmentKind; unclosed?: boolean };
+
+const DOUBLE_OPENERS: Record<string, string[]> = {
+  "“": ["”", "\""],
+  "„": ["“", "”"],
+  "«": ["»"],
+  "\"": ["\"", "”"],
+};
+
+/** Which quotation style a chapter uses for dialogue. */
+export function detectQuoteStyle(text: string): "double" | "single" {
+  const doubles = (text.match(/[“”„«»"]/g) ?? []).length;
+  if (doubles >= 2) return "double";
+  // A single quote that opens dialogue sits at a word start and is followed by
+  // a capital: ‘Hello,’ she said. Apostrophes (don’t, James’) never match this.
+  const singles = (text.match(/(^|[\s(\[—–])['‘](?=\p{Lu})/gmu) ?? []).length;
+  return singles >= 2 ? "single" : "double";
+}
+
+const hasWords = (text: string) => /[\p{L}\p{N}]/u.test(text);
+
+/** Splits one paragraph into alternating narration and quoted-speech spans. */
+export function splitQuotedSpans(paragraph: string, style: "double" | "single" = "double"): QuoteSpan[] {
+  const spans: QuoteSpan[] = [];
+  const push = (text: string, kind: SegmentKind, unclosed = false) => {
+    const trimmed = text.trim();
+    if (!trimmed || !hasWords(trimmed)) return;
+    spans.push({ text: trimmed, kind, ...(unclosed ? { unclosed: true } : {}) });
+  };
+
+  let start = 0;
+  let closers: string[] | null = null;
+
+  for (let index = 0; index < paragraph.length; index++) {
+    const char = paragraph[index]!;
+    const previous = paragraph[index - 1] ?? "";
+    const next = paragraph[index + 1] ?? "";
+
+    if (!closers) {
+      const opensDouble = style === "double" && DOUBLE_OPENERS[char] !== undefined;
+      const opensSingle = style === "single" && (char === "‘" || char === "'") && (!previous || /[\s(\[—–“]/.test(previous)) && Boolean(next) && !/\s/.test(next);
+      if (opensDouble || opensSingle) {
+        push(paragraph.slice(start, index), "narration");
+        start = index;
+        closers = opensDouble ? DOUBLE_OPENERS[char]! : ["’", "'"];
+      }
+      continue;
+    }
+
+    if (!closers.includes(char)) continue;
+    if (style === "single") {
+      // An apostrophe inside a word (don’t) or a possessive (James’ coat) does
+      // not close the quote; one after punctuation or before a break does.
+      const afterPunctuation = /[,.!?…—–;:-]/.test(previous);
+      const beforeBreak = !next || /[\s,.;:!?)\]—–”]/.test(next);
+      const possessive = /[sS]/.test(previous) && /\s/.test(next) && !afterPunctuation;
+      if (/\p{L}/u.test(next) || !(afterPunctuation || (beforeBreak && !possessive))) continue;
+    }
+    push(paragraph.slice(start, index + 1), "dialogue");
+    start = index + 1;
+    closers = null;
+  }
+
+  if (closers) push(paragraph.slice(start), "dialogue", true);
+  else push(paragraph.slice(start), "narration");
+  return spans;
+}
+
+/** Splits text into pieces within the limit at sentence, then clause, boundaries. */
+export function splitToLimit(text: string, limit: number): string[] {
+  if (text.length <= limit) return [text];
+  const pieces: string[] = [];
+  let buffer = "";
+  for (const sentence of splitSentences(text)) {
+    for (const piece of splitLongRun(sentence, limit)) {
+      if (!buffer) {
+        buffer = piece;
+        continue;
+      }
+      if (buffer.length + 1 + piece.length <= limit) {
+        buffer = `${buffer} ${piece}`;
+        continue;
+      }
+      pieces.push(buffer);
+      buffer = piece;
+    }
+  }
+  if (buffer) pieces.push(buffer);
+  return pieces;
+}
+
+export type ChapterSegmentationOptions = SegmentationOptions & {
+  /** Separate quoted speech from narration so characters can voice their own lines. */
+  splitDialogue?: boolean;
+};
+
+/**
+ * Splits a chapter into render units with layout hints.
+ *
+ * Without `splitDialogue` the units are exactly those of `segmentProse` (so an
+ * existing single-narrator book keeps its rendered audio), except that scene
+ * breaks are honoured: the ornament is never narrated and the pause before the
+ * next scene is longer.
+ *
+ * With `splitDialogue` every unit has a single speaker: quoted speech becomes its
+ * own unit, and units never cross a paragraph or change between narration and
+ * dialogue. Short units are kept rather than merged, because merging a line of
+ * dialogue into its tag would put a character's words in the narrator's voice.
+ */
+export function segmentChapter(input: string, options: ChapterSegmentationOptions = {}): SegmentUnit[] {
+  const limit = Math.min(options.maxChars ?? textLimitForModel(options.model), ABSOLUTE_TEXT_LIMIT);
+  if (limit <= 0) throw new Error("Segment limit must be positive");
+  const normalized = normalizeProse(input);
+  if (!normalized) return [];
+
+  const paragraphs = normalized.split(PARAGRAPH_BREAK).map(paragraph => paragraph.trim()).filter(Boolean);
+  const units: SegmentUnit[] = [];
+  let sceneBreakPending = false;
+
+  const markSceneBreak = () => {
+    if (!units.length) return; // a break before any text is just an ornament
+    units[units.length - 1]!.pauseMs = PAUSE_SCENE_BREAK_MS;
+    sceneBreakPending = true;
+  };
+
+  if (!options.splitDialogue) {
+    // Group paragraphs into scenes, then segment each scene exactly as before.
+    let scene: string[] = [];
+    const flushScene = () => {
+      if (!scene.length) return;
+      const texts = segmentProse(scene.join("\n\n"), { maxChars: limit, minChars: options.minChars });
+      texts.forEach((text, index) => {
+        units.push({
+          text,
+          kind: "narration",
+          paragraph: -1,
+          pauseMs: PAUSE_PARAGRAPH_MS,
+          sceneBreakBefore: index === 0 && sceneBreakPending,
+        });
+      });
+      if (texts.length) sceneBreakPending = false;
+      scene = [];
+    };
+    for (const paragraph of paragraphs) {
+      if (isSceneBreakText(paragraph)) {
+        flushScene();
+        markSceneBreak();
+        continue;
+      }
+      scene.push(paragraph);
+    }
+    flushScene();
+    return units;
+  }
+
+  const style = detectQuoteStyle(normalized);
+  paragraphs.forEach((paragraph, paragraphIndex) => {
+    if (isSceneBreakText(paragraph)) {
+      markSceneBreak();
+      return;
+    }
+    const spans = splitQuotedSpans(paragraph, style);
+    spans.forEach((span, spanIndex) => {
+      const pieces = splitToLimit(span.text, limit);
+      pieces.forEach((piece, pieceIndex) => {
+        const lastPiece = pieceIndex === pieces.length - 1;
+        const lastSpan = spanIndex === spans.length - 1;
+        units.push({
+          text: piece,
+          kind: span.kind,
+          paragraph: paragraphIndex,
+          pauseMs: !lastPiece ? PAUSE_SENTENCE_SPLIT_MS : lastSpan ? PAUSE_PARAGRAPH_MS : PAUSE_WITHIN_PARAGRAPH_MS,
+          sceneBreakBefore: sceneBreakPending,
+          ...(span.unclosed && lastPiece ? { continuesQuote: true } : {}),
+        });
+        sceneBreakPending = false;
+      });
+    });
+  });
+
+  return units;
+}
+
+/** Hash of a chapter's unit texts, used to tell whether an analysis is still current. */
+export function hashUnitTexts(texts: string[]): string {
+  const hash = createHash("sha256");
+  for (const text of texts) hash.update(text, "utf8").update("\u0000");
+  return hash.digest("hex");
 }
 
 /**

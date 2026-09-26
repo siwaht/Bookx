@@ -45,6 +45,11 @@ export type PlannableSegment = {
   voiceId: string | null;
   /** Voice this segment's character requires, if the project is multi-cast. */
   targetVoiceId?: string | null;
+  /** Silence after the segment when a chapter is assembled. */
+  pauseMs?: number | null;
+  /** A scene break precedes this segment. */
+  sceneBreakBefore?: boolean;
+  kind?: "narration" | "dialogue";
 };
 
 export type PlanInput = {
@@ -225,3 +230,82 @@ export function auditSegments(
     complete: ordered.length > 0 && renderedSegments === ordered.length && suspectSegments.length === 0,
   };
 }
+
+/**
+ * Where a chapter stands for export.
+ *
+ * - `ready`: every line has current, verified audio in the right voice.
+ * - `outdated`: every line has audio, but some of it predates an edit, was
+ *   voiced differently, or was never verified. It can still be exported as-is.
+ * - `partial`: some lines have no audio yet.
+ * - `unrendered`: no line has audio.
+ * - `empty`: the chapter has no text to narrate.
+ */
+export type ChapterAudioState = "ready" | "outdated" | "partial" | "unrendered" | "empty";
+
+export type ChapterAudioStatus = {
+  chapterId: string;
+  state: ChapterAudioState;
+  totalSegments: number;
+  /** Lines with any stored audio, current or not. */
+  segmentsWithAudio: number;
+  missing: number;
+  stale: number;
+  mismatchedVoice: number;
+  unverified: number;
+  /** Measured length of the stored audio. */
+  durationMs: number;
+};
+
+/**
+ * Per-chapter view of the same checks as `auditSegments`, so an export can
+ * include the chapters that are done and leave out the ones that are not,
+ * instead of refusing the whole book over one unfinished chapter.
+ */
+export function chapterAudioStates(
+  segments: PlannableSegment[],
+  pinned: { provider: string; model: string },
+  durations: Map<string, number | null> = new Map(),
+  chapterIds: string[] = [],
+): Map<string, ChapterAudioStatus> {
+  const statuses = new Map<string, ChapterAudioStatus>();
+  const blank = (chapterId: string): ChapterAudioStatus => ({
+    chapterId, state: "empty", totalSegments: 0, segmentsWithAudio: 0, missing: 0, stale: 0, mismatchedVoice: 0, unverified: 0, durationMs: 0,
+  });
+  for (const chapterId of chapterIds) statuses.set(chapterId, blank(chapterId));
+
+  for (const segment of orderSegments(segments)) {
+    const status = statuses.get(segment.chapterId) ?? blank(segment.chapterId);
+    statuses.set(segment.chapterId, status);
+    status.totalSegments++;
+    if (segment.audioStorageKey) {
+      status.segmentsWithAudio++;
+      const duration = durations.get(segment.id);
+      if (duration && duration > 0) status.durationMs += duration;
+    }
+    const check = checkReusable(segment, pinned);
+    if (check.reusable) {
+      if (durations.get(segment.id) === null) status.unverified++;
+      continue;
+    }
+    if (check.reason === "missing-audio") status.missing++;
+    else if (check.reason === "text-changed") status.stale++;
+    else status.mismatchedVoice++;
+  }
+
+  for (const status of statuses.values()) {
+    status.state = !status.totalSegments
+      ? "empty"
+      : !status.segmentsWithAudio
+        ? "unrendered"
+        : status.missing
+          ? "partial"
+          : status.stale || status.mismatchedVoice || status.unverified
+            ? "outdated"
+            : "ready";
+  }
+  return statuses;
+}
+
+/** A chapter can go into an export when every line has audio. */
+export const isExportableState = (state: ChapterAudioState): boolean => state === "ready" || state === "outdated";

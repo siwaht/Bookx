@@ -13,7 +13,6 @@ vi.mock("./tts", () => ({
 import { appRouter } from "./routers";
 import { synthesizeNarration } from "./tts";
 import type { TrpcContext } from "./_core/context";
-import { needs, unconfigured } from "./testEnv";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
@@ -32,7 +31,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe.skipIf(unconfigured("DATABASE_URL"))(`Bookx character preview (${needs("DATABASE_URL")})`, () => {
+describe(`Bookx character preview`, () => {
   it("uses the persisted character voice and saves the generated preview key", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({

@@ -150,7 +150,23 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
+/** Drops the Manus analytics tag, whose endpoint only exists on Manus hosting. */
+function withoutManusAnalytics(): Plugin {
+  return {
+    name: "bookx-without-manus-analytics",
+    transformIndexHtml: {
+      order: "pre",
+      handler: html => html.replace(/\s*<script[^>]*%VITE_ANALYTICS_ENDPOINT%[^>]*><\/script>/, ""),
+    },
+  };
+}
+
+// The Cloudflare build is not hosted by Manus: it leaves out the Manus editor
+// runtime (a large inline script on every page load), analytics and dev tooling.
+const forCloudflare = process.env.BOOKX_TARGET === "cloudflare";
+const plugins = forCloudflare
+  ? [react(), tailwindcss(), withoutManusAnalytics()]
+  : [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector()];
 
 export default defineConfig({
   plugins,

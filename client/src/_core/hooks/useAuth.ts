@@ -1,4 +1,4 @@
-import { startLogin } from "@/const";
+import { ACCESS_LOGOUT_URL, AUTH_MODE, startLogin } from "@/const";
 import { trpc } from "@/lib/trpc";
 import { TRPCClientError } from "@trpc/client";
 import { useCallback, useEffect, useMemo } from "react";
@@ -46,7 +46,10 @@ export function useAuth(options?: UseAuthOptions) {
         sessionStorage.removeItem("manus-cookie");
       } catch {}
       utils.auth.me.setData(undefined, null);
-      await utils.auth.me.invalidate();
+      // Behind Cloudflare Access the app has no session of its own to clear;
+      // Access has to end its one.
+      if (AUTH_MODE === "access") window.location.href = ACCESS_LOGOUT_URL;
+      else await utils.auth.me.invalidate();
     }
   }, [logoutMutation, utils]);
 
@@ -84,7 +87,7 @@ export function useAuth(options?: UseAuthOptions) {
     if (redirectPath) {
       window.location.href = redirectPath;
     } else {
-      startLogin();
+      startLogin({ automatic: true });
     }
   }, [
     redirectOnUnauthenticated,
