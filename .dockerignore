@@ -1,0 +1,5 @@
+# Only what the Dockerfile copies is sent to Docker: no sources, no
+# node_modules, and never .env, .dev.vars or local data.
+*
+!dist/container/
+!drizzle/sqlite/

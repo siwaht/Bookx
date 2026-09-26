@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { appRouter } from "./routers";
 import type { TrpcContext } from "./_core/context";
 import { projectReadiness } from "../shared/bookx";
-import { needs, unconfigured } from "./testEnv";
 
 type AuthenticatedUser = NonNullable<TrpcContext["user"]>;
 
@@ -21,7 +20,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe.skipIf(unconfigured("DATABASE_URL"))(`Bookx isolated multi-cast podcast workflow (${needs("DATABASE_URL")})`, () => {
+describe(`Bookx isolated multi-cast podcast workflow`, () => {
   it("creates, casts, mixes, reviews, and prepares a Podcast package without retaining QA data", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({

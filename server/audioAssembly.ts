@@ -154,12 +154,23 @@ export function scanMp3(input: Buffer): Mp3Scan {
 
   if (!format || !frames.length) throw new AudioAssemblyError("No MP3 frames found in the segment audio");
 
+  // An encoder's Xing/Info/VBRI header is a silent frame that states the
+  // stream's frame count. Left in place after a join, it tells players the whole
+  // chapter is as long as its first segment, so it is dropped.
+  if (frames.length > 1 && isInfoFrame(buffer, frames[0]!)) frames.shift();
+
   return {
     format,
     frames,
     firstFrameOffset,
     durationMs: Math.round(frames.length * format.frameDurationMs),
   };
+}
+
+/** Whether a frame is a Xing / Info / VBRI metadata frame rather than audio. */
+export function isInfoFrame(buffer: Buffer, frame: Mp3Frame): boolean {
+  const head = buffer.subarray(frame.offset, Math.min(frame.offset + frame.size, frame.offset + 64)).toString("latin1");
+  return head.includes("Xing") || head.includes("Info") || head.slice(36, 40) === "VBRI";
 }
 
 const sameMp3Format = (left: Mp3Format, right: Mp3Format): boolean =>
@@ -199,7 +210,25 @@ export function buildSilentMp3(format: Mp3Format, ms: number): Buffer {
   return Buffer.concat(Array.from({ length: frameCount }, () => frame));
 }
 
-export type AssemblyPart = { buffer: Buffer; label?: string };
+export type AssemblyPart = {
+  buffer: Buffer;
+  label?: string;
+  /** Silence after this part; falls back to the call's `gapMs`. Ignored after the last part. */
+  gapAfterMs?: number;
+};
+
+export type AssemblyOptions = {
+  /** Default silence between parts. */
+  gapMs?: number;
+  /** Silence before the first part, e.g. room for a music swell to open a chapter. */
+  leadInMs?: number;
+};
+
+function gapAfter(parts: AssemblyPart[], index: number, gapMs: number): number {
+  if (index >= parts.length - 1) return 0;
+  const gap = parts[index]!.gapAfterMs;
+  return Math.max(0, Math.round(gap ?? gapMs));
+}
 
 export type AssemblyResult = {
   buffer: Buffer;
@@ -211,7 +240,7 @@ export type AssemblyResult = {
 };
 
 /** Joins same-format MP3 streams, optionally inserting a gap between them. */
-export function concatMp3(parts: AssemblyPart[], gapMs = 0): AssemblyResult {
+export function concatMp3(parts: AssemblyPart[], gapMs = 0, leadInMs = 0): AssemblyResult {
   if (!parts.length) throw new AudioAssemblyError("Nothing to assemble");
 
   const scans = parts.map((part, index) => {
@@ -233,19 +262,32 @@ export function concatMp3(parts: AssemblyPart[], gapMs = 0): AssemblyResult {
     }
   }
 
-  const silence = buildSilentMp3(format, gapMs);
-  const silenceMs = gapMs > 0 ? Math.round((silence.length / (format.bitrateKbps * 125)) * 1000) : 0;
+  // Silent frames are built once per distinct gap length.
+  const silenceCache = new Map<number, { buffer: Buffer; ms: number }>();
+  const silenceFor = (ms: number) => {
+    if (ms <= 0) return { buffer: Buffer.alloc(0), ms: 0 };
+    let cached = silenceCache.get(ms);
+    if (!cached) {
+      const buffer = buildSilentMp3(format, ms);
+      cached = { buffer, ms: Math.round((buffer.length / (format.bitrateKbps * 125)) * 1000) };
+      silenceCache.set(ms, cached);
+    }
+    return cached;
+  };
 
   const chunks: Buffer[] = [];
   const marks: AssemblyResult["marks"] = [];
   let cursorMs = 0;
 
+  const leadIn = silenceFor(Math.max(0, Math.round(leadInMs)));
+  if (leadIn.buffer.length) {
+    chunks.push(leadIn.buffer);
+    cursorMs += leadIn.ms;
+  }
+
   scans.forEach((scan, index) => {
-    if (index > 0 && silence.length) {
-      chunks.push(silence);
-      cursorMs += silenceMs;
-    }
-    // Emit only the frame bytes; anything between frames is metadata or junk.
+    // Emit only the audio frame bytes; ID3 tags, junk and a leading Info frame
+    // are metadata, not sound.
     const stripped = stripId3(parts[index]!.buffer);
     const first = scan.frames[0]!;
     const last = scan.frames[scan.frames.length - 1]!;
@@ -253,6 +295,12 @@ export function concatMp3(parts: AssemblyPart[], gapMs = 0): AssemblyResult {
 
     marks.push({ label: parts[index]!.label || `Part ${index + 1}`, startMs: cursorMs, durationMs: scan.durationMs });
     cursorMs += scan.durationMs;
+
+    const gap = silenceFor(gapAfter(parts, index, gapMs));
+    if (gap.buffer.length) {
+      chunks.push(gap.buffer);
+      cursorMs += gap.ms;
+    }
   });
 
   return {
@@ -326,7 +374,7 @@ const sameWavFormat = (left: WavFormat, right: WavFormat): boolean =>
   left.sampleRate === right.sampleRate &&
   left.bitsPerSample === right.bitsPerSample;
 
-function wavHeader(format: WavFormat, dataBytes: number): Buffer {
+export function wavHeader(format: WavFormat, dataBytes: number): Buffer {
   const header = Buffer.alloc(44);
   header.write("RIFF", 0, "latin1");
   header.writeUInt32LE(36 + dataBytes, 4);
@@ -345,7 +393,7 @@ function wavHeader(format: WavFormat, dataBytes: number): Buffer {
 }
 
 /** Joins same-format WAV streams under one correct header. */
-export function concatWav(parts: AssemblyPart[], gapMs = 0): AssemblyResult {
+export function concatWav(parts: AssemblyPart[], gapMs = 0, leadInMs = 0): AssemblyResult {
   if (!parts.length) throw new AudioAssemblyError("Nothing to assemble");
 
   const scans = parts.map((part, index) => {
@@ -369,24 +417,35 @@ export function concatWav(parts: AssemblyPart[], gapMs = 0): AssemblyResult {
 
   // 8-bit PCM is unsigned, so its silence is 0x80 rather than 0.
   const silenceByte = format.bitsPerSample === 8 ? 0x80 : 0x00;
-  const rawGap = Math.round((gapMs / 1000) * format.byteRate);
-  // Align the gap to a whole frame or the channels would swap after it.
+  // Align every gap to a whole frame or the channels would swap after it.
   const align = Math.max(1, format.blockAlign);
-  const silence = gapMs > 0 ? Buffer.alloc(Math.floor(rawGap / align) * align, silenceByte) : Buffer.alloc(0);
-  const silenceMs = format.byteRate > 0 ? Math.round((silence.length / format.byteRate) * 1000) : 0;
+  const silenceFor = (ms: number) => {
+    if (ms <= 0) return { buffer: Buffer.alloc(0), ms: 0 };
+    const raw = Math.round((ms / 1000) * format.byteRate);
+    const buffer = Buffer.alloc(Math.floor(raw / align) * align, silenceByte);
+    return { buffer, ms: format.byteRate > 0 ? Math.round((buffer.length / format.byteRate) * 1000) : 0 };
+  };
 
   const bodies: Buffer[] = [];
   const marks: AssemblyResult["marks"] = [];
   let cursorMs = 0;
 
+  const leadIn = silenceFor(Math.max(0, Math.round(leadInMs)));
+  if (leadIn.buffer.length) {
+    bodies.push(leadIn.buffer);
+    cursorMs += leadIn.ms;
+  }
+
   scans.forEach((scan, index) => {
-    if (index > 0 && silence.length) {
-      bodies.push(silence);
-      cursorMs += silenceMs;
-    }
     bodies.push(scan.data);
     marks.push({ label: parts[index]!.label || `Part ${index + 1}`, startMs: cursorMs, durationMs: scan.durationMs });
     cursorMs += scan.durationMs;
+
+    const gap = silenceFor(gapAfter(parts, index, gapMs));
+    if (gap.buffer.length) {
+      bodies.push(gap.buffer);
+      cursorMs += gap.ms;
+    }
   });
 
   const data = Buffer.concat(bodies);
@@ -400,9 +459,11 @@ export function concatWav(parts: AssemblyPart[], gapMs = 0): AssemblyResult {
 }
 
 /** Joins parts, picking the strategy from the first part's container. */
-export function assembleAudio(parts: AssemblyPart[], options: { gapMs?: number } = {}): AssemblyResult {
+export function assembleAudio(parts: AssemblyPart[], options: AssemblyOptions = {}): AssemblyResult {
   if (!parts.length) throw new AudioAssemblyError("Nothing to assemble");
   const first = parts[0]!.buffer;
   const isWav = first.length >= 12 && first.subarray(0, 4).toString("latin1") === "RIFF";
-  return isWav ? concatWav(parts, options.gapMs ?? 0) : concatMp3(parts, options.gapMs ?? 0);
+  return isWav
+    ? concatWav(parts, options.gapMs ?? 0, options.leadInMs ?? 0)
+    : concatMp3(parts, options.gapMs ?? 0, options.leadInMs ?? 0);
 }

@@ -1,15 +1,13 @@
 import { defineConfig } from "drizzle-kit";
 
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  throw new Error("DATABASE_URL is required to run drizzle commands");
-}
-
+/**
+ * Migrations for the SQLite schema that runs on Cloudflare D1 in production
+ * and on a local SQLite file in development. `pnpm db:generate` writes a new
+ * migration after a schema change; the app applies pending migrations itself
+ * the first time it opens the database.
+ */
 export default defineConfig({
   schema: "./drizzle/schema.ts",
-  out: "./drizzle",
-  dialect: "mysql",
-  dbCredentials: {
-    url: connectionString,
-  },
+  out: "./drizzle/sqlite",
+  dialect: "sqlite",
 });

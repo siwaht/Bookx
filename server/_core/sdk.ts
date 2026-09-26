@@ -39,6 +39,8 @@ const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserI
 
 class OAuthService {
   constructor(private client: ReturnType<typeof axios.create>) {
+    // Behind Cloudflare Access (BOOKX_TRUST_PROXY_AUTH=1) Manus OAuth is not used at all.
+    if (process.env.BOOKX_TRUST_PROXY_AUTH === "1") return;
     console.log("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
     if (!ENV.oAuthServerUrl) {
       console.error(

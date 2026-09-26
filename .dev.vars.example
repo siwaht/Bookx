@@ -1,0 +1,21 @@
+# Secrets for `wrangler dev`. Copy to .dev.vars (git-ignored) and fill in.
+# In production these are Worker secrets: `npx wrangler secret put NAME`.
+
+# Shared by the Worker and the app container; any random string of 32+ characters.
+BOOKX_INTERNAL_SECRET=
+
+# Production: the Zero Trust team domain (https://<team>.cloudflareaccess.com)
+# and the AUD tag of the Access application protecting the Worker. The Worker
+# checks every visitor's Access token against them. Locally, the access.dev
+# block in wrangler.jsonc simulates Access, so these can stay empty.
+ACCESS_TEAM_DOMAIN=
+ACCESS_AUD=
+
+# Voice and AI providers (each is optional; keys can also be saved in the app).
+ELEVENLABS_API_KEY=
+OPENAI_API_KEY=
+DEEPGRAM_API_KEY=
+FISH_AUDIO_API_KEY=
+CLOUDFLARE_ACCOUNT_ID=
+CLOUDFLARE_API_TOKEN=
+CLOUDFLARE_GATEWAY_ID=

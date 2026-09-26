@@ -3,10 +3,17 @@ import fs from "fs";
 import { type Server } from "http";
 import { nanoid } from "nanoid";
 import path from "path";
-import { createServer as createViteServer } from "vite";
-import viteConfig from "../../vite.config";
+import { pathToFileURL } from "url";
 
 export async function setupVite(app: Express, server: Server) {
+  // Loaded here, in development only, and through specifiers a bundler does
+  // not follow, so the production server bundle carries neither Vite nor its
+  // config and plugins.
+  const viteModule = "vite";
+  const { createServer: createViteServer } = (await import(viteModule)) as typeof import("vite");
+  const configUrl = pathToFileURL(path.resolve(import.meta.dirname, "../..", "vite.config.ts")).href;
+  const viteConfig = ((await import(configUrl)) as { default: import("vite").UserConfig }).default;
+
   const serverOptions = {
     middlewareMode: true,
     hmr: { server },

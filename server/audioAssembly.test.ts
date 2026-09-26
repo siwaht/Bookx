@@ -312,3 +312,61 @@ describe("assembleAudio", () => {
     expect(withGap.buffer.length).toBeGreaterThan(without.buffer.length);
   });
 });
+
+describe("per-part pauses, lead-in and encoder metadata", () => {
+  const frameMs = (1152 / 44100) * 1000;
+
+  it("uses each part's own pause, falling back to the call's", () => {
+    const result = assembleAudio(
+      [{ buffer: mp3(10), gapAfterMs: 0 }, { buffer: mp3(10) }, { buffer: mp3(10), gapAfterMs: 5000 }],
+      { gapMs: 1000 },
+    );
+    const [first, second, third] = result.marks;
+    // No pause after the first part, the default after the second, none after the last.
+    expect(second!.startMs).toBe(first!.durationMs);
+    const pause = third!.startMs - (second!.startMs + second!.durationMs);
+    expect(Math.abs(pause - 1000)).toBeLessThanOrEqual(frameMs);
+    expect(result.durationMs).toBe(third!.startMs + third!.durationMs);
+    expect(result.buffer.length).toBe((30 + Math.round(1000 / frameMs)) * 417);
+  });
+
+  it("adds a lead-in before the first part and shifts every mark by it", () => {
+    const plain = assembleAudio([{ buffer: mp3(5) }, { buffer: mp3(5) }], { gapMs: 350 });
+    const led = assembleAudio([{ buffer: mp3(5) }, { buffer: mp3(5) }], { gapMs: 350, leadInMs: 1800 });
+    const shift = led.marks[0]!.startMs;
+    expect(Math.abs(shift - 1800)).toBeLessThanOrEqual(frameMs);
+    expect(led.marks[1]!.startMs - plain.marks[1]!.startMs).toBe(shift);
+    expect(led.durationMs - plain.durationMs).toBe(shift);
+  });
+
+  it("does the same for WAV, in whole sample frames", () => {
+    const tenth = 4410 * 2; // 100 ms of 16-bit mono 44.1 kHz
+    const result = assembleAudio([{ buffer: wav(tenth), gapAfterMs: 250 }, { buffer: wav(tenth) }], { gapMs: 1000, leadInMs: 500 });
+    expect(scanWav(result.buffer).data.length).toBe((22050 + 4410 + 11025 + 4410) * 2);
+    expect(result.marks.map(mark => mark.startMs)).toEqual([500, 850]);
+  });
+
+  it("drops an encoder's Info frame so a joined chapter reports its real length", () => {
+    const withInfo = (frames: number) => {
+      const buffer = mp3(frames);
+      buffer.write("Info", 36, "latin1");
+      return buffer;
+    };
+    expect(scanMp3(withInfo(6)).frames).toHaveLength(5);
+    // A lone frame is audio, not metadata.
+    expect(scanMp3(withInfo(1)).frames).toHaveLength(1);
+    const joined = assembleAudio([{ buffer: withInfo(6) }, { buffer: withInfo(6) }]);
+    expect(joined.buffer.length).toBe(10 * 417);
+    expect(joined.buffer.includes(Buffer.from("Info", "latin1"))).toBe(false);
+    expect(joined.marks[1]!.startMs).toBe(Math.round(5 * frameMs));
+  });
+
+  it("recognises Xing and VBRI headers too", () => {
+    const xing = mp3(3);
+    xing.write("Xing", 36, "latin1");
+    const vbri = mp3(3);
+    vbri.write("VBRI", 36, "latin1");
+    expect(scanMp3(xing).frames).toHaveLength(2);
+    expect(scanMp3(vbri).frames).toHaveLength(2);
+  });
+});

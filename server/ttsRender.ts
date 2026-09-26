@@ -29,6 +29,9 @@ export type PinnedRenderRequest = {
   model: string;
   voiceId?: string | null;
   text: string;
+  /** Text immediately before and after this segment, for continuity across joins. */
+  previousText?: string;
+  nextText?: string;
   language?: string | null;
   ownerId?: number;
   requestTimeoutMs?: number;
@@ -36,6 +39,38 @@ export type PinnedRenderRequest = {
   /** Aborts the attempt when the run is paused or cancelled. */
   signal?: AbortSignal;
 };
+
+/**
+ * Every ElevenLabs segment is requested in the same encoding, so chapters can be
+ * joined frame by frame and mixed without a sample-rate or bitrate mismatch.
+ */
+export const ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128";
+
+/** Context sent alongside a segment; the provider only uses it to shape intonation. */
+const CONTINUITY_CHARS = 400;
+
+/** Eleven v3 does not accept request stitching, so context is only sent to the others. */
+export function supportsElevenLabsContinuity(model: string): boolean {
+  return !/^eleven_v3/.test(model);
+}
+
+/** Deepgram voices are models; a per-character voice id like "aura-2-zeus-en" is used as the model. */
+export function deepgramModelFor(model: string, voiceId?: string | null): string {
+  return voiceId && /^aura-(?:2-)?[a-z]+-[a-z]{2}$/.test(voiceId) ? voiceId : model;
+}
+
+export function buildElevenLabsBody(request: Pick<PinnedRenderRequest, "text" | "model" | "previousText" | "nextText">): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    text: request.text,
+    model_id: request.model,
+    voice_settings: { stability: 0.45, similarity_boost: 0.75 },
+  };
+  if (supportsElevenLabsContinuity(request.model)) {
+    if (request.previousText?.trim()) body.previous_text = request.previousText.trim().slice(-CONTINUITY_CHARS);
+    if (request.nextText?.trim()) body.next_text = request.nextText.trim().slice(0, CONTINUITY_CHARS);
+  }
+  return body;
+}
 
 export type PinnedRenderResult = {
   storageKey: string;
@@ -162,11 +197,11 @@ async function buildProviderCall(request: PinnedRenderRequest, signal: AbortSign
   if (provider === "ElevenLabs") {
     const key = await requireProviderApiKey("ElevenLabs", request.ownerId);
     return {
-      url: `https://api.elevenlabs.io/v1/text-to-speech/${voiceId || "21m00Tcm4TlvDq8ikWAM"}`,
+      url: `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId || "21m00Tcm4TlvDq8ikWAM")}?output_format=${ELEVENLABS_OUTPUT_FORMAT}`,
       init: {
         method: "POST",
         headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
-        body: JSON.stringify({ text, model_id: model, voice_settings: { stability: 0.45, similarity_boost: 0.75 } }),
+        body: JSON.stringify(buildElevenLabsBody({ text, model, previousText: request.previousText, nextText: request.nextText })),
         signal,
       },
       expectsJsonAudio: false,
@@ -176,7 +211,7 @@ async function buildProviderCall(request: PinnedRenderRequest, signal: AbortSign
   if (provider === "Deepgram") {
     const key = await requireProviderApiKey("Deepgram", request.ownerId);
     return {
-      url: `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(model)}`,
+      url: `https://api.deepgram.com/v1/speak?model=${encodeURIComponent(deepgramModelFor(model, voiceId))}`,
       init: {
         method: "POST",
         headers: { Authorization: `Token ${key}`, "content-type": "application/json", accept: "audio/mpeg" },
