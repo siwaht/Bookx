@@ -1,3 +1,4 @@
+import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import type { ExportDetail } from "../drizzle/schema";
 import { exportZipPlan } from "../shared/exportZip";
 import { accessOpenId, PROXY_HEADERS } from "../shared/proxyHeaders";
@@ -12,7 +13,8 @@ import { objectResponse } from "./bindings";
  *
  * - The web app is static assets, served by the platform.
  * - Every `/api/*` and `/manus-storage/*` request comes here first. Cloudflare
- *   Access has already signed the visitor in; without an Access identity
+ *   Access has already signed the visitor in; the Worker checks the Access
+ *   token itself (see Identity below), and without a valid Access identity
  *   nothing is served (fail closed).
  * - Audio and export files stream straight from R2 after an ownership check
  *   against D1, and so do export ZIPs, so playback and downloads never wait
@@ -32,7 +34,13 @@ export const PROVIDER_SECRETS = [
   "CLOUDFLARE_GATEWAY_ID",
 ] as const;
 
-export type BookxSecrets = { BOOKX_INTERNAL_SECRET?: string } & Partial<Record<(typeof PROVIDER_SECRETS)[number], string>>;
+export type BookxSecrets = {
+  BOOKX_INTERNAL_SECRET?: string;
+  /** The Zero Trust team domain, e.g. `https://myteam.cloudflareaccess.com` (or just `myteam`). */
+  ACCESS_TEAM_DOMAIN?: string;
+  /** The AUD tag of the Access application protecting the Worker (comma-separated for several). */
+  ACCESS_AUD?: string;
+} & Partial<Record<(typeof PROVIDER_SECRETS)[number], string>>;
 
 /** The bindings every Bookx Worker entry has. */
 export type BookxBindings = { DB: D1Database; BUCKET: R2Bucket; ASSETS: Fetcher } & BookxSecrets;
@@ -48,25 +56,96 @@ export function internalSecret(env: BookxSecrets): string | null {
 // ---------------------------------------------------------------------------
 // Identity
 // ---------------------------------------------------------------------------
+//
+// Cloudflare Access signs every visitor in before the Worker runs. A Worker
+// with static assets runs behind Cloudflare's asset router, which does not
+// pass `ctx.access` on, so in production the identity comes from the token
+// Access adds to each request (the `Cf-Access-Jwt-Assertion` header, or the
+// `CF_Authorization` cookie), checked against the team's signing keys and
+// this application's AUD tag (ACCESS_TEAM_DOMAIN and ACCESS_AUD).
+// `ctx.access` is still used when present: `wrangler dev` simulates it from
+// the `access.dev` block in wrangler.jsonc.
 
 type Identity = { email: string; name: string; openId: string };
 
-/** Identities by Access token, so the lookup is not repeated on every request. */
+/** Identities by Access token, so the check is not repeated on every request. */
 const identities = new Map<string, { identity: Identity; until: number }>();
 
-async function accessIdentity(request: Request, ctx: ExecutionContext): Promise<Identity | null> {
-  if (!ctx.access) return null;
-  const token = request.headers.get("cf-access-jwt-assertion");
+/** The Access team and application this Worker accepts tokens from, or null if not set. */
+export function accessSettings(env: BookxSecrets): { issuer: string; audiences: string[] } | null {
+  let host = (env.ACCESS_TEAM_DOMAIN ?? "").trim().toLowerCase().replace(/^https:\/\//, "").replace(/\/+$/, "");
+  if (host && !host.includes(".")) host = `${host}.cloudflareaccess.com`;
+  const audiences = (env.ACCESS_AUD ?? "").split(",").map(aud => aud.trim()).filter(Boolean);
+  if (!/^[a-z0-9-]+\.cloudflareaccess\.com$/.test(host) || !audiences.length) return null;
+  return { issuer: `https://${host}`, audiences };
+}
+
+/** Each team's public signing keys; jose caches them and refetches when Access rotates them. */
+const teamKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
+
+function signingKeys(issuer: string): ReturnType<typeof createRemoteJWKSet> {
+  let keys = teamKeys.get(issuer);
+  if (!keys) {
+    keys = createRemoteJWKSet(new URL(`${issuer}/cdn-cgi/access/certs`));
+    teamKeys.set(issuer, keys);
+  }
+  return keys;
+}
+
+/** The Access token on a request: the header Access adds, else its cookie. */
+function accessToken(request: Request): string | null {
+  const header = request.headers.get("cf-access-jwt-assertion")?.trim();
+  if (header) return header;
+  for (const part of (request.headers.get("cookie") ?? "").split(";")) {
+    const at = part.indexOf("=");
+    if (at > 0 && part.slice(0, at).trim() === "CF_Authorization") return part.slice(at + 1).trim() || null;
+  }
+  return null;
+}
+
+/** The claims of a token that Access issued for this application, or null. */
+async function verifiedClaims(token: string, env: BookxSecrets): Promise<JWTPayload | null> {
+  const settings = accessSettings(env);
+  if (!settings) return null;
+  try {
+    const { payload } = await jwtVerify(token, signingKeys(settings.issuer), {
+      issuer: settings.issuer,
+      audience: settings.audiences,
+      algorithms: ["RS256"],
+      clockTolerance: 30,
+    });
+    return payload;
+  } catch (error) {
+    console.warn("[Bookx] Access token refused:", error instanceof Error ? error.message : String(error));
+    return null;
+  }
+}
+
+function identityFrom(claims: Record<string, unknown> | null | undefined): Identity | null {
+  const email = typeof claims?.email === "string" ? claims.email.trim().toLowerCase() : "";
+  // Service tokens carry no email; Bookx needs a person.
+  if (!/^[^@\s]+@[^@\s]+$/.test(email)) return null;
+  const name = typeof claims?.name === "string" && claims.name.trim() ? claims.name.trim() : email.split("@")[0]!;
+  return { email, name, openId: accessOpenId(email) };
+}
+
+async function accessIdentity(request: Request, env: BookxSecrets, ctx: ExecutionContext): Promise<Identity | null> {
+  const token = accessToken(request);
   const cached = token ? identities.get(token) : undefined;
   if (cached && cached.until > Date.now()) return cached.identity;
 
-  const claims = await ctx.access.getIdentity();
-  const email = claims?.email?.trim().toLowerCase();
-  if (!email || !email.includes("@")) return null;
-  const identity = { email, name: claims?.name?.trim() || email.split("@")[0]!, openId: accessOpenId(email) };
-  if (token) {
+  let identity: Identity | null = null;
+  let until = Date.now() + 5 * 60_000;
+  if (ctx.access) {
+    identity = identityFrom(await ctx.access.getIdentity());
+  } else if (token) {
+    const claims = await verifiedClaims(token, env);
+    identity = identityFrom(claims);
+    if (typeof claims?.exp === "number") until = Math.min(until, claims.exp * 1000);
+  }
+  if (identity && token) {
     if (identities.size > 1_000) identities.clear();
-    identities.set(token, { identity, until: Date.now() + 5 * 60_000 });
+    identities.set(token, { identity, until });
   }
   return identity;
 }
@@ -220,8 +299,11 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
       if (!isStorage && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
       if (url.pathname === "/api/__health" && request.method === "GET") return serveHealth(request, env, upstream);
 
-      const identity = await accessIdentity(request, ctx);
-      if (!identity) return text("Sign in through Cloudflare Access to use Bookx.", 401);
+      const identity = await accessIdentity(request, env, ctx);
+      if (!identity) {
+        const connected = Boolean(ctx.access) || accessSettings(env) !== null;
+        return text(connected ? "Sign in through Cloudflare Access to use Bookx." : "Bookx is not connected to Cloudflare Access yet.", 401);
+      }
       if (isCrossSite(request, url)) return text("Cross-site request refused", 403);
 
       if (isStorage) return serveStorage(request, env, url, identity);
