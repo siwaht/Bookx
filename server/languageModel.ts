@@ -14,7 +14,7 @@ import { availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAi
 export const LANGUAGE_MODEL_MAX_TOKENS = 16_384;
 export const LANGUAGE_MODEL_TIMEOUT_MS = 180_000;
 
-export type LanguageModelProvider = "Cloudflare" | "OpenAI";
+export type LanguageModelProvider = "Cloudflare" | "OpenAI" | "OpenRouter";
 
 export type LanguageModelRequest = {
   provider: ProviderId;
@@ -100,6 +100,10 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
     return result;
   }
 
+  if (input.provider === "OpenRouter") {
+    return openRouterText(input, maxTokens, timeoutMs);
+  }
+
   const openAiKey = await requireProviderApiKey("OpenAI", input.ownerId);
   const base = (await getOpenAiCompatibleBaseUrl(input.ownerId)) || "https://api.openai.com/v1";
   const response = await fetch(`${base}/chat/completions`, {
@@ -112,6 +116,36 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const result = payload.choices?.[0]?.message?.content;
   if (!result) throw new Error("OpenAI returned no model text");
+  return result;
+}
+
+/**
+ * OpenRouter and any OpenAI-compatible chat endpoint. OpenRouter exposes the
+ * standard `/chat/completions` shape, so the same request works for it and for
+ * a self-hosted gateway pointed at via the OpenAI base URL preference.
+ */
+async function openRouterText(input: LanguageModelRequest, maxTokens: number, timeoutMs: number): Promise<string> {
+  const key = await requireProviderApiKey("OpenRouter", input.ownerId);
+  const base = (await getOpenAiCompatibleBaseUrl(input.ownerId)) || "https://openrouter.ai/api/v1";
+  const response = await fetch(`${base}/chat/completions`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: input.model,
+      max_tokens: maxTokens,
+      messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }],
+      temperature: 0.25,
+      response_format: { type: "json_object" },
+    }),
+    signal: AbortSignal.timeout(Math.min(timeoutMs, 180_000)),
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`OpenRouter language model request failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+  }
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const result = payload.choices?.[0]?.message?.content;
+  if (!result) throw new Error("OpenRouter returned no model text");
   return result;
 }
 
@@ -137,9 +171,9 @@ export async function resolveLanguageModel(input: {
   } catch {
     return null;
   }
-  const provider: LanguageModelProvider = routing.provider === "OpenAI" ? "OpenAI" : "Cloudflare";
+  const provider: LanguageModelProvider = routing.provider === "OpenAI" ? "OpenAI" : routing.provider === "OpenRouter" ? "OpenRouter" : "Cloudflare";
   const preference = preferences.find(item => item.provider === provider);
   // A model id only makes sense for the provider it was chosen for.
-  const model = (!routing.fallback && input.model) || preference?.defaultLlmModel || (provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : "gpt-5");
+  const model = (!routing.fallback && input.model) || preference?.defaultLlmModel || (provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : provider === "OpenRouter" ? "openai/gpt-4o-mini" : "gpt-5");
   return { provider, model, fallback: routing.fallback };
 }

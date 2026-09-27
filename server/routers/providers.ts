@@ -225,6 +225,17 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
       ],
     },
     {
+      id: "OpenRouter", label: "OpenRouter", ...state("OpenRouter"),
+      capabilities: ["language-model"],
+      models: [
+        { id: "openai/gpt-4o-mini", label: "GPT-4o mini", capabilities: ["language-model"], detail: "Fast, affordable editorial planning" },
+        { id: "openai/gpt-4o", label: "GPT-4o", capabilities: ["language-model"], detail: "Balanced reasoning and analysis" },
+        { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", capabilities: ["language-model"], detail: "Thoughtful long-form analysis" },
+        { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash", capabilities: ["language-model"], detail: "Quick, capable reasoning" },
+        { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B", capabilities: ["language-model"], detail: "Open-weight reasoning" },
+      ],
+    },
+    {
       id: "Fish Audio", label: "Fish Audio", ...state("Fish Audio"),
       capabilities: ["text-to-speech", "speech-to-text"],
       models: [
@@ -400,6 +411,9 @@ export const providersRouter = router({
         const base = (await getOpenAiCompatibleBaseUrl(ctx.user.id)) || "https://api.openai.com/v1";
         await failIfNotOk(await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenAI", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
       }
+      if (input.provider === "OpenRouter") {
+        await failIfNotOk(await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenRouter", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+      }
       if (input.provider === "Fish Audio") {
         await failIfNotOk(await fetch("https://api.fish.audio/model?self=true&page_size=1", { headers: { Authorization: `Bearer ${await requireProviderApiKey("Fish Audio", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
       }
@@ -421,18 +435,18 @@ export const providersRouter = router({
     return rankCatalogVoices(voices, input.query || "").slice(0, input.query ? 40 : 200);
   }),
   recommendCast: protectedProcedure.input(z.object({
-    provider: z.enum(["Cloudflare", "OpenAI"]).optional(),
+    provider: providerId.optional(),
     model: z.string().min(1).max(160).optional(),
     text: z.string().trim().min(40).max(16_000),
     voices: z.array(castVoice).min(2).max(64),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     const preferences = db ? await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ctx.user.id)) : [];
-    const requested = input.provider || (preferences.find((preference) => preference.defaultLlmModel)?.provider as "Cloudflare" | "OpenAI" | undefined) || "Cloudflare";
+    const requested = input.provider || (preferences.find((preference) => preference.defaultLlmModel)?.provider as ProviderId | undefined) || "Cloudflare";
     const routing = resolveProvider(requested, "language-model", await availableProviders(ctx.user.id, "language-model"));
-    const provider = routing.provider === "OpenAI" ? "OpenAI" : "Cloudflare";
+    const provider = routing.provider;
     const preference = preferences.find((item) => item.provider === provider);
-    const model = input.model || preference?.defaultLlmModel || (provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : "gpt-5");
+    const model = input.model || preference?.defaultLlmModel || (provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : provider === "OpenRouter" ? "openai/gpt-4o-mini" : "gpt-5");
     const system = `You are Bookx's casting director. Find the narrator and named speaking characters in the supplied manuscript. Assign every returned character a DISTINCT voice from the approved voice catalog. Respect the character's apparent age, role, temperament, regional cues only when stated, and dialogue style. Return ONLY one compact JSON object, with no analysis or prose: {"characters":[{"name":"","role":"","voiceId":"","voiceName":"","accent":"","rationale":"","sampleLine":"","confidence":0}]}. Do not invent names that are not in the manuscript. Voice IDs must exactly match the catalog.`;
     const result = await languageModelText({ provider, model, system: `${system}\nApproved voice catalog: ${JSON.stringify(input.voices)}`, text: input.text, ownerId: ctx.user.id });
     const parsed = z.object({ characters: z.array(castRecommendation).min(1).max(64) }).parse(extractJson(result));
@@ -459,7 +473,7 @@ export const providersRouter = router({
     const requested = input.provider || (preferences.find((preference) => preference.defaultLlmModel)?.provider as z.infer<typeof providerId> | undefined) || "Cloudflare";
     const routing = resolveProvider(requested, "language-model", await availableProviders(ctx.user.id, "language-model"));
     const preference = preferences.find((item) => item.provider === routing.provider);
-    const model = input.model || preference?.defaultLlmModel || (routing.provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : "gpt-5");
+    const model = input.model || preference?.defaultLlmModel || (routing.provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : routing.provider === "OpenRouter" ? "openai/gpt-4o-mini" : "gpt-5");
     const result = await languageModelText({ provider: routing.provider, model, system: instructions, text: input.text, ownerId: ctx.user.id });
     return { result, provider: routing.provider, model, fallback: routing.fallback };
   }),

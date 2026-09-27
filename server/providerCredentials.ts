@@ -215,6 +215,7 @@ export const PROVIDER_ENV_KEYS: Record<BuiltInProviderId, string> = {
   ElevenLabs: "ELEVENLABS_API_KEY",
   Deepgram: "DEEPGRAM_API_KEY",
   OpenAI: "OPENAI_API_KEY",
+  OpenRouter: "OPENROUTER_API_KEY",
   Cloudflare: "CLOUDFLARE_API_TOKEN",
   "Fish Audio": "FISH_AUDIO_API_KEY",
   Gradium: "GRADIUM_API_KEY",

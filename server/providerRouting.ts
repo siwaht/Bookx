@@ -21,6 +21,7 @@ export const providerCapabilities: Record<BuiltInProviderId, RoutingCapability[]
   Deepgram: ["text-to-speech", "speech-to-text"],
   Cloudflare: ["text-to-speech", "speech-to-text", "language-model"],
   OpenAI: ["text-to-speech", "speech-to-text", "language-model"],
+  OpenRouter: ["language-model"],
   "Fish Audio": ["text-to-speech", "speech-to-text"],
   Gradium: ["text-to-speech"],
 };
@@ -31,6 +32,7 @@ export function configuredProviders(env: NodeJS.ProcessEnv = process.env): Provi
   if (env.DEEPGRAM_API_KEY) providers.push("Deepgram");
   if (env.CLOUDFLARE_ACCOUNT_ID && env.CLOUDFLARE_API_TOKEN) providers.push("Cloudflare");
   if (env.OPENAI_API_KEY) providers.push("OpenAI");
+  if (env.OPENROUTER_API_KEY) providers.push("OpenRouter");
   if (env.FISH_AUDIO_API_KEY) providers.push("Fish Audio");
   if (env.GRADIUM_API_KEY) providers.push("Gradium");
   return providers;
@@ -50,7 +52,7 @@ export function resolveProvider(requested: ProviderId, capability: RoutingCapabi
   if (available.includes(requested) && supports(requested, capability)) return { provider: requested, fallback: false };
   // Fallbacks are built-in providers only: a custom service is used when chosen.
   const fallbackOrder: BuiltInProviderId[] = capability === "language-model"
-    ? ["Cloudflare", "OpenAI"]
+    ? ["Cloudflare", "OpenAI", "OpenRouter"]
     : capability === "speech-to-text"
       ? ["Deepgram", "OpenAI", "Cloudflare", "ElevenLabs", "Fish Audio"]
       : ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "Fish Audio", "Gradium"];

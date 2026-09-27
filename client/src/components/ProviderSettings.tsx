@@ -90,6 +90,7 @@ const KEY_HINTS: Record<string, { help: string; prefix?: string }> = {
   ElevenLabs: { help: "Profile → API Keys in the ElevenLabs dashboard.", prefix: "starts with sk_" },
   Deepgram: { help: "Deepgram Console → API Keys.", prefix: "" },
   OpenAI: { help: "platform.openai.com → API keys.", prefix: "starts with sk-" },
+  OpenRouter: { help: "openrouter.ai → Keys. One key reaches hundreds of models.", prefix: "starts with sk-or-" },
   Cloudflare: { help: "A Workers AI token from Cloudflare → AI → Workers AI. The account ID is on the same page.", prefix: "" },
   "Fish Audio": { help: "fish.audio → API keys. Your own cloned voices appear in the cast list.", prefix: "" },
   Gradium: { help: "Create a key in Gradium Studio (studio.gradium.ai). Custom voices appear in the cast list.", prefix: "" },

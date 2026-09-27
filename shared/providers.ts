@@ -8,7 +8,7 @@ import { z } from "zod";
  * stored per user under an id of the form `custom:<id>`.
  */
 
-export const BUILT_IN_PROVIDERS = ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "Fish Audio", "Gradium"] as const;
+export const BUILT_IN_PROVIDERS = ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "OpenRouter", "Fish Audio", "Gradium"] as const;
 export type BuiltInProviderId = (typeof BUILT_IN_PROVIDERS)[number];
 export type CustomProviderId = `custom:${string}`;
 export type ProviderId = BuiltInProviderId | CustomProviderId;
