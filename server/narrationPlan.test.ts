@@ -91,6 +91,17 @@ describe("checkReusable", () => {
     const segment = rendered("s1", 0, { voiceId: "iris-narrative", targetVoiceId: "iris-narrative" });
     expect(checkReusable(segment, PINNED)).toEqual({ reusable: true });
   });
+
+  it("re-renders when pronunciation rules changed since the audio was made", () => {
+    const segment = { ...rendered("s1", 0), pronunciationHash: "old-rules" };
+    expect(checkReusable(segment, PINNED, "new-rules")).toEqual({ reusable: false, reason: "pronunciation-changed" });
+    expect(checkReusable(segment, PINNED, "old-rules")).toEqual({ reusable: true });
+  });
+
+  it("ignores pronunciation when no hash is supplied (legacy audio)", () => {
+    const segment = { ...rendered("s1", 0), pronunciationHash: null };
+    expect(checkReusable(segment, PINNED)).toEqual({ reusable: true });
+  });
 });
 
 describe("planNarrationRun", () => {

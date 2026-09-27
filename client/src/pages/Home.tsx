@@ -174,6 +174,9 @@ export default function Home() {
   const assignDefaultVoices = trpc.bookx.assignDefaultVoices.useMutation();
   const createCharacterMutation = trpc.bookx.createCharacter.useMutation();
   const deleteCharacterMutation = trpc.bookx.deleteCharacter.useMutation();
+  const createPronunciationMutation = trpc.bookx.createPronunciation.useMutation();
+  const updatePronunciationMutation = trpc.bookx.updatePronunciation.useMutation();
+  const deletePronunciationMutation = trpc.bookx.deletePronunciation.useMutation();
   const updateProjectMutation = trpc.bookx.updateProject.useMutation();
   const updateCharacter = trpc.bookx.updateCharacter.useMutation();
   const updateCharacterByName = trpc.bookx.updateCharacterByName.useMutation();
@@ -208,7 +211,7 @@ export default function Home() {
   const [voicePrompt, setVoicePrompt] = useState("");
   const [manuscriptText, setManuscriptText] = useState("The house was still awake when Mara returned.\n\nNot alive in any way that could be explained, but listening. The old windows held the rain in their frames, and the corridor hummed with a current that seemed to know her name.\n\nShe set the key on the hall table. It rolled once, then stopped.");
   const [pendingPodcastImport, setPendingPodcastImport] = useState<PodcastImport | null>(null);
-  const [rules, setRules] = useState<Rule[]>([{ word: "Aurelia", alias: "aw-REE-lee-ah", phoneme: "ɔːˈriːliə" }, { word: "Kestrel", alias: "KES-truhl", phoneme: "ˈkɛstrəl" }]);
+  const [rules, setRules] = useState<Rule[]>([]);
   const [ruleDraft, setRuleDraft] = useState<Rule>({ word: "", alias: "", phoneme: "" });
   // Manuscript, generation and export state all live on the server now, so a long
   // book survives a closed tab.
@@ -373,6 +376,18 @@ export default function Home() {
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see note above
   }, [activeProject.id, activeProjectIsSaved, workspaceQuery.data]);
+
+  // Pronunciation rules live on the server; the local list mirrors them so the
+  // dictionary is empty for a fresh project and survives a reload.
+  useEffect(() => {
+    if (!activeProjectIsSaved || !workspaceQuery.data) return;
+    setRules(workspaceQuery.data.pronunciations.map(rule => ({
+      word: rule.word,
+      alias: rule.alias ?? "",
+      phoneme: rule.phoneme ?? "",
+    })));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProject.id, activeProjectIsSaved, workspaceQuery.data?.pronunciations]);
 
   // When a cast analysis finishes, reload the cast and segment speakers and say
   // how it went. Keyed on the transition, so it fires once per run.
@@ -712,7 +727,19 @@ export default function Home() {
       onError: (error) => toast.error(error.message || "Bookx could not remove that character."),
     });
   };
-  const addRule = () => { if (!ruleDraft.word.trim()) return; setRules((previous) => [...previous, ruleDraft]); setRuleDraft({ word: "", alias: "", phoneme: "" }); };
+  const addRule = () => {
+    const word = ruleDraft.word.trim();
+    if (!word) return;
+    const next = { word, alias: ruleDraft.alias.trim(), phoneme: ruleDraft.phoneme.trim() };
+    setRules((previous) => [...previous, next]);
+    setRuleDraft({ word: "", alias: "", phoneme: "" });
+    if (activeProjectCanPersist) {
+      createPronunciationMutation.mutate({ projectId: activeProject.id, word, alias: next.alias || undefined, phoneme: next.phoneme || undefined }, {
+        onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
+        onError: (error) => toast.error(error.message || "Bookx could not save that rule."),
+      });
+    }
+  };
   const notify = (message: string) => toast(message);
   const addCharacter = () => {
     if (!activeProjectIsSaved) {
@@ -726,7 +753,18 @@ export default function Home() {
       onError: (error) => toast.error(error.message || "Bookx could not add that speaker."),
     });
   };
-  const deleteRule = (word: string) => setRules((previous) => previous.filter((rule) => rule.word !== word));
+  const deleteRule = (word: string) => {
+    setRules((previous) => previous.filter((rule) => rule.word !== word));
+    if (activeProjectCanPersist) {
+      const persisted = workspaceQuery.data?.pronunciations.find((rule) => rule.word === word);
+      if (persisted) {
+        deletePronunciationMutation.mutate({ projectId: activeProject.id, ruleId: persisted.id }, {
+          onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
+          onError: (error) => toast.error(error.message || "Bookx could not remove that rule."),
+        });
+      }
+    }
+  };
   const storeLocalCastOverride = (name: string, voice: VoiceChoice) => {
     try {
       const key = `bookx-cast-overrides:${activeProject.id}`;

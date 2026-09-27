@@ -39,6 +39,8 @@ export type PlannableSegment = {
   chapterOrderIndex: number;
   text: string;
   textHash: string | null;
+  /** Hash of the pronunciation rules applied when the audio was made. */
+  pronunciationHash?: string | null;
   audioStorageKey: string | null;
   voiceProvider: string | null;
   voiceModel: string | null;
@@ -56,6 +58,8 @@ export type PlanInput = {
   segments: PlannableSegment[];
   /** Voice the run is pinned to. */
   pinned: { provider: string; model: string };
+  /** Hash of the pronunciation rules in force for this run. */
+  pronunciationHash?: string | null;
   /** Where the previous run stopped, if this is a resume. */
   cursorSegmentId?: string | null;
   /** How many valid segments before the cursor to redo. */
@@ -106,16 +110,19 @@ export const targetVoiceKeyFor = (segment: PlannableSegment, pinned: { provider:
 
 export type ReuseCheck =
   | { reusable: true }
-  | { reusable: false; reason: "missing-audio" | "text-changed" | "voice-changed" };
+  | { reusable: false; reason: "missing-audio" | "text-changed" | "voice-changed" | "pronunciation-changed" };
 
 /** Whether a segment's stored audio can stand as-is for this run. */
-export function checkReusable(segment: PlannableSegment, pinned: { provider: string; model: string }): ReuseCheck {
+export function checkReusable(segment: PlannableSegment, pinned: { provider: string; model: string }, pronunciationHash?: string | null): ReuseCheck {
   if (!segment.audioStorageKey) return { reusable: false, reason: "missing-audio" };
   if (!segment.textHash || segment.textHash !== hashSegmentText(segment.text)) {
     return { reusable: false, reason: "text-changed" };
   }
   if (storedVoiceKey(segment) !== targetVoiceKeyFor(segment, pinned)) {
     return { reusable: false, reason: "voice-changed" };
+  }
+  if (pronunciationHash !== undefined && segment.pronunciationHash !== pronunciationHash) {
+    return { reusable: false, reason: "pronunciation-changed" };
   }
   return { reusable: true };
 }
@@ -157,7 +164,7 @@ export function planNarrationRun(input: PlanInput): PlanResult {
   const reusable: PlannableSegment[] = [];
 
   ordered.forEach((segment, index) => {
-    const check = checkReusable(segment, input.pinned);
+    const check = checkReusable(segment, input.pinned, input.pronunciationHash);
 
     // Inside the rewind window (the cursor itself plus the units immediately
     // before it) we distrust stored audio even when it verifies.
@@ -194,6 +201,7 @@ export function auditSegments(
   segments: PlannableSegment[],
   pinned: { provider: string; model: string },
   durations: Map<string, number | null> = new Map(),
+  pronunciationHash?: string | null,
 ) {
   const ordered = orderSegments(segments);
   const missingSegments: string[] = [];
@@ -204,7 +212,7 @@ export function auditSegments(
   let totalDurationMs = 0;
 
   for (const segment of ordered) {
-    const check = checkReusable(segment, pinned);
+    const check = checkReusable(segment, pinned, pronunciationHash);
     if (check.reusable) {
       renderedSegments++;
       const duration = durations.get(segment.id);
@@ -215,7 +223,7 @@ export function auditSegments(
       continue;
     }
     if (check.reason === "missing-audio") missingSegments.push(segment.id);
-    else if (check.reason === "text-changed") staleSegments.push(segment.id);
+    else if (check.reason === "text-changed" || check.reason === "pronunciation-changed") staleSegments.push(segment.id);
     else mismatchedVoiceSegments.push(segment.id);
   }
 
@@ -267,6 +275,7 @@ export function chapterAudioStates(
   pinned: { provider: string; model: string },
   durations: Map<string, number | null> = new Map(),
   chapterIds: string[] = [],
+  pronunciationHash?: string | null,
 ): Map<string, ChapterAudioStatus> {
   const statuses = new Map<string, ChapterAudioStatus>();
   const blank = (chapterId: string): ChapterAudioStatus => ({
@@ -283,13 +292,13 @@ export function chapterAudioStates(
       const duration = durations.get(segment.id);
       if (duration && duration > 0) status.durationMs += duration;
     }
-    const check = checkReusable(segment, pinned);
+    const check = checkReusable(segment, pinned, pronunciationHash);
     if (check.reusable) {
       if (durations.get(segment.id) === null) status.unverified++;
       continue;
     }
     if (check.reason === "missing-audio") status.missing++;
-    else if (check.reason === "text-changed") status.stale++;
+    else if (check.reason === "text-changed" || check.reason === "pronunciation-changed") status.stale++;
     else status.mismatchedVoice++;
   }
 
