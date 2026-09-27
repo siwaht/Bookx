@@ -78,7 +78,7 @@ export function providerUrlProblem(raw: string, options: { allowLocal?: boolean 
   if (url.username || url.password) return "Put the key in the API key field, not in the address";
   if (INTERNAL_HOST.test(url.hostname)) return "That address is reserved for Bookx itself";
   const local = isLocalAddress(url.hostname);
-  if (local && !allowLocal) return "Bookx is hosted, so it cannot reach local or private-network addresses";
+  if (local && !allowLocal) return "Prosecast is hosted, so it cannot reach local or private-network addresses";
   if (url.protocol === "http:" && !local) return "Use an https:// address";
   return null;
 }

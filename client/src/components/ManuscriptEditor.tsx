@@ -76,27 +76,27 @@ export function ManuscriptEditor({
 
   const updateChapter = trpc.bookx.updateChapter.useMutation({
     onSuccess: () => { setDirty(false); invalidate(); },
-    onError: error => toast.error(error.message || "Bookx could not save the chapter."),
+    onError: error => toast.error(error.message || "Prosecast could not save the chapter."),
   });
   const createChapter = trpc.bookx.createChapter.useMutation({
     onSuccess: result => { setSelectedChapterId(result.id); setDirty(false); invalidate(); },
-    onError: error => toast.error(error.message || "Bookx could not add the chapter."),
+    onError: error => toast.error(error.message || "Prosecast could not add the chapter."),
   });
   const deleteChapter = trpc.bookx.deleteChapter.useMutation({
     onSuccess: () => { setSelectedChapterId(null); setDirty(false); invalidate(); },
-    onError: error => toast.error(error.message || "Bookx could not delete the chapter."),
+    onError: error => toast.error(error.message || "Prosecast could not delete the chapter."),
   });
   const setIncluded = trpc.bookx.setChaptersIncluded.useMutation({
     onSuccess: invalidate,
-    onError: error => toast.error(error.message || "Bookx could not update the chapter selection."),
+    onError: error => toast.error(error.message || "Prosecast could not update the chapter selection."),
   });
   const reorder = trpc.bookx.reorderChapters.useMutation({
     onSuccess: invalidate,
-    onError: error => toast.error(error.message || "Bookx could not move the chapter."),
+    onError: error => toast.error(error.message || "Prosecast could not move the chapter."),
   });
   const updateSegment = trpc.bookx.updateSegment.useMutation({
     onSuccess: invalidate,
-    onError: error => toast.error(error.message || "Bookx could not change the speaker."),
+    onError: error => toast.error(error.message || "Prosecast could not change the speaker."),
   });
   const importManuscript = trpc.bookx.importManuscript.useMutation({
     onSuccess: result => {
@@ -110,7 +110,7 @@ export function ManuscriptEditor({
         description: `${formatWordCount(result.words)}.${leftOut}${result.warnings.length ? ` ${result.warnings.join(" ")}` : ""}`,
       });
     },
-    onError: error => toast.error(error.message || "Bookx could not import that manuscript."),
+    onError: error => toast.error(error.message || "Prosecast could not import that manuscript."),
   });
   const resegment = trpc.bookx.resegmentChapters.useMutation({
     onSuccess: result => {
@@ -121,7 +121,7 @@ export function ManuscriptEditor({
           : "Segments already match the current text.",
       );
     },
-    onError: error => toast.error(error.message || "Bookx could not split the manuscript."),
+    onError: error => toast.error(error.message || "Prosecast could not split the manuscript."),
   });
 
   const queueSave = (title: string, body: string) => {
@@ -150,7 +150,7 @@ export function ManuscriptEditor({
       if (chapters.length) setPendingImport(upload);
       else importManuscript.mutate({ projectId, filename: upload.name, base64: upload.base64, mode: "replace" });
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Bookx could not read that file.");
+      toast.error(error instanceof Error ? error.message : "Prosecast could not read that file.");
     } finally {
       setReadingFile(false);
     }
@@ -371,7 +371,7 @@ export function ManuscriptEditor({
 
             {segments.length === 0 ? (
               <p className="rounded-xl border border-dashed border-[#d8e1dc] p-4 text-xs leading-5 text-[#778689]">
-                No segments yet. Use <strong>Split into segments</strong>, or analyze the cast, once this chapter has text. Bookx breaks it at paragraph and sentence boundaries{multiVoice ? " and separates dialogue so each character can speak their own lines" : ""}.
+                No segments yet. Use <strong>Split into segments</strong>, or analyze the cast, once this chapter has text. Prosecast breaks it at paragraph and sentence boundaries{multiVoice ? " and separates dialogue so each character can speak their own lines" : ""}.
               </p>
             ) : (
               segments.map((segment, index) => {

@@ -66,7 +66,7 @@ const setup = {
 
 const hasFfmpeg = Boolean(await resolveFfmpeg());
 
-describe.skipIf(!hasFfmpeg)("Bookx export package extras", () => {
+describe.skipIf(!hasFfmpeg)("Prosecast export package extras", () => {
   it("narrates credits and headers, cuts a sample, and checks the noise floor", async () => {
     const owner = caller(990_201, "export-extras-owner");
     const stamp = Date.now();

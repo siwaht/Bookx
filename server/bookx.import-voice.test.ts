@@ -33,7 +33,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe("Bookx podcast import and voice discovery", () => {
+describe("Prosecast podcast import and voice discovery", () => {
   it("accepts supported podcast audio and rejects unsupported or oversized uploads", () => {
     const accepted = validatePodcastSource({ filename: "episode one.mp3", mimeType: "audio/mpeg", base64: Buffer.from("audio").toString("base64") });
     expect(accepted.safeFilename).toBe("episode_one.mp3");

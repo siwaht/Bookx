@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveNarrationPlan, resolveNarrationVoice } from "./routers/bookx";
 
-describe("Bookx multi-cast narration routing", () => {
+describe("Prosecast multi-cast narration routing", () => {
   it("uses the persisted character assignment when no explicit voice override is supplied", () => {
     expect(resolveNarrationVoice({ characterVoiceId: "Iris" })).toBe("Iris");
   });

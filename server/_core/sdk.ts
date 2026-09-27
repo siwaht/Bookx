@@ -7,7 +7,7 @@ import * as db from "../db";
 import { ENV } from "./env";
 
 /**
- * Sessions for the one Bookx account.
+ * Sessions for the one Prosecast account.
  *
  * A successful sign-in (server/_core/passwordAuth.ts) mints an HS256 token
  * signed with `JWT_SECRET` and stores it in the session cookie; every request

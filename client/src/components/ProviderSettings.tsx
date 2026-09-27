@@ -279,7 +279,7 @@ export function ProviderSettings({
             <p className="mono mt-5 text-[10px] tracking-[.15em] text-[#b8d8d3]">CLOUDFLARE WORKERS AI</p>
             <h3 className="serif mt-2 text-3xl leading-tight">Your live model catalog.</h3>
             <p className="mt-4 text-sm leading-6 text-[#d2e2de]">
-              Bookx reads the models available in your account, then shows only the ones that fit each task.
+              Prosecast reads the models available in your account, then shows only the ones that fit each task.
             </p>
             <div className="mt-5 rounded-2xl bg-white/10 p-4">
               <span className="block text-xs font-bold">
@@ -339,7 +339,7 @@ export function ProviderSettings({
             <span className="mono text-[10px] tracking-[.14em] text-[#658d87]">ROUTING DEFAULTS</span>
             <h3 className="mt-2 font-bold text-[#3a5052]">Keep choices intentional.</h3>
             <p className="mt-2 text-xs leading-5 text-[#748285]">
-              Bookx asks before changing providers when a model becomes unavailable. Saving defaults seeds a model per task for any provider that has none.
+              Prosecast asks before changing providers when a model becomes unavailable. Saving defaults seeds a model per task for any provider that has none.
             </p>
             <button onClick={() => onSave(customEndpoint.trim() || undefined)} className="btn-primary btn-lg mt-5 w-full">
               {saved ? <><Check aria-hidden="true" size={15} /> Defaults saved</> : <><RefreshCw aria-hidden="true" size={15} /> Save routing defaults</>}
@@ -434,7 +434,7 @@ function CheckFooter({ provider, check, onValidate, extra }: { provider: Provide
     <div className="mt-4 flex items-end justify-between gap-3 border-t border-[#ebeeea] pt-3">
       <p className="line-clamp-2 text-xs leading-5 text-[#6d7c7f]" aria-live="polite">
         {check?.status === "degraded"
-          ? check.detail || "Temporarily unavailable — Bookx will ask before using a fallback."
+          ? check.detail || "Temporarily unavailable — Prosecast will ask before using a fallback."
           : check?.status === "connected"
             ? "Connection verified."
             : provider.models.slice(0, 2).map(model => model.label).join(" · ") || "No models discovered yet."}

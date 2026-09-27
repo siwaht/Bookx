@@ -19,7 +19,7 @@ function createAuthContext(id: number, openId: string): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe(`Bookx segment ownership`, () => {
+describe(`Prosecast segment ownership`, () => {
   it("rejects cross-project segment updates and deletes even with a valid own project id", async () => {
     const owner = appRouter.createCaller(createAuthContext(990_001, "ownership-owner"));
     const intruder = appRouter.createCaller(createAuthContext(990_002, "ownership-intruder"));

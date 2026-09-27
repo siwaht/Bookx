@@ -110,7 +110,7 @@ export function CastingReview({
         <div>
           <span className="mono text-[10px] tracking-[.14em] text-[#668c87]">02 · MULTI-CAST</span>
           <h1 className="serif mt-2 text-3xl text-[#294043]">Cast every voice with intent.</h1>
-          <p className="mt-2 max-w-2xl text-sm text-[#728084]">Bookx reads the whole book, finds everyone who speaks, decides who says each line, and gives each character a distinct voice from your connected catalog. Change any voice; your choices are never overwritten.</p>
+          <p className="mt-2 max-w-2xl text-sm text-[#728084]">Prosecast reads the whole book, finds everyone who speaks, decides who says each line, and gives each character a distinct voice from your connected catalog. Change any voice; your choices are never overwritten.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {onAssignDefaults && (
@@ -180,7 +180,7 @@ export function CastingReview({
             <div className="rounded-[22px] border border-dashed border-[#c9d9d2] bg-[#fbfcf9] p-8 text-center">
               <BookOpenText aria-hidden="true" className="mx-auto mb-3 text-[#8fb0a8]" size={26} />
               <h3 className="font-bold text-[#35494b]">No cast yet</h3>
-              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#748285]">Analyze the book and Bookx will find every speaking character, attribute their lines and suggest a voice for each. You can also add speakers yourself.</p>
+              <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#748285]">Analyze the book and Prosecast will find every speaking character, attribute their lines and suggest a voice for each. You can also add speakers yourself.</p>
             </div>
           ) : (
             <div className="space-y-3">
@@ -239,7 +239,7 @@ export function CastingReview({
           <div className="relative mt-3"><Search aria-hidden="true" className="absolute left-3 top-3 text-[#8c9999]" size={15} /><input id="voice-library-search" type="search" aria-label="Search voices by name, trait or voice ID" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search: female british calm, or a voice ID" className="w-full rounded-xl border border-[#dee4de] bg-white py-2.5 pl-9 pr-3 text-sm outline-none focus:border-[#7ba9a1]" /></div>
           <div className="mt-3 rounded-xl border border-[#dfe7e1] bg-[#f4f8f5] p-3"><label className="block text-[11px] font-bold text-[#58736f]">Describe the voice you need<textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="e.g. calm, low-pitched male with a British accent" className="mt-2 min-h-20 w-full resize-y rounded-lg border border-[#d9e3dc] bg-white p-2 text-xs outline-none focus:border-[#7ba9a1]" /></label><button onClick={onFindSimilar} disabled={!prompt.trim()} className="btn-soft mt-2 w-full disabled:cursor-not-allowed disabled:opacity-50"><Sparkles className="mr-1 inline" size={13} /> Find similar voices</button></div>
           <div className="mt-4 space-y-2">{voicesLoading ? [0, 1, 2, 3].map((index) => <div key={index} aria-hidden="true" className="rounded-xl border border-transparent bg-white p-3"><div className="flex items-center gap-3"><span className="skeleton h-9 w-9 rounded-full" /><span className="min-w-0 flex-1"><span className="skeleton block h-3 w-24" /><span className="skeleton mt-2 block h-2.5 w-32" /></span></div></div>) : voices.length ? voices.slice(0, 60).map((voice) => <div key={voice.id} className="rounded-xl border border-transparent bg-white p-3 hover:border-[#b8d5cf]"><div className="flex items-center gap-3"><span className="grid h-9 w-9 place-items-center rounded-full text-xs font-bold text-white" style={{ background: voice.color }}>{voice.name[0]}</span><span className="min-w-0 flex-1"><strong className="block text-sm">{voice.name}</strong><span className="block truncate text-[11px] text-[#7d898b]">{voice.detail}</span><code className="mt-1 block truncate text-[10px] text-[#82908f]">{voice.id}</code></span><button onClick={() => onPreviewVoice(voice)} aria-label={`Test ${voice.name}`} className="grid h-8 w-8 place-items-center rounded-lg bg-[#e9f4ef] text-[#3d796f] hover:bg-[#dcece5]"><Play size={14} /></button></div>{libraryPreviewUrls[voice.id] && <audio controls preload="none" src={libraryPreviewUrls[voice.id]} className="mt-3 h-8 w-full" aria-label={`${voice.name} voice test`} />}</div>) : <p className="rounded-xl border border-dashed border-[#d8e1dc] p-4 text-xs leading-5 text-[#778689]">No voices matched that ID or description. Try fewer terms or a different provider voice ID.</p>}</div>
-          <p className="mt-5 text-[11px] leading-5 text-[#849092]"><Sparkles className="mr-1 inline text-[#ad8d37]" size={13} /> Signed-in projects search the connected voice catalog. Before sign-in, Bookx uses its starter library and clearly labels browser-only test playback.</p>
+          <p className="mt-5 text-[11px] leading-5 text-[#849092]"><Sparkles className="mr-1 inline text-[#ad8d37]" size={13} /> Signed-in projects search the connected voice catalog. Before sign-in, Prosecast uses its starter library and clearly labels browser-only test playback.</p>
         </aside>
       </div>
     </div>

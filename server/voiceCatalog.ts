@@ -25,7 +25,7 @@ export type CatalogVoice = {
   accent?: string;
   /** What the voice is designed for, e.g. "narration" or "characters". */
   useCase?: string;
-  /** A Bookx starter persona rather than a real provider voice. */
+  /** A Prosecast starter persona rather than a real provider voice. */
   starter?: boolean;
 };
 

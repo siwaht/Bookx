@@ -9,7 +9,7 @@ export type PodcastImport = {
 function readFileAsBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error("Bookx could not read that audio file."));
+    reader.onerror = () => reject(new Error("Prosecast could not read that audio file."));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       resolve(result.includes(",") ? result.slice(result.indexOf(",") + 1) : result);
@@ -43,7 +43,7 @@ export function PodcastImportDialog({ onClose, onFinish }: { onClose: () => void
     try {
       setFile({ name: selected.name, mimeType: selected.type, base64: await readFileAsBase64(selected) });
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Bookx could not read that audio file.");
+      setError(reason instanceof Error ? reason.message : "Prosecast could not read that audio file.");
     } finally {
       setReading(false);
     }

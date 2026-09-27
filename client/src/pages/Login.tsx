@@ -4,7 +4,7 @@ import { useAuth } from "@/_core/hooks/useAuth";
 import { LOGIN_PATH } from "@/const";
 
 /**
- * The sign-in page for the one Bookx account: email + password, checked by
+ * The sign-in page for the one Prosecast account: email + password, checked by
  * the server (see server/_core/passwordAuth.ts). On success the server sets
  * the session cookie and the visitor returns to where they came from.
  */
@@ -81,7 +81,7 @@ export default function Login() {
             <Headphones size={19} />
           </span>
           <span>
-            <span className="block text-[17px] font-bold tracking-[-.04em]">Bookx</span>
+            <span className="block text-[17px] font-bold tracking-[-.04em]">Prosecast</span>
             <span className="block text-[10px] tracking-[.14em] text-[#718084]">AUDIO WORKSPACE</span>
           </span>
         </div>
@@ -137,7 +137,7 @@ export default function Login() {
           </form>
         </div>
 
-        <p className="mt-6 text-center text-xs text-[#8a979a]">Bookx · your private audio studio</p>
+        <p className="mt-6 text-center text-xs text-[#8a979a]">Prosecast · your private audio studio</p>
       </div>
     </main>
   );

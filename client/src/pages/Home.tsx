@@ -423,7 +423,7 @@ export default function Home() {
     } catch (error) {
       setManuscriptUpload(null);
       updateDraft("manuscriptName", "");
-      notify(error instanceof Error ? error.message : "Bookx could not read that file.");
+      notify(error instanceof Error ? error.message : "Prosecast could not read that file.");
     }
   };
   const persistProviderDefaults = (customEndpoint?: string) => {
@@ -459,7 +459,7 @@ export default function Home() {
         settingsSavedTimer.current = window.setTimeout(() => setSettingsSaved(false), 1800);
         toast.success("Routing defaults saved for new projects.");
       })
-      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Bookx could not save the routing defaults."));
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Prosecast could not save the routing defaults."));
   };
   const checkProvider = (provider: string) => validateProvider.mutate({ provider: provider as ProviderId }, {
     onSuccess: (result) => setProviderChecks((current) => ({ ...current, [provider]: { status: result.status, detail: "detail" in result ? result.detail : undefined } })),
@@ -493,7 +493,7 @@ export default function Home() {
         // Verify straight away, so a mistyped key shows up here rather than mid-book.
         checkProvider(provider);
       },
-      onError: (error) => toast.error(error.message || `Bookx could not save the ${provider} key.`),
+      onError: (error) => toast.error(error.message || `Prosecast could not save the ${provider} key.`),
       onSettled: () => setSavingKeyFor(null),
     });
   };
@@ -506,7 +506,7 @@ export default function Home() {
         forgetCheck(provider);
         toast.success(result.removed ? `${provider} key removed.` : `No ${provider} key was saved here.`);
       },
-      onError: (error) => toast.error(error.message || `Bookx could not remove the ${provider} key.`),
+      onError: (error) => toast.error(error.message || `Prosecast could not remove the ${provider} key.`),
     });
   };
   /** Saves the Cloudflare account ID and/or token from the Cloudflare card. */
@@ -525,7 +525,7 @@ export default function Home() {
         toast.success("Cloudflare connection saved.", { description: "Checking it now." });
         checkProvider("Cloudflare");
       },
-      onError: (error) => toast.error(error.message || "Bookx could not save the Cloudflare connection."),
+      onError: (error) => toast.error(error.message || "Prosecast could not save the Cloudflare connection."),
       onSettled: () => setSavingKeyFor(null),
     });
   };
@@ -549,7 +549,7 @@ export default function Home() {
       checkProvider(saved.id);
       return true;
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Bookx could not save that provider.");
+      toast.error(error instanceof Error ? error.message : "Prosecast could not save that provider.");
       return false;
     }
   };
@@ -562,7 +562,7 @@ export default function Home() {
         forgetCheck(id);
         toast.success(`${label} removed.`, { description: "Projects that used it need another voice provider." });
       },
-      onError: (error) => toast.error(error.message || `Bookx could not remove ${label}.`),
+      onError: (error) => toast.error(error.message || `Prosecast could not remove ${label}.`),
     });
   };
   const persistCloudflareConnection = (connection: CloudflareConnectionDraft) => {
@@ -585,7 +585,7 @@ export default function Home() {
         utils.providers.listPreferences.invalidate();
         toast.success("Cloudflare connection saved.");
       },
-      onError: (error) => toast.error(error.message || "Bookx could not save the Cloudflare connection."),
+      onError: (error) => toast.error(error.message || "Prosecast could not save the Cloudflare connection."),
     });
   };
 
@@ -639,7 +639,7 @@ export default function Home() {
         }
         await utils.bookx.listProjects.invalidate();
       } catch (error) {
-        notify(error instanceof Error ? error.message : "Bookx could not save this project yet. You can keep working in the local preview.");
+        notify(error instanceof Error ? error.message : "Prosecast could not save this project yet. You can keep working in the local preview.");
       }
     }
     setProjects((previous) => [project, ...previous]);
@@ -688,7 +688,7 @@ export default function Home() {
         void castAnalysisQuery.refetch();
         toast(result.reused ? "The cast analysis is already running." : "Reading the whole book to find the cast…", { description: "You can keep working; the cast appears here when it is ready." });
       },
-      onError: (error) => toast.error(error.message || "Bookx could not start the cast analysis."),
+      onError: (error) => toast.error(error.message || "Prosecast could not start the cast analysis."),
       onSettled: () => setIsCasting(false),
     });
   };
@@ -701,7 +701,7 @@ export default function Home() {
     if (!activeProjectIsSaved) { notify("Open a saved project to assign voices."); return; }
     assignDefaultVoices.mutate({ projectId: activeProject.id }, {
       onSuccess: (result) => { invalidateCast(); toast.success(result.assigned ? `Chose default voices for ${result.assigned} character${result.assigned === 1 ? "" : "s"}.` : "Every character already has the voice you chose."); },
-      onError: (error) => toast.error(error.message || "Bookx could not assign voices."),
+      onError: (error) => toast.error(error.message || "Prosecast could not assign voices."),
     });
   };
   const changeNarrationStyle = (style: ProjectSetup["narrationStyle"]) => {
@@ -716,7 +716,7 @@ export default function Home() {
           description: style === "single" ? "Existing speaker choices are kept in case you switch back." : "Analyze the book to find the cast and attribute the dialogue.",
         });
       },
-      onError: (error) => toast.error(error.message || "Bookx could not change the narration style."),
+      onError: (error) => toast.error(error.message || "Prosecast could not change the narration style."),
     });
   };
   const removeCharacter = (character: Character) => {
@@ -724,7 +724,7 @@ export default function Home() {
     if (!window.confirm(`Remove ${character.name}? Their lines will be read by the narrator.`)) return;
     deleteCharacterMutation.mutate({ projectId: activeProject.id, characterId: character.id }, {
       onSuccess: () => { invalidateCast(); toast(`${character.name} removed. Their lines now use the narrator's voice.`); },
-      onError: (error) => toast.error(error.message || "Bookx could not remove that character."),
+      onError: (error) => toast.error(error.message || "Prosecast could not remove that character."),
     });
   };
   const addRule = () => {
@@ -736,7 +736,7 @@ export default function Home() {
     if (activeProjectCanPersist) {
       createPronunciationMutation.mutate({ projectId: activeProject.id, word, alias: next.alias || undefined, phoneme: next.phoneme || undefined }, {
         onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
-        onError: (error) => toast.error(error.message || "Bookx could not save that rule."),
+        onError: (error) => toast.error(error.message || "Prosecast could not save that rule."),
       });
     }
   };
@@ -750,7 +750,7 @@ export default function Home() {
     if (!name) return;
     createCharacterMutation.mutate({ projectId: activeProject.id, name: name.slice(0, 160), role: "Supporting character", assignmentSource: "manual" }, {
       onSuccess: () => { invalidateCast(); toast.success(`${name} added. Choose their voice, then assign lines to them from the Write screen.`); },
-      onError: (error) => toast.error(error.message || "Bookx could not add that speaker."),
+      onError: (error) => toast.error(error.message || "Prosecast could not add that speaker."),
     });
   };
   const deleteRule = (word: string) => {
@@ -760,7 +760,7 @@ export default function Home() {
       if (persisted) {
         deletePronunciationMutation.mutate({ projectId: activeProject.id, ruleId: persisted.id }, {
           onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
-          onError: (error) => toast.error(error.message || "Bookx could not remove that rule."),
+          onError: (error) => toast.error(error.message || "Prosecast could not remove that rule."),
         });
       }
     }
@@ -803,13 +803,13 @@ export default function Home() {
     if (!activeProjectIsSaved || !persisted || !provider) { playBrowserSample(character.voice); notify(`${character.name} browser preview is playing.`); return; }
     previewCharacterVoice.mutate({ projectId: activeProject.id, characterId: persisted.id, provider, voiceId: character.voiceId, model: activeProject.voiceModel }, {
       onSuccess: (result) => { setPreviewUrls((current) => ({ ...current, [character.name]: result.audioUrl })); toast.success(`${character.name} preview is ready.`); },
-      onError: () => toast.error("Bookx could not generate that preview.", { description: "You can choose another voice or provider." }),
+      onError: () => toast.error("Prosecast could not generate that preview.", { description: "You can choose another voice or provider." }),
     });
   };
   const playBrowserSample = (voiceName: string) => {
     if (!("speechSynthesis" in window)) { notify("This browser does not support local speech samples. Sign in to generate a provider voice preview."); return; }
     window.speechSynthesis.cancel();
-    const sample = new SpeechSynthesisUtterance(`This is a Bookx sample for ${voiceName}. A clear voice helps listeners follow every moment.`);
+    const sample = new SpeechSynthesisUtterance(`This is a Prosecast sample for ${voiceName}. A clear voice helps listeners follow every moment.`);
     sample.rate = 0.96;
     window.speechSynthesis.speak(sample);
     notify(`Playing a browser sample for ${voiceName}. Sign in to render the selected provider voice.`);
@@ -817,9 +817,9 @@ export default function Home() {
   const previewLibraryVoice = (voice: VoiceChoice) => {
     const provider = narrationProvider(activeProject.voiceProvider, providers);
     if (!activeProjectIsSaved || !provider) { playBrowserSample(voice.name); notify(`${voice.name} browser preview is playing.`); return; }
-    previewVoice.mutate({ projectId: activeProject.id, provider, voiceId: voice.id, model: activeProject.voiceModel, text: `This is a Bookx sample for ${voice.name}. A clear voice helps listeners follow every moment.` }, {
+    previewVoice.mutate({ projectId: activeProject.id, provider, voiceId: voice.id, model: activeProject.voiceModel, text: `This is a Prosecast sample for ${voice.name}. A clear voice helps listeners follow every moment.` }, {
       onSuccess: (result) => { setLibraryPreviewUrls((current) => ({ ...current, [voice.id]: result.audioUrl })); toast.success(`${voice.name} provider preview is ready.`); },
-      onError: () => toast.error("Bookx could not generate that provider preview.", { description: "Try another voice or provider." }),
+      onError: () => toast.error("Prosecast could not generate that provider preview.", { description: "Try another voice or provider." }),
     });
   };
   const findSimilarVoices = () => {
@@ -850,7 +850,7 @@ export default function Home() {
               projectId={activeProject.id}
               canEdit={activeProjectIsSaved}
               disabledReason={isAuthenticated
-                ? "This project only exists in this browser. Create or open a saved project to write chapters that Bookx can narrate."
+                ? "This project only exists in this browser. Create or open a saved project to write chapters that Prosecast can narrate."
                 : "Sign in to write chapters. The manuscript is stored server-side so narration and export can read it."}
               onNext={() => setTab("cast")}
             />
@@ -884,7 +884,7 @@ export default function Home() {
               canExport={activeProjectIsSaved}
               disabledReason={isAuthenticated
                 ? "This project only exists in this browser. Create or open a saved project to assemble a package."
-                : "Sign in to assemble a package. Bookx joins the rendered segments server-side and verifies nothing is missing first."}
+                : "Sign in to assemble a package. Prosecast joins the rendered segments server-side and verifies nothing is missing first."}
             />
           )}
           {tab === "settings" && (
@@ -916,14 +916,14 @@ export default function Home() {
 function Dashboard({ projects, loading, isAuthenticated, onNew, onImport, onOpen }: { projects: Project[]; loading: boolean; isAuthenticated: boolean; onNew: () => void; onImport: () => void; onOpen: (project: Project) => void }) {
   return <div className="mx-auto min-h-screen max-w-[1440px] px-5 pb-12 pt-5 md:px-10">
     <header className="flex items-center justify-between border-b border-[#e2e4dd] pb-5">
-      <button className="flex items-center gap-3 text-left" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><span className="grid h-10 w-10 place-items-center rounded-[14px] bg-[#245f63] text-white shadow-[0_8px_20px_rgba(36,95,99,.22)]"><Headphones size={19} /></span><span><span className="block text-[17px] font-bold tracking-[-.04em]">Bookx</span><span className="block text-[10px] tracking-[.14em] text-[#718084]">AUDIO WORKSPACE</span></span></button>
+      <button className="flex items-center gap-3 text-left" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><span className="grid h-10 w-10 place-items-center rounded-[14px] bg-[#245f63] text-white shadow-[0_8px_20px_rgba(36,95,99,.22)]"><Headphones size={19} /></span><span><span className="block text-[17px] font-bold tracking-[-.04em]">Prosecast</span><span className="block text-[10px] tracking-[.14em] text-[#718084]">AUDIO WORKSPACE</span></span></button>
       <nav aria-label="Workspace context" className="hidden items-center gap-2 md:flex"><button aria-current="page" onClick={() => document.getElementById("recent-work")?.scrollIntoView({ behavior: "smooth" })} className="rounded-full bg-[#e3f0ed] px-4 py-2 text-sm font-semibold text-[#256d69]">Projects</button><button type="button" disabled title="Library is not available yet" className="rounded-full px-4 py-2 text-sm text-[#6f7d80] disabled:cursor-not-allowed">Library</button><button type="button" disabled title="Series is not available yet" className="rounded-full px-4 py-2 text-sm text-[#6f7d80] disabled:cursor-not-allowed">Series</button></nav>
       <div className="flex items-center gap-2"><IconButton label="Search"><Search size={16} /></IconButton>{isAuthenticated ? <div className="flex items-center gap-2" title="Signed in"><span className="rounded-full bg-[#edf4ef] px-2.5 py-1.5 text-[11px] font-bold text-[#3d716a]">Signed in</span><div className="grid h-9 w-9 place-items-center rounded-full bg-[#d9b66b] text-xs font-bold text-[#2a3537]">ME</div></div> : <button onClick={() => startLogin()} className="btn-primary">Sign in</button>}</div>
     </header>
 
     <section className="brand-wave fade-up grid gap-8 py-12 lg:grid-cols-[1.25fr_.75fr] lg:items-end">
       <div><div className="mb-5 flex items-center gap-2 text-[11px] font-bold tracking-[.18em] text-[#49827d]"><span className="h-2 w-2 rounded-full bg-[#72aa95]" /> YOUR STUDIO</div><h1 className="serif max-w-3xl text-5xl leading-[.98] tracking-[-.055em] text-[#203438] md:text-7xl">Make something<br />people can hear.</h1><p className="mt-6 max-w-xl text-base leading-7 text-[#647276]">A considered workspace for turning manuscripts, ideas, and performances into finished audiobooks and podcasts.</p></div>
-      <div className="panel-shadow rounded-[26px] border border-[#dfe5dd] bg-[#fbfaf6] p-5"><div className="mb-5 flex items-center justify-between"><span className="mono text-[10px] tracking-[.12em] text-[#7c8988]">THE BOOKX METHOD</span><Sparkles size={17} className="text-[#ba8c43]" /></div><div className="grid grid-cols-3 gap-2">{[["01", "Shape"], ["02", "Voice"], ["03", "Publish"]].map(([number, label]) => <div key={label} className="rounded-2xl bg-[#f0f3ed] p-3"><span className="mono block text-[10px] text-[#7b8a88]">{number}</span><strong className="mt-5 block text-sm">{label}</strong></div>)}</div></div>
+      <div className="panel-shadow rounded-[26px] border border-[#dfe5dd] bg-[#fbfaf6] p-5"><div className="mb-5 flex items-center justify-between"><span className="mono text-[10px] tracking-[.12em] text-[#7c8988]">THE PROSECAST METHOD</span><Sparkles size={17} className="text-[#ba8c43]" /></div><div className="grid grid-cols-3 gap-2">{[["01", "Shape"], ["02", "Voice"], ["03", "Publish"]].map(([number, label]) => <div key={label} className="rounded-2xl bg-[#f0f3ed] p-3"><span className="mono block text-[10px] text-[#7b8a88]">{number}</span><strong className="mt-5 block text-sm">{label}</strong></div>)}</div></div>
     </section>
 
     <section className="mb-10 grid gap-3 md:grid-cols-2"><button onClick={onNew} className="lift group flex min-h-30 items-center justify-between rounded-[24px] bg-[#225d60] p-6 text-left text-white"><span><span className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-white/12"><Plus size={19} /></span><strong className="block text-lg">New project</strong><span className="mt-1 block text-sm text-[#d5e8e5]">Start with a manuscript or fresh idea</span></span><ArrowRight className="transition group-hover:translate-x-1" /></button><button onClick={onImport} className="lift group flex min-h-30 items-center justify-between rounded-[24px] border border-[#d9dfd7] bg-[#fffefa] p-6 text-left"><span><span className="mb-2 flex h-9 w-9 items-center justify-center rounded-xl bg-[#e9f0ea] text-[#40766f]"><Upload size={18} /></span><strong className="block text-lg">Import audio</strong><span className="mt-1 block text-sm text-[#718083]">Bring in an existing mix or recording</span></span><ArrowRight className="text-[#65817e] transition group-hover:translate-x-1" /></button></section>
@@ -970,19 +970,19 @@ function ProjectWizard({ step, setStep, draft, updateDraft, providers, onClose, 
   };
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#173034]/35 p-4 backdrop-blur-sm" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}><div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby={titleId} tabIndex={-1} className="soft-shadow flex h-[calc(100dvh-2rem)] max-h-[800px] w-full max-w-3xl flex-col overflow-hidden rounded-[30px] border border-white/70 bg-[#fffefa] outline-none"><div className="shrink-0 flex items-start justify-between px-7 pb-5 pt-7"><div><p className="mono text-[10px] tracking-[.16em] text-[#5d918b]">START A NEW PROJECT</p><h2 id={titleId} className="serif mt-2 text-3xl tracking-[-.045em]">{step === 1 ? "Begin with the story." : step === 2 ? "Set the vocal character." : "Review the intent."}</h2></div><IconButton label="Close" onClick={onClose}><X size={17} /></IconButton></div><div className="shrink-0 px-7"><div className="grid grid-cols-3 border-y border-[#e3e7df] py-3">{[[1, "Basics"], [2, "Narration"], [3, "Review"]].map(([number, label]) => <div key={number} className="flex items-center gap-2 text-sm"><span className={`grid h-6 w-6 place-items-center rounded-full text-[11px] font-bold ${step >= Number(number) ? "bg-[#286b69] text-white" : "bg-[#edf0eb] text-[#7a8787]"}`}>{step > Number(number) ? <Check size={13} /> : number}</span><span className={step >= Number(number) ? "font-semibold text-[#2b494b]" : "text-[#859093]"}>{label}</span></div>)}</div></div><div className="min-h-0 flex-1 overflow-y-auto px-7 py-7">
     {step === 1 && <div className="space-y-6"><div className="grid gap-3 sm:grid-cols-2">{[["audiobook", BookOpen, "Audiobook", "Long-form, chaptered narration"], ["podcast", Mic2, "Podcast", "Episodes, interviews, conversations"]].map(([kind, Icon, title, description]) => <button key={kind as string} onClick={() => updateDraft("kind", kind as "audiobook" | "podcast")} className={`rounded-2xl border p-4 text-left ${draft.kind === kind ? "border-[#7aa9a2] bg-[#edf7f4]" : "border-[#dfe5dc] bg-white"}`}>{createElement(Icon as typeof BookOpen, { size: 18, className: "mb-5 text-[#3c7d76]" })}<strong className="block">{title as string}</strong><span className="mt-1 block text-sm text-[#788588]">{description as string}</span></button>)}</div><div className="grid gap-4 sm:grid-cols-2"><Field label={draft.kind === "audiobook" ? "Book title" : "Episode / show title"}><input autoFocus value={draft.title} onChange={(event) => updateDraft("title", event.target.value)} placeholder="e.g. The quiet morning" className="input" /></Field><Field label={draft.kind === "audiobook" ? "Author" : "Host"} optional><input value={draft.author || ""} onChange={(event) => updateDraft("author", event.target.value)} placeholder="Add a name" className="input" /></Field></div><Field label="Narration style"><div className="grid gap-2 sm:grid-cols-3">{[["single", "Single narrator"], ["cast", "Full cast"], ["narrator-cast", "Narrator + cast"]].map(([value, label]) => <button key={value} onClick={() => updateDraft("narrationStyle", value as ProjectSetup["narrationStyle"])} className={`rounded-xl border px-3 py-3 text-left text-sm ${draft.narrationStyle === value ? "border-[#7aa9a2] bg-[#eaf4f0] text-[#2d6e69]" : "border-[#e1e5de] bg-white text-[#667477]"}`}>{label}</button>)}</div></Field></div>}
-    {step === 2 && <div className="space-y-6"><div className="rounded-[22px] border border-[#dbe6df] bg-[#f6faf7] p-4"><div className="mb-4 flex items-center justify-between"><div><p className="mono text-[10px] tracking-[.14em] text-[#5b8b84]">MODEL ROUTING</p><p className="mt-1 text-sm text-[#596a6d]">Choose models by task. Bookx keeps the creative workflow independent of any one vendor.</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-[#4b7d76]">MODEL-AGNOSTIC</span></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Voice provider"><select value={draft.voiceProvider} onChange={(event) => chooseProvider("voiceProvider", "text-to-speech", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("text-to-speech")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Voice model"><select value={draft.voiceModel} onChange={(event) => updateDraft("voiceModel", event.target.value)} className="input select">{voiceModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language-model provider"><select value={draft.languageModelProvider} onChange={(event) => chooseProvider("languageModelProvider", "language-model", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("language-model")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Language model"><select value={draft.languageModel} onChange={(event) => updateDraft("languageModel", event.target.value)} className="input select">{languageModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language"><select value={draft.language} onChange={(event) => updateDraft("language", event.target.value)} className="input select"><option>Auto-detect</option><option>English</option><option>Spanish</option><option>French</option><option>German</option></select></Field></div></div><label className="group flex cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed border-[#87ada6] bg-[#f1f8f6] px-6 py-8 text-center"><Upload size={22} className="mb-3 text-[#3b7b75]" /><strong>{draft.manuscriptName || "Upload your manuscript"}</strong><span className="mt-2 text-sm text-[#718083]">EPUB, DOCX, TXT, Markdown, or HTML · up to 30 MB</span><input type="file" accept={MANUSCRIPT_ACCEPT} onChange={onFile} className="hidden" /></label><p className="rounded-xl bg-[#fbf4e5] px-4 py-3 text-sm leading-6 text-[#8a6b37]"><Sparkles className="mr-2 inline" size={15} />Bookx will prepare chapters and narration paragraphs for your review. You can also add a manuscript later.</p></div>}
+    {step === 2 && <div className="space-y-6"><div className="rounded-[22px] border border-[#dbe6df] bg-[#f6faf7] p-4"><div className="mb-4 flex items-center justify-between"><div><p className="mono text-[10px] tracking-[.14em] text-[#5b8b84]">MODEL ROUTING</p><p className="mt-1 text-sm text-[#596a6d]">Choose models by task. Prosecast keeps the creative workflow independent of any one vendor.</p></div><span className="rounded-full bg-white px-3 py-1 text-[10px] font-bold text-[#4b7d76]">MODEL-AGNOSTIC</span></div><div className="grid gap-4 sm:grid-cols-2"><Field label="Voice provider"><select value={draft.voiceProvider} onChange={(event) => chooseProvider("voiceProvider", "text-to-speech", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("text-to-speech")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Voice model"><select value={draft.voiceModel} onChange={(event) => updateDraft("voiceModel", event.target.value)} className="input select">{voiceModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language-model provider"><select value={draft.languageModelProvider} onChange={(event) => chooseProvider("languageModelProvider", "language-model", event.target.value)} className="input select">{providers.filter((provider) => provider.capabilities.includes("language-model")).map((provider) => <option key={provider.id} value={provider.id}>{provider.label}{provider.configured ? " · Connected" : ""}</option>)}</select></Field><Field label="Language model"><select value={draft.languageModel} onChange={(event) => updateDraft("languageModel", event.target.value)} className="input select">{languageModels.map((model) => <option key={model.id} value={model.id}>{model.label}{model.detail ? ` · ${model.detail}` : ""}</option>)}</select></Field><Field label="Language"><select value={draft.language} onChange={(event) => updateDraft("language", event.target.value)} className="input select"><option>Auto-detect</option><option>English</option><option>Spanish</option><option>French</option><option>German</option></select></Field></div></div><label className="group flex cursor-pointer flex-col items-center justify-center rounded-[22px] border border-dashed border-[#87ada6] bg-[#f1f8f6] px-6 py-8 text-center"><Upload size={22} className="mb-3 text-[#3b7b75]" /><strong>{draft.manuscriptName || "Upload your manuscript"}</strong><span className="mt-2 text-sm text-[#718083]">EPUB, DOCX, TXT, Markdown, or HTML · up to 30 MB</span><input type="file" accept={MANUSCRIPT_ACCEPT} onChange={onFile} className="hidden" /></label><p className="rounded-xl bg-[#fbf4e5] px-4 py-3 text-sm leading-6 text-[#8a6b37]"><Sparkles className="mr-2 inline" size={15} />Prosecast will prepare chapters and narration paragraphs for your review. You can also add a manuscript later.</p></div>}
     {step === 3 && <div className="overflow-hidden rounded-[22px] border border-[#e0e5de] bg-[#fcfcf8]">{[["Project", draft.title || "Untitled project"], ["Type", `${draft.kind === "audiobook" ? "Audiobook" : "Podcast"} · ${draft.narrationStyle.replace("-", " ")}`], ["Voice model", draft.voiceModel], ["Language", draft.language], ["Manuscript", draft.manuscriptName || "Add later from Write"]].map(([label, value]) => <div key={label} className="flex items-center justify-between border-b border-[#e6e9e3] px-5 py-4 text-sm last:border-0"><span className="text-[#798689]">{label}</span><strong className="max-w-[62%] text-right capitalize text-[#334649]">{value}</strong></div>)}</div>}
   </div><div className="flex items-center justify-between border-t border-[#e4e7e0] bg-[#fafaf5] px-7 py-5"><button onClick={() => step === 1 ? onClose() : setStep(step - 1)} className="inline-flex items-center gap-2 text-sm font-semibold text-[#667477] transition hover:text-[#3c5052]"><ArrowLeft size={15} /> {step === 1 ? "Cancel" : "Back"}</button><button disabled={!canContinue} onClick={() => step < 3 ? setStep(step + 1) : onCreate()} className="btn-primary btn-lg disabled:opacity-40">{step < 3 ? "Continue" : creating ? "Creating…" : `Create ${draft.kind === "audiobook" ? "audiobook" : "podcast"}`} {creating ? <LoaderCircle className="animate-spin" size={16} /> : <ArrowRight size={16} />}</button></div></div></div>;
 }
 
 function Field({ label, optional, children }: { label: string; optional?: boolean; children: React.ReactNode }) { return <label className="block"><span className="mb-2 block text-[12px] font-bold tracking-[.02em] text-[#526267]">{label} {optional && <em className="ml-1 font-normal not-italic text-[#97a0a1]">optional</em>}</span>{children}</label>; }
 
-function Workspace({ project, tab, setTab, onBack, onShare, onSettings, children }: { project: Project; tab: WorkspaceTab; setTab: (tab: WorkspaceTab) => void; onBack: () => void; onShare: () => void; onSettings: () => void; children: React.ReactNode }) { return <div className="min-h-screen bg-[#f4f5ef]"><header className="flex h-[68px] items-center justify-between border-b border-[#dfe4dd] bg-[#fffefa] px-4 md:px-6"><div className="flex items-center gap-3"><button onClick={onBack} className="grid h-9 w-9 place-items-center rounded-xl border border-[#e0e4df] bg-white text-[#637477] transition hover:border-[#a9c9c4] hover:text-[#1d6a69]"><ArrowLeft size={16} /></button><div className="hidden h-7 w-px bg-[#e0e3dd] sm:block" /><div><p className="mono text-[9px] tracking-[.13em] text-[#7b8889]">{project.kind === "audiobook" ? "AUDIOBOOK" : "PODCAST"}</p><div className="flex items-center gap-2"><h1 className="text-sm font-bold tracking-[-.02em]">{project.title}</h1><ChevronDown size={13} className="text-[#7d898a]" /></div></div></div><div className="hidden items-center gap-5 lg:flex"><span className="text-xs text-[#7b898b]">{project.progress}% ready</span><div className="h-1.5 w-28 overflow-hidden rounded-full bg-[#e6ebe5]"><div className="h-full bg-[#67a194] transition-[width] duration-700 ease-out" style={{ width: `${project.progress}%` }} /></div><button onClick={onShare} className="btn-primary">Share preview</button></div><div className="flex items-center gap-2"><IconButton label="Project settings" onClick={onSettings}><Settings2 size={16} /></IconButton><div className="grid h-9 w-9 place-items-center rounded-full bg-[#d6b36b] text-[10px] font-bold">ME</div></div></header><div className="flex min-h-[calc(100vh-68px)]"><aside className="hidden w-[236px] shrink-0 border-r border-[#dfe4dd] bg-[#fbfbf7] p-4 md:block"><button onClick={onBack} className="mb-5 flex items-center gap-2 px-2 text-xs font-semibold text-[#5f7e7b]"><Headphones size={14} /> Bookx workspace</button>{["CREATE", "PRODUCE", "FINISH", "SYSTEM"].map((group) => <div key={group} className="mb-5"><p className="mono mb-2 px-2 text-[9px] tracking-[.14em] text-[#9aa3a2]">{group}</p>{nav.filter((item) => item.group === group).map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => setTab(item.id)} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] transition ${tab === item.id ? "bg-[#e8f2ee] font-bold text-[#276b67]" : "text-[#667477] hover:bg-[#f0f2ed]"}`}><Icon size={16} />{item.label}{item.id === "generation" && <span className="ml-auto rounded-full bg-[#dceae4] px-2 py-0.5 text-[9px]">1</span>}</button>})}</div>)}</aside><div className="flex min-w-0 flex-1 flex-col"><div aria-label="Workspace sections" className="flex overflow-x-auto border-b border-[#dfe4dd] bg-[#fbfbf8] px-3 py-2 md:hidden">{nav.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 rounded-lg px-3 py-2 text-xs ${tab === item.id ? "bg-[#e4f0ec] font-bold text-[#2b706c]" : "text-[#718083]"}`}>{item.label}</button>)}</div><div key={tab} className="fade-up flex min-h-0 flex-1 flex-col">{children}</div></div></div></div>; }
+function Workspace({ project, tab, setTab, onBack, onShare, onSettings, children }: { project: Project; tab: WorkspaceTab; setTab: (tab: WorkspaceTab) => void; onBack: () => void; onShare: () => void; onSettings: () => void; children: React.ReactNode }) { return <div className="min-h-screen bg-[#f4f5ef]"><header className="flex h-[68px] items-center justify-between border-b border-[#dfe4dd] bg-[#fffefa] px-4 md:px-6"><div className="flex items-center gap-3"><button onClick={onBack} className="grid h-9 w-9 place-items-center rounded-xl border border-[#e0e4df] bg-white text-[#637477] transition hover:border-[#a9c9c4] hover:text-[#1d6a69]"><ArrowLeft size={16} /></button><div className="hidden h-7 w-px bg-[#e0e3dd] sm:block" /><div><p className="mono text-[9px] tracking-[.13em] text-[#7b8889]">{project.kind === "audiobook" ? "AUDIOBOOK" : "PODCAST"}</p><div className="flex items-center gap-2"><h1 className="text-sm font-bold tracking-[-.02em]">{project.title}</h1><ChevronDown size={13} className="text-[#7d898a]" /></div></div></div><div className="hidden items-center gap-5 lg:flex"><span className="text-xs text-[#7b898b]">{project.progress}% ready</span><div className="h-1.5 w-28 overflow-hidden rounded-full bg-[#e6ebe5]"><div className="h-full bg-[#67a194] transition-[width] duration-700 ease-out" style={{ width: `${project.progress}%` }} /></div><button onClick={onShare} className="btn-primary">Share preview</button></div><div className="flex items-center gap-2"><IconButton label="Project settings" onClick={onSettings}><Settings2 size={16} /></IconButton><div className="grid h-9 w-9 place-items-center rounded-full bg-[#d6b36b] text-[10px] font-bold">ME</div></div></header><div className="flex min-h-[calc(100vh-68px)]"><aside className="hidden w-[236px] shrink-0 border-r border-[#dfe4dd] bg-[#fbfbf7] p-4 md:block"><button onClick={onBack} className="mb-5 flex items-center gap-2 px-2 text-xs font-semibold text-[#5f7e7b]"><Headphones size={14} /> Prosecast workspace</button>{["CREATE", "PRODUCE", "FINISH", "SYSTEM"].map((group) => <div key={group} className="mb-5"><p className="mono mb-2 px-2 text-[9px] tracking-[.14em] text-[#9aa3a2]">{group}</p>{nav.filter((item) => item.group === group).map((item) => { const Icon = item.icon; return <button key={item.id} onClick={() => setTab(item.id)} className={`mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[13px] transition ${tab === item.id ? "bg-[#e8f2ee] font-bold text-[#276b67]" : "text-[#667477] hover:bg-[#f0f2ed]"}`}><Icon size={16} />{item.label}{item.id === "generation" && <span className="ml-auto rounded-full bg-[#dceae4] px-2 py-0.5 text-[9px]">1</span>}</button>})}</div>)}</aside><div className="flex min-w-0 flex-1 flex-col"><div aria-label="Workspace sections" className="flex overflow-x-auto border-b border-[#dfe4dd] bg-[#fbfbf8] px-3 py-2 md:hidden">{nav.map((item) => <button key={item.id} onClick={() => setTab(item.id)} className={`shrink-0 rounded-lg px-3 py-2 text-xs ${tab === item.id ? "bg-[#e4f0ec] font-bold text-[#2b706c]" : "text-[#718083]"}`}>{item.label}</button>)}</div><div key={tab} className="fade-up flex min-h-0 flex-1 flex-col">{children}</div></div></div></div>; }
 
 function PageHeader({ eyebrow, title, description, actions }: { eyebrow: string; title: string; description: string; actions?: React.ReactNode }) { return <div className="flex flex-col gap-5 border-b border-[#e1e5de] bg-[#fffefa] px-6 py-6 md:flex-row md:items-end md:justify-between md:px-9"><div><p className="mono text-[10px] tracking-[.15em] text-[#5a918b]">{eyebrow}</p><h2 className="serif mt-2 text-3xl tracking-[-.04em] text-[#25393c]">{title}</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-[#738084]">{description}</p></div>{actions && <div className="flex shrink-0 items-center gap-2">{actions}</div>}</div>; }
 
 
-function Pronunciation({ rules, draft, setDraft, onAdd, onDelete }: { rules: Rule[]; draft: Rule; setDraft: (rule: Rule) => void; onAdd: () => void; onDelete: (word: string) => void }) { return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="02 · CAST" title="Pronounce every detail." description="Create word rules and phoneme overrides so names, places, and technical language sound exactly right." /><div className="grid flex-1 gap-6 p-6 md:grid-cols-[1fr_360px] md:p-9"><section><div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="flex items-center justify-between"><div><h3 className="font-bold">Project dictionary</h3><p className="mt-1 text-sm text-[#788689]">Applied anywhere the term appears in this project.</p></div><span className="rounded-full bg-[#e8f3ef] px-3 py-1 text-xs font-bold text-[#3c776f]">{rules.length} rules</span></div><div className="mt-5 overflow-hidden rounded-xl border border-[#e4e8e2]"><div className="grid grid-cols-[1.2fr_1fr_1fr_36px] bg-[#f4f6f1] px-4 py-3 mono text-[9px] tracking-[.12em] text-[#899594]"><span>WORD</span><span>ALIAS</span><span>PHONEME</span><span /></div>{rules.map((rule) => <div key={rule.word} className="grid grid-cols-[1.2fr_1fr_1fr_36px] items-center border-t border-[#edf0ea] px-4 py-4 text-sm"><strong>{rule.word}</strong><span className="text-[#5f7274]">{rule.alias}</span><span className="mono text-[11px] text-[#6f7e81]">{rule.phoneme || "—"}</span><button onClick={() => onDelete(rule.word)} aria-label={`Delete ${rule.word}`} className="text-[#9aa2a3] hover:text-[#af5d5d]"><Trash2 size={14} /></button></div>)}</div></div></section><aside className="rounded-[22px] border border-[#dfe5de] bg-[#fbfbf7] p-5"><span className="mono text-[10px] tracking-[.13em] text-[#658c87]">ADD A RULE</span><h3 className="serif mt-2 text-2xl">Teach Bookx a name.</h3><div className="mt-5 space-y-4"><Field label="Word"><input value={draft.word} onChange={(event) => setDraft({ ...draft, word: event.target.value })} placeholder="e.g. Aurelia" className="input" /></Field><Field label="Say it as"><input value={draft.alias} onChange={(event) => setDraft({ ...draft, alias: event.target.value })} placeholder="e.g. aw-REE-lee-ah" className="input" /></Field><Field label="Phoneme override" optional><input value={draft.phoneme} onChange={(event) => setDraft({ ...draft, phoneme: event.target.value })} placeholder="e.g. ɔːˈriːliə" className="input mono" /></Field><button onClick={onAdd} className="btn-primary btn-lg w-full">Add pronunciation rule</button></div></aside></div></div>; }
+function Pronunciation({ rules, draft, setDraft, onAdd, onDelete }: { rules: Rule[]; draft: Rule; setDraft: (rule: Rule) => void; onAdd: () => void; onDelete: (word: string) => void }) { return <div className="flex min-h-0 flex-1 flex-col"><PageHeader eyebrow="02 · CAST" title="Pronounce every detail." description="Create word rules and phoneme overrides so names, places, and technical language sound exactly right." /><div className="grid flex-1 gap-6 p-6 md:grid-cols-[1fr_360px] md:p-9"><section><div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="flex items-center justify-between"><div><h3 className="font-bold">Project dictionary</h3><p className="mt-1 text-sm text-[#788689]">Applied anywhere the term appears in this project.</p></div><span className="rounded-full bg-[#e8f3ef] px-3 py-1 text-xs font-bold text-[#3c776f]">{rules.length} rules</span></div><div className="mt-5 overflow-hidden rounded-xl border border-[#e4e8e2]"><div className="grid grid-cols-[1.2fr_1fr_1fr_36px] bg-[#f4f6f1] px-4 py-3 mono text-[9px] tracking-[.12em] text-[#899594]"><span>WORD</span><span>ALIAS</span><span>PHONEME</span><span /></div>{rules.map((rule) => <div key={rule.word} className="grid grid-cols-[1.2fr_1fr_1fr_36px] items-center border-t border-[#edf0ea] px-4 py-4 text-sm"><strong>{rule.word}</strong><span className="text-[#5f7274]">{rule.alias}</span><span className="mono text-[11px] text-[#6f7e81]">{rule.phoneme || "—"}</span><button onClick={() => onDelete(rule.word)} aria-label={`Delete ${rule.word}`} className="text-[#9aa2a3] hover:text-[#af5d5d]"><Trash2 size={14} /></button></div>)}</div></div></section><aside className="rounded-[22px] border border-[#dfe5de] bg-[#fbfbf7] p-5"><span className="mono text-[10px] tracking-[.13em] text-[#658c87]">ADD A RULE</span><h3 className="serif mt-2 text-2xl">Teach Prosecast a name.</h3><div className="mt-5 space-y-4"><Field label="Word"><input value={draft.word} onChange={(event) => setDraft({ ...draft, word: event.target.value })} placeholder="e.g. Aurelia" className="input" /></Field><Field label="Say it as"><input value={draft.alias} onChange={(event) => setDraft({ ...draft, alias: event.target.value })} placeholder="e.g. aw-REE-lee-ah" className="input" /></Field><Field label="Phoneme override" optional><input value={draft.phoneme} onChange={(event) => setDraft({ ...draft, phoneme: event.target.value })} placeholder="e.g. ɔːˈriːliə" className="input mono" /></Field><button onClick={onAdd} className="btn-primary btn-lg w-full">Add pronunciation rule</button></div></aside></div></div>; }
 
 /**
  * Pre-flight report. Every line is derived from stored state, so it cannot claim a

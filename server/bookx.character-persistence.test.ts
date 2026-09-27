@@ -19,7 +19,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe(`Bookx character persistence`, () => {
+describe(`Prosecast character persistence`, () => {
   it("persists model-ready character assignments on a saved project and removes the isolated test record", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({
