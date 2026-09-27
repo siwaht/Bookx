@@ -20,6 +20,7 @@ import {
   describeOutput,
   isPassthrough,
   mimeTypeFor,
+  noiseFloorPasses,
   presetById,
   type ExportOutput,
   type ExportPresetId,
@@ -61,8 +62,6 @@ const DEFAULT_SEGMENT_GAP_MS = 350;
 const DEFAULT_CHAPTER_GAP_MS = 2000;
 /** Pause between a narrated chapter header and the chapter's first line. */
 const HEADER_GAP_MS = 2500;
-/** ACX's noise-floor ceiling, in dB RMS. */
-const NOISE_FLOOR_MAX_DB = -60;
 
 type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 type ProjectRow = typeof bookxProjects.$inferSelect;
@@ -666,8 +665,8 @@ export async function assembleProjectExport(input: {
           if (floor.floorDb !== null && (worst === null || floor.floorDb > worst)) worst = floor.floorDb;
         }
         detail.quality = { noiseFloorDb: worst, checkedFiles: checkCount };
-        if (worst !== null && worst > NOISE_FLOOR_MAX_DB) {
-          warnings.push(`The noise floor measures ${worst.toFixed(1)} dB, above the ${NOISE_FLOOR_MAX_DB} dB ceiling ACX sets. A different voice or a noise-reduction pass will fix it.`);
+        if (worst !== null && !noiseFloorPasses(worst)) {
+          warnings.push(`The noise floor measures ${worst.toFixed(1)} dB, above the ${AUDIOBOOK_STANDARD.maxNoiseFloorDb} dB ceiling ACX sets. A different voice or a noise-reduction pass will fix it.`);
         }
       } catch {
         // A QC miss never blocks a finished package.
