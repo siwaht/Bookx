@@ -1,7 +1,9 @@
 import { eq } from "drizzle-orm";
 import { bookxProviderSettings } from "../drizzle/schema";
+import { BUILT_IN_PROVIDERS, type BuiltInProviderId, type ProviderId } from "../shared/providers";
+import { customProviderCapabilities, listCustomProviders } from "./customProviders";
 import { getDb } from "./db";
-import { configuredProviders, type ProviderId } from "./providerRouting";
+import { configuredProviders, type RoutingCapability } from "./providerRouting";
 
 export type CloudflareEndpointMode = "native" | "openai-compatible";
 
@@ -103,11 +105,28 @@ export function normalizeCloudflareUrl(raw: string): { mode: CloudflareEndpointM
   return { mode: "openai-compatible", apiBaseUrl: base };
 }
 
-function cloudflareEndpointFromEnv(): CloudflareEndpoint | null {
-  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
-  const apiToken = process.env.CLOUDFLARE_API_TOKEN;
+/** Workers AI base URL for an account. */
+export function cloudflareAccountUrl(accountId: string): string {
+  return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai`;
+}
+
+/** The account id in a native Workers AI URL, or null for any other endpoint. */
+export function cloudflareAccountIdFromUrl(url?: string | null): string | null {
+  if (!url) return null;
+  const normalized = normalizeCloudflareUrl(url);
+  if (normalized?.mode !== "native") return null;
+  return normalized.apiBaseUrl.match(/\/accounts\/([^/]+)\/ai$/)?.[1] ?? null;
+}
+
+/**
+ * The deployment's account from the environment. A token saved in the app
+ * replaces the environment's token for that user, even without a saved account.
+ */
+function cloudflareEndpointFromEnv(tokenOverride?: string): CloudflareEndpoint | null {
+  const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  const apiToken = tokenOverride || process.env.CLOUDFLARE_API_TOKEN?.trim();
   if (!accountId || !apiToken) return null;
-  return { apiBaseUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai`, mode: "native", apiKey: apiToken };
+  return { apiBaseUrl: cloudflareAccountUrl(accountId), mode: "native", apiKey: apiToken };
 }
 
 /**
@@ -118,27 +137,29 @@ function cloudflareEndpointFromEnv(): CloudflareEndpoint | null {
  */
 export async function getCloudflareEndpoint(ownerId?: number): Promise<CloudflareEndpoint | null> {
   const db = await getDb();
+  let savedToken: string | undefined;
+  let models: Pick<CloudflareEndpoint, "ttsModel" | "sttModel" | "llmModel"> = {};
   if (db) {
     const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.provider, "Cloudflare"));
     const row = (ownerId != null ? rows.find((candidate) => candidate.ownerId === ownerId) : undefined) || rows[0];
+    savedToken = row?.apiKey?.trim() || undefined;
+    models = {
+      ttsModel: row?.defaultTtsModel || undefined,
+      sttModel: row?.defaultSttModel || undefined,
+      llmModel: row?.defaultLlmModel || undefined,
+    };
     if (row?.apiBaseUrl) {
       const normalized = normalizeCloudflareUrl(row.apiBaseUrl);
       if (normalized) {
-        const apiKey = row.apiKey || process.env.CLOUDFLARE_API_TOKEN;
-        if (apiKey) {
-          return {
-            apiBaseUrl: normalized.apiBaseUrl,
-            mode: normalized.mode,
-            apiKey,
-            ttsModel: row.defaultTtsModel || undefined,
-            sttModel: row.defaultSttModel || undefined,
-            llmModel: row.defaultLlmModel || undefined,
-          };
-        }
+        const apiKey = savedToken || process.env.CLOUDFLARE_API_TOKEN?.trim();
+        if (apiKey) return { apiBaseUrl: normalized.apiBaseUrl, mode: normalized.mode, apiKey, ...models };
       }
     }
   }
-  return cloudflareEndpointFromEnv();
+  // Previously a token saved without an account URL was ignored here, so
+  // replacing the Cloudflare key in Settings kept using the deployment's token.
+  const fromEnv = cloudflareEndpointFromEnv(savedToken);
+  return fromEnv ? { ...fromEnv, ...models } : null;
 }
 
 /**
@@ -190,15 +211,16 @@ export function redactProviderApiKey<T extends { apiKey?: string | null }>(row: 
  * Environment variable that supplies each provider's key when one has not been
  * saved in the app.
  */
-export const PROVIDER_ENV_KEYS: Record<ProviderId, string> = {
+export const PROVIDER_ENV_KEYS: Record<BuiltInProviderId, string> = {
   ElevenLabs: "ELEVENLABS_API_KEY",
   Deepgram: "DEEPGRAM_API_KEY",
   OpenAI: "OPENAI_API_KEY",
   Cloudflare: "CLOUDFLARE_API_TOKEN",
   "Fish Audio": "FISH_AUDIO_API_KEY",
+  Gradium: "GRADIUM_API_KEY",
 };
 
-const ALL_PROVIDERS = Object.keys(PROVIDER_ENV_KEYS) as ProviderId[];
+const ALL_PROVIDERS: readonly BuiltInProviderId[] = BUILT_IN_PROVIDERS;
 
 export type ProviderKeySource = "app" | "environment";
 
@@ -206,6 +228,16 @@ export type ProviderKeyState = {
   apiKey: string | null;
   source: ProviderKeySource | null;
 };
+
+/**
+ * The last four characters of a key, so the user can tell which key is in use
+ * without the key ever reaching the browser. Short keys get no hint at all.
+ */
+export function keyHint(key?: string | null): string | undefined {
+  const trimmed = key?.trim();
+  if (!trimmed) return undefined;
+  return trimmed.length >= 16 ? `…${trimmed.slice(-4)}` : "…";
+}
 
 /**
  * Resolves every provider's key in one query.
@@ -217,13 +249,13 @@ export type ProviderKeyState = {
  * the provider still reported itself unconfigured and every request used the
  * (missing) environment value.
  */
-export async function providerKeyStates(ownerId?: number): Promise<Record<ProviderId, ProviderKeyState>> {
+export async function providerKeyStates(ownerId?: number): Promise<Record<BuiltInProviderId, ProviderKeyState>> {
   const states = Object.fromEntries(
     ALL_PROVIDERS.map(provider => {
       const fromEnv = process.env[PROVIDER_ENV_KEYS[provider]]?.trim();
       return [provider, fromEnv ? { apiKey: fromEnv, source: "environment" as const } : { apiKey: null, source: null }];
     }),
-  ) as Record<ProviderId, ProviderKeyState>;
+  ) as Record<BuiltInProviderId, ProviderKeyState>;
 
   const db = await getDb();
   if (!db) return states;
@@ -239,12 +271,12 @@ export async function providerKeyStates(ownerId?: number): Promise<Record<Provid
   return states;
 }
 
-export async function getProviderApiKey(provider: ProviderId, ownerId?: number): Promise<string | null> {
+export async function getProviderApiKey(provider: BuiltInProviderId, ownerId?: number): Promise<string | null> {
   return (await providerKeyStates(ownerId))[provider].apiKey;
 }
 
 /** Same, but with an error that tells the user where to put the key. */
-export async function requireProviderApiKey(provider: ProviderId, ownerId?: number): Promise<string> {
+export async function requireProviderApiKey(provider: BuiltInProviderId, ownerId?: number): Promise<string> {
   const key = await getProviderApiKey(provider, ownerId);
   if (!key) {
     throw new Error(
@@ -257,8 +289,11 @@ export async function requireProviderApiKey(provider: ProviderId, ownerId?: numb
 /**
  * Providers usable right now, from either an app-saved key or the environment.
  * Cloudflare additionally counts when an endpoint URL is configured.
+ *
+ * The user's own (custom) providers are included when they can do
+ * `capability`, or all of them when no capability is given.
  */
-export async function availableProviders(ownerId?: number): Promise<ProviderId[]> {
+export async function availableProviders(ownerId?: number, capability?: RoutingCapability): Promise<ProviderId[]> {
   const states = await providerKeyStates(ownerId);
   const available = new Set<ProviderId>(configuredProviders());
   for (const provider of ALL_PROVIDERS) {
@@ -266,6 +301,9 @@ export async function availableProviders(ownerId?: number): Promise<ProviderId[]
   }
   if (await getCloudflareEndpoint(ownerId)) available.add("Cloudflare");
   else available.delete("Cloudflare"); // a bare token is not enough without an account URL
+  for (const custom of await listCustomProviders(ownerId)) {
+    if (!capability || customProviderCapabilities(custom).includes(capability)) available.add(custom.id);
+  }
   return Array.from(available);
 }
 

@@ -44,6 +44,14 @@ export const MODEL_TEXT_LIMITS: Record<string, number> = {
   "gpt-4o-mini-tts": 3500,
   "tts-1": 3500,
   "tts-1-hd": 3500,
+  // Fish Audio: it chunks long text itself, but a shorter request retries cheaply.
+  "s2.1-pro": 1500,
+  "s2.1-pro-free": 1500,
+  "s2-pro": 1500,
+  s1: 1500,
+  // Gradium ("default" is its production model)
+  "gradium-tts-beta": 1500,
+  default: 1500,
 };
 
 /** Conservative ceiling for a model we have no specific figure for. */

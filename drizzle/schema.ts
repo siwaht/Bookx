@@ -54,8 +54,8 @@ export const bookxProjects = sqliteTable("bookxProjects", {
   soundEffectsEnabled: integer("soundEffectsEnabled").notNull().default(0),
   /** Short, soft mood swells at scene openings. */
   backgroundMusicEnabled: integer("backgroundMusicEnabled").notNull().default(0),
-  /** "very-subtle" or "subtle"; sets the level of every cue under the voice. */
-  soundLevel: text("soundLevel").notNull().default("very-subtle"),
+  /** "ultra-subtle", "extra-subtle" or "subtle"; sets the level of every cue under the voice. */
+  soundLevel: text("soundLevel").notNull().default("extra-subtle"),
   /** "auto" (ElevenLabs when connected, else built-in), "elevenlabs" or "builtin". */
   soundSource: text("soundSource").notNull().default("auto"),
 
@@ -268,6 +268,10 @@ export type ExportDetail = {
   output?: ExportOutput;
   /** The optional single file for the whole book. */
   fullBook?: { storageKey: string; fileName: string; bytes: number; durationMs: number } | null;
+  /** The opening and closing credits files, when they were narrated. */
+  credits?: { opening?: { storageKey: string; fileName: string; bytes: number; durationMs: number } | null; closing?: { storageKey: string; fileName: string; bytes: number; durationMs: number } | null } | null;
+  /** The retail sample file, when one was cut. */
+  retailSample?: { storageKey: string; fileName: string; bytes: number; durationMs: number } | null;
   segmentGapMs?: number;
   chapterGapMs?: number;
   /** Things the creator should know about this package; none of them stopped it. */
@@ -276,6 +280,8 @@ export type ExportDetail = {
   progress?: { done: number; total: number; stage: string };
   /** Present when background sounds or music were mixed in. */
   soundDesign?: { effects: boolean; music: boolean; level: string; cues: number; encoding: string };
+  /** Measured quality of the delivered files against the audiobook standard. */
+  quality?: { noiseFloorDb?: number | null; checkedFiles?: number };
 };
 
 export const bookxExports = sqliteTable("bookxExports", {
@@ -309,9 +315,18 @@ export const bookxProviderSettings = sqliteTable("bookxProviderSettings", {
   fallbackEnabled: integer("fallbackEnabled").notNull().default(0),
   apiBaseUrl: text("apiBaseUrl"),
   apiKey: text("apiKey"),
+  /** Display name of a provider the user added themselves (`custom:*` rows). */
+  label: text("label"),
+  /** Provider-specific settings, such as the voices a custom provider offers. */
+  options: text("options", { mode: "json" }).$type<ProviderOptions>(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, table => [index("bookxProviderSettings_owner_idx").on(table.ownerId, table.provider)]);
+
+export type ProviderOptions = {
+  /** Voice names a custom (OpenAI-compatible) provider accepts. */
+  voices?: string[];
+};
 
 export const bookxStudioAssets = sqliteTable("bookxStudioAssets", {
   id: text("id").primaryKey(),
@@ -406,6 +421,18 @@ export const bookxTimelineClips = sqliteTable("bookxTimelineClips", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, table => [index("bookxTimelineClips_project_idx").on(table.projectId)]);
+
+/**
+ * The app's own settings, keyed by a fixed single row (id = 1). Holds the
+ * salted scrypt hash of the one account's password, so the configured
+ * password is never stored in the database in plain form.
+ */
+export const appSettings = sqliteTable("appSettings", {
+  id: integer("id").primaryKey(),
+  /** `scrypt$<salt-hex>$<hash-hex>` for the single sign-in account. */
+  signinHash: text("signinHash"),
+  updatedAt: updatedAt(),
+});
 
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;

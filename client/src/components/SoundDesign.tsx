@@ -11,7 +11,7 @@ import { trpc } from "@/lib/trpc";
  * toggle is the whole workflow; the cue list is there to fine-tune.
  */
 
-type SoundLevel = "very-subtle" | "subtle";
+type SoundLevel = "ultra-subtle" | "extra-subtle" | "subtle";
 type SoundSource = "auto" | "elevenlabs" | "builtin";
 type JobStatus = "idle" | "queued" | "running" | "completed" | "failed" | "cancelled";
 
@@ -20,8 +20,9 @@ const isRunning = (status?: JobStatus) => status === "queued" || status === "run
 const GAIN_STEPS = [-12, -6, -3, 0, 3, 6];
 
 const LEVELS: Array<[SoundLevel, string, string]> = [
-  ["very-subtle", "Very subtle", "You sense something passed. About 24 dB under the voice."],
-  ["subtle", "Subtle", "A little more present, still well under the voice (about 18 dB)."],
+  ["subtle", "Subtle", "The most present of the three, still well under the voice (about 18 dB)."],
+  ["extra-subtle", "Extra subtle", "You sense it more than you hear it. About 24 dB under the voice."],
+  ["ultra-subtle", "Ultra subtle", "Barely there, a felt atmosphere. About 30 dB under the voice."],
 ];
 
 const SOURCES: Array<[SoundSource, string, string]> = [

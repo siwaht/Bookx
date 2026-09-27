@@ -1,3 +1,5 @@
+import { isCustomProviderId } from "../shared/providers";
+import { getCustomProvider } from "./customProviders";
 import type { ProviderId } from "./providerRouting";
 import { AURA_2_SPEAKERS, getCloudflareEndpoint, getProviderApiKey } from "./providerCredentials";
 
@@ -191,8 +193,111 @@ async function elevenLabsCatalog(ownerId?: number): Promise<CatalogVoice[]> {
   return result;
 }
 
+// ---------------------------------------------------------------------------
+// Fish Audio
+// ---------------------------------------------------------------------------
+
+type FishAudioModel = { _id?: string; title?: string; description?: string; type?: string; state?: string; tags?: string[]; languages?: string[] };
+
+/** A Fish Audio voice model as a catalog voice; tags carry gender and age when set. */
+export function fishAudioVoiceToCatalog(model: FishAudioModel, own: boolean): CatalogVoice | null {
+  if (!model._id || !model.title || (model.type && model.type !== "tts") || (model.state && model.state !== "trained")) return null;
+  const tags = (model.tags ?? []).map(tag => String(tag));
+  const gender = tags.map(normalizeVoiceGender).find(Boolean);
+  const age = tags.map(normalizeVoiceAge).find(Boolean);
+  const languages = (model.languages ?? []).join(", ");
+  const description = [model.description?.trim(), languages && `Languages: ${languages}`, own ? "Your voice" : undefined].filter(Boolean).join(" · ");
+  return { id: model._id, label: model.title, description: description.slice(0, 240) || "Fish Audio voice", provider: "Fish Audio", gender, age };
+}
+
+/** Fish Audio's documented example voice, offered until the account's voices load. */
+const FISH_AUDIO_FALLBACK: CatalogVoice[] = [
+  { id: "9a9cf47702da476aa4629e2506d4a857", label: "Hannah", description: "Fish Audio's example voice", provider: "Fish Audio", gender: "female", age: "adult" },
+];
+
+const DISCOVERY_CACHE_MS = 5 * 60 * 1000;
+const discoveryCache = new Map<string, { at: number; voices: CatalogVoice[] }>();
+
+async function cachedDiscovery(cacheKey: string, load: () => Promise<CatalogVoice[]>): Promise<CatalogVoice[]> {
+  const cached = discoveryCache.get(cacheKey);
+  if (cached && Date.now() - cached.at < DISCOVERY_CACHE_MS) return cached.voices;
+  const voices = await load();
+  if (discoveryCache.size > 200) discoveryCache.clear();
+  discoveryCache.set(cacheKey, { at: Date.now(), voices });
+  return voices;
+}
+
+/** The account's own voices first, then Fish Audio's licensed public voices. */
+async function fishAudioCatalog(ownerId?: number): Promise<CatalogVoice[]> {
+  const key = await getProviderApiKey("Fish Audio", ownerId);
+  if (!key) return FISH_AUDIO_FALLBACK;
+  return cachedDiscovery(`fish:${ownerId ?? "env"}:${key.slice(-6)}`, async () => {
+    const list = async (query: string, own: boolean) => {
+      const response = await fetch(`https://api.fish.audio/model?${query}`, { headers: { Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) throw new Error(`Fish Audio voice discovery returned HTTP ${response.status}`);
+      const payload = await response.json() as { items?: FishAudioModel[] };
+      return (payload.items ?? []).map(model => fishAudioVoiceToCatalog(model, own)).filter((voice): voice is CatalogVoice => Boolean(voice));
+    };
+    const [own, shared] = await Promise.all([
+      list("self=true&page_size=100", true),
+      list("page_size=60&sort_by=score&licensed=true", false).catch(() => [] as CatalogVoice[]),
+    ]);
+    const seen = new Set<string>();
+    const voices = [...own, ...shared].filter(voice => (seen.has(voice.id) ? false : (seen.add(voice.id), true)));
+    return voices.length ? voices : FISH_AUDIO_FALLBACK;
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Gradium
+// ---------------------------------------------------------------------------
+
+type GradiumVoice = { uid?: string; name?: string; description?: string | null; language?: string | null; is_catalog?: boolean; tags?: Array<{ category?: string | null; value?: string }> };
+
+export function gradiumVoiceToCatalog(voice: GradiumVoice): CatalogVoice | null {
+  if (!voice.uid || !voice.name) return null;
+  const tags = voice.tags ?? [];
+  const tagValue = (category: string) => tags.find(tag => tag.category?.toLowerCase() === category)?.value;
+  const gender = normalizeVoiceGender(tagValue("gender")) ?? tags.map(tag => normalizeVoiceGender(tag.value)).find(Boolean);
+  const age = normalizeVoiceAge(tagValue("age")) ?? tags.map(tag => normalizeVoiceAge(tag.value)).find(Boolean);
+  const accent = tagValue("accent") ?? tagValue("country") ?? undefined;
+  const description = [voice.description?.trim(), voice.language && `Language: ${voice.language}`, voice.is_catalog === false ? "Your voice" : undefined].filter(Boolean).join(" · ");
+  return { id: voice.uid, label: voice.name, description: description.slice(0, 240) || "Gradium voice", provider: "Gradium", gender, age, accent };
+}
+
+/** A few of Gradium's flagship English voices, offered until the account's voices load. */
+const GRADIUM_FALLBACK: CatalogVoice[] = [
+  { id: "YTpq7expH9539ERJ", label: "Gradium default", description: "Gradium's example voice", provider: "Gradium" },
+  { id: "POBHtemksfWQbng0", label: "Garrett", description: "Smooth, low-pitched, calm confidence · American male voice", provider: "Gradium", gender: "male", age: "adult", accent: "American" },
+  { id: "4SZHfMpw-p46Ywgs", label: "Harper", description: "Modern, confident and friendly · American female voice", provider: "Gradium", gender: "female", age: "adult", accent: "American" },
+  { id: "6MFfc37kq0sBjBjy", label: "Sterling", description: "Warm, energetic, theatrical · American male voice", provider: "Gradium", gender: "male", age: "adult", accent: "American" },
+  { id: "4rdlkbxRv4m3UQTW", label: "Tilly", description: "Bright and welcoming · British female voice", provider: "Gradium", gender: "female", age: "adult", accent: "British" },
+  { id: "CF0NgaMwHMMrHZn0", label: "Reuben", description: "Confident and upbeat · British male voice", provider: "Gradium", gender: "male", age: "adult", accent: "British" },
+  { id: "gqn4ytOULe-TQfjl", label: "Saoirse", description: "Warm, natural, expressive · Irish female voice", provider: "Gradium", gender: "female", age: "adult", accent: "Irish" },
+  { id: "I7GYfpcKbafFrYUv", label: "Declan", description: "Calm and steady · Irish male voice", provider: "Gradium", gender: "male", age: "adult", accent: "Irish" },
+];
+
+async function gradiumCatalog(ownerId?: number): Promise<CatalogVoice[]> {
+  const key = await getProviderApiKey("Gradium", ownerId);
+  if (!key) return GRADIUM_FALLBACK;
+  return cachedDiscovery(`gradium:${ownerId ?? "env"}:${key.slice(-6)}`, async () => {
+    const response = await fetch("https://api.gradium.ai/api/voices/?include_catalog=true&limit=200", { headers: { "x-api-key": key }, signal: AbortSignal.timeout(15_000) });
+    if (!response.ok) throw new Error(`Gradium voice discovery returned HTTP ${response.status}`);
+    const payload = await response.json() as GradiumVoice[] | { voices?: GradiumVoice[] };
+    const list = Array.isArray(payload) ? payload : payload.voices ?? [];
+    const voices = list.map(gradiumVoiceToCatalog).filter((voice): voice is CatalogVoice => Boolean(voice));
+    // The account's own voices first.
+    voices.sort((left, right) => Number(right.description.includes("Your voice")) - Number(left.description.includes("Your voice")));
+    return voices.length ? voices : GRADIUM_FALLBACK;
+  });
+}
+
 /** Every voice a project using `provider` can be cast with. */
 export async function voiceCatalogFor(provider: string, ownerId?: number): Promise<CatalogVoice[]> {
+  if (isCustomProviderId(provider)) {
+    const custom = await getCustomProvider(provider, ownerId);
+    return (custom?.voices ?? []).map(voice => ({ id: voice, label: voice, description: `${custom!.label} voice`, provider }));
+  }
   switch (provider) {
     case "ElevenLabs":
       return elevenLabsCatalog(ownerId);
@@ -204,6 +309,10 @@ export async function voiceCatalogFor(provider: string, ownerId?: number): Promi
       return deepgramCatalog();
     case "OpenAI":
       return openAiCatalog();
+    case "Fish Audio":
+      return fishAudioCatalog(ownerId);
+    case "Gradium":
+      return gradiumCatalog(ownerId);
     default:
       return STARTER_VOICES.map(voice => ({ ...voice, provider: provider as ProviderId }));
   }

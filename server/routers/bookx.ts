@@ -23,6 +23,7 @@ import { assignProjectVoices, startCastAnalysis } from "../castAnalysis";
 import { previewChapterSound, previewSoundCue, soundDesignOverview, soundSettings, startScenePlan, startSoundPreparation } from "../soundDesign";
 import { isSoundTag } from "../soundLibrary";
 import { projectSetupSchema } from "../../shared/bookx";
+import { providerIdSchema, type ProviderId } from "../../shared/providers";
 import { forEachChunk, getDb, insertMany, projectChapterIds, runBatched } from "../db";
 import { chapterBodySchema, splitOversizedChapters } from "../chapterLimits";
 import { protectedProcedure, router } from "../_core/trpc";
@@ -114,7 +115,7 @@ export function resolveNarrationVoice(input: { explicitVoiceId?: string; charact
   return input.explicitVoiceId || input.characterVoiceId || undefined;
 }
 
-export function resolveNarrationPlan(input: { provider: "ElevenLabs" | "OpenAI" | "Deepgram" | "Cloudflare"; explicitVoiceId?: string; characterVoiceId?: string | null; requestedModel?: string; projectModel: string }) {
+export function resolveNarrationPlan(input: { provider: ProviderId; explicitVoiceId?: string; characterVoiceId?: string | null; requestedModel?: string; projectModel: string }) {
   return {
     provider: input.provider,
     voiceId: resolveNarrationVoice({ explicitVoiceId: input.explicitVoiceId, characterVoiceId: input.characterVoiceId }),
@@ -613,7 +614,7 @@ export const bookxRouter = router({
     projectId: z.string(),
     effects: z.boolean().optional(),
     music: z.boolean().optional(),
-    level: z.enum(["very-subtle", "subtle"]).optional(),
+    level: z.enum(["ultra-subtle", "extra-subtle", "subtle"]).optional(),
     source: z.enum(["auto", "elevenlabs", "builtin"]).optional(),
   })).mutation(async ({ ctx, input }) => {
     const { db } = await requireProject(ctx.user.id, input.projectId);
@@ -687,7 +688,7 @@ export const bookxRouter = router({
     return ensureChapterSegments({ projectId: input.projectId, chapterIds: input.chapterIds, model: project.voiceModel });
   }),
 
-  previewCharacterVoice: protectedProcedure.input(z.object({ projectId: z.string(), characterId: z.string(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"]), voiceId: z.string().min(1).max(160).optional(), model: z.string().max(160).optional() })).mutation(async ({ ctx, input }) => {
+  previewCharacterVoice: protectedProcedure.input(z.object({ projectId: z.string(), characterId: z.string(), provider: providerIdSchema, voiceId: z.string().min(1).max(160).optional(), model: z.string().max(160).optional() })).mutation(async ({ ctx, input }) => {
     const { db, project } = await requireProject(ctx.user.id, input.projectId);
     const [character] = await db.select().from(bookxCharacters).where(and(eq(bookxCharacters.id, input.characterId), eq(bookxCharacters.projectId, input.projectId))).limit(1);
     if (!character) throw new Error("Character not found");
@@ -701,13 +702,13 @@ export const bookxRouter = router({
     return { ...generated, characterId: character.id, voiceId };
   }),
 
-  previewVoice: protectedProcedure.input(z.object({ projectId: z.string(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"]), voiceId: z.string().min(1).max(160), model: z.string().max(160).optional(), text: z.string().trim().min(1).max(600) })).mutation(async ({ ctx, input }) => {
+  previewVoice: protectedProcedure.input(z.object({ projectId: z.string(), provider: providerIdSchema, voiceId: z.string().min(1).max(160), model: z.string().max(160).optional(), text: z.string().trim().min(1).max(600) })).mutation(async ({ ctx, input }) => {
     const { project } = await requireProject(ctx.user.id, input.projectId);
     const generated = await synthesizeNarration({ projectId: input.projectId, provider: input.provider, text: input.text, voiceId: input.voiceId, model: input.model || project.voiceModel, ownerId: ctx.user.id });
     return { ...generated, voiceId: input.voiceId };
   }),
 
-  generateNarrationClip: protectedProcedure.input(z.object({ projectId: z.string(), segmentId: z.string().optional(), characterId: z.string().optional(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"]), text: z.string().min(1).max(4000), voiceId: z.string().max(160).optional(), model: z.string().max(160).optional() })).mutation(async ({ ctx, input }) => {
+  generateNarrationClip: protectedProcedure.input(z.object({ projectId: z.string(), segmentId: z.string().optional(), characterId: z.string().optional(), provider: providerIdSchema, text: z.string().min(1).max(4000), voiceId: z.string().max(160).optional(), model: z.string().max(160).optional() })).mutation(async ({ ctx, input }) => {
     const { db, project } = await requireProject(ctx.user.id, input.projectId);
     const [character] = input.characterId
       ? await db.select().from(bookxCharacters).where(and(eq(bookxCharacters.id, input.characterId), eq(bookxCharacters.projectId, input.projectId))).limit(1)
@@ -729,7 +730,7 @@ export const bookxRouter = router({
     }
   }),
 
-  transcribeAudioClip: protectedProcedure.input(z.object({ projectId: z.string(), provider: z.enum(["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare", "Fish Audio"]), model: z.string().max(160).optional(), audioStorageKey: z.string().min(1).max(512), language: z.string().max(40).optional() })).mutation(async ({ ctx, input }) => {
+  transcribeAudioClip: protectedProcedure.input(z.object({ projectId: z.string(), provider: providerIdSchema, model: z.string().max(160).optional(), audioStorageKey: z.string().min(1).max(512), language: z.string().max(40).optional() })).mutation(async ({ ctx, input }) => {
     await requireProject(ctx.user.id, input.projectId);
     const { projectId: _projectId, ...route } = input;
     return transcribeAudioRoute({ ...route, ownerId: ctx.user.id });

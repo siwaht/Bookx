@@ -197,6 +197,26 @@ export function ExportPackage({ projectId, canExport, disabledReason }: { projec
                 label="Also make one file for the whole book"
                 detail={output.container === "mp3" ? "With chapter markers, for players and podcasts. Distributors want the chapter files." : "Handy for listening; distributors want the chapter files."}
               />
+              <Toggle
+                checked={output.credits}
+                disabled={passthrough}
+                onChange={value => tweak({ credits: value })}
+                label="Narrate opening and closing credits"
+                detail="ACX requires them: the title, author and narrator at the start, and a closing that says the book has ended."
+              />
+              <Toggle
+                checked={output.chapterHeaders}
+                disabled={passthrough}
+                onChange={value => tweak({ chapterHeaders: value })}
+                label="Speak each chapter's title at the start of its file"
+                detail="ACX requires each file to open with its section header, so a listener landing on any file knows where they are."
+              />
+              <Toggle
+                checked={output.retailSample}
+                onChange={value => tweak({ retailSample: value })}
+                label="Cut a retail sample (first 5 minutes)"
+                detail="What Apple Books and Spotify play to a shopper. Taken from the opening of the first chapter."
+              />
             </div>
           </Card>
 

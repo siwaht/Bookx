@@ -5,6 +5,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import {
   bookxChapters,
+  bookxCharacters,
   bookxExports,
   bookxProjects,
   bookxProviderSettings,
@@ -26,7 +27,17 @@ import {
 import { getDb } from "./db";
 import { assembleAudio, buildSilentMp3, scanMp3, scanWav, wavHeader } from "./audioAssembly";
 import { bookMetadata, buildId3Tag, encodeChapter, joinBookFiles, measureBuffer, writeSilence } from "./exportEncoder";
-import { resolveFfmpeg } from "./ffmpeg";
+import { measureNoiseFloor, resolveFfmpeg, withTempDir } from "./ffmpeg";
+import {
+  CLOSING_CREDITS_FILE_NAME,
+  OPENING_CREDITS_FILE_NAME,
+  RETAIL_SAMPLE_FILE_NAME,
+  RETAIL_SAMPLE_MAX_MS,
+  chapterHeaderText,
+  closingCreditsText,
+  openingCreditsText,
+} from "../shared/audiobookExtras";
+import { renderSegmentAudio } from "./ttsRender";
 import { includedChapters, loadPlannableSegments } from "./narrationWorker";
 import { chapterAudioStates, isExportableState, orderSegments, type ChapterAudioState, type ChapterAudioStatus, type PlannableSegment } from "./narrationPlan";
 import { assembleAndMixChapter, enabledKinds, prepareExportSoundDesign, soundSettings, type ChapterPart, type ExportSoundDesign } from "./soundDesign";
@@ -48,6 +59,10 @@ import { exportZipPlan, type ZipEntry } from "../shared/exportZip";
 const DEFAULT_SEGMENT_GAP_MS = 350;
 /** Pause between chapters in the whole-book file, overridden by the saved provider preference. */
 const DEFAULT_CHAPTER_GAP_MS = 2000;
+/** Pause between a narrated chapter header and the chapter's first line. */
+const HEADER_GAP_MS = 2500;
+/** ACX's noise-floor ceiling, in dB RMS. */
+const NOISE_FLOOR_MAX_DB = -60;
 
 type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 type ProjectRow = typeof bookxProjects.$inferSelect;
@@ -303,6 +318,104 @@ function passthroughSilence(sample: Buffer, container: "mp3" | "wav", ms: number
   return Buffer.concat([wavHeader(format, bytes), Buffer.alloc(bytes, format.bitsPerSample === 8 ? 0x80 : 0)]);
 }
 
+// ---------------------------------------------------------------------------
+// Narrated extras: credits, chapter headers, retail sample
+// ---------------------------------------------------------------------------
+
+/** The narrator's voice for the book's own announcements. A project that has
+ * never run cast analysis has no narrator character, in which case the
+ * credits use the project's own voice: the one every segment is rendered in. */
+async function narratorVoiceId(db: Db, project: ProjectRow): Promise<string | null> {
+  const [narrator] = await db
+    .select({ voiceId: bookxCharacters.voiceId })
+    .from(bookxCharacters)
+    .where(and(eq(bookxCharacters.projectId, project.id), eq(bookxCharacters.isNarrator, 1)))
+    .limit(1);
+  return narrator?.voiceId ?? null;
+}
+
+/** The narrator's name as it should be spoken in the credits. */
+async function narratorName(db: Db, projectId: string): Promise<string | null> {
+  const [narrator] = await db
+    .select({ name: bookxCharacters.name })
+    .from(bookxCharacters)
+    .where(and(eq(bookxCharacters.projectId, projectId), eq(bookxCharacters.isNarrator, 1)))
+    .limit(1);
+  // "Narrator" is a placeholder, not a name anyone wants spoken aloud.
+  const name = narrator?.name?.trim();
+  return name && !/^narrator$/i.test(name) ? name : null;
+}
+
+/** Renders one short announcement with the book's narrator voice. */
+async function renderAnnouncement(input: {
+  projectId: string;
+  ownerId: number;
+  provider: string;
+  model: string;
+  voiceId: string | null;
+  text: string;
+  label: string;
+}): Promise<Buffer> {
+  const result = await renderSegmentAudio({
+    projectId: input.projectId,
+    segmentId: `credits-${nanoid(8)}`,
+    provider: input.provider as Parameters<typeof renderSegmentAudio>[0]["provider"],
+    model: input.model,
+    voiceId: input.voiceId,
+    text: input.text,
+    ownerId: input.ownerId,
+    requestTimeoutMs: 120_000,
+  });
+  return fetchStoredAudio(result.storageKey, input.label);
+}
+
+/** Encodes an announcement into the delivery format, like a chapter. */
+async function encodeAnnouncement(input: {
+  audio: Buffer;
+  durationMs: number;
+  output: ExportOutput;
+  tags: { title: string; album: string; artist?: string | null; track: number; totalTracks: number };
+}): Promise<{ buffer: Buffer; durationMs: number; rmsDb: number | null; peakDb: number | null }> {
+  if (isPassthrough(input.output)) {
+    const levels = await measureBuffer(input.audio, input.audio.subarray(0, 4).toString("latin1") === "RIFF" ? "wav" : "mp3").catch(() => null);
+    return { buffer: input.audio, durationMs: input.durationMs, rmsDb: levels?.rmsDb ?? null, peakDb: levels?.peakDb ?? null };
+  }
+  const encoded = await encodeChapter({ audio: input.audio, durationMs: input.durationMs, output: input.output, tags: input.tags });
+  return { buffer: encoded.buffer, durationMs: encoded.durationMs, rmsDb: encoded.rmsDb, peakDb: encoded.peakDb };
+}
+
+/** Cuts the retail sample: the opening of the first chapter, capped at five minutes. */
+async function buildRetailSample(input: {
+  firstChapter: { buffer: Buffer; ext: "mp3" | "wav" | "flac"; durationMs: number } | null;
+  output: ExportOutput;
+}): Promise<{ buffer: Buffer; durationMs: number } | null> {
+  if (!input.firstChapter || input.firstChapter.durationMs <= 0) return null;
+  if (input.firstChapter.durationMs <= RETAIL_SAMPLE_MAX_MS) {
+    // The chapter is already short enough to be the sample as it is.
+    return { buffer: input.firstChapter.buffer, durationMs: input.firstChapter.durationMs };
+  }
+  return withTempDir(async dir => {
+    const source = path.join(dir, `sample-source.${input.firstChapter!.ext}`);
+    await writeFile(source, input.firstChapter!.buffer);
+    const target = path.join(dir, `sample.${input.output.container}`);
+    await runFfmpegCut(source, target, input.output);
+    const buffer = await readFile(target);
+    return { buffer, durationMs: RETAIL_SAMPLE_MAX_MS };
+  });
+}
+
+/** ffmpeg arguments that trim a file to the sample length in its own format. */
+async function runFfmpegCut(source: string, target: string, output: ExportOutput): Promise<void> {
+  const { runFfmpeg } = await import("./ffmpeg");
+  const seconds = (RETAIL_SAMPLE_MAX_MS / 1000).toFixed(3);
+  const codec = output.container === "mp3"
+    ? ["-c:a", "libmp3lame", "-b:a", `${output.mp3Bitrate === "original" ? 192 : output.mp3Bitrate}k`]
+    : output.container === "wav"
+      ? ["-c:a", output.bitDepth === 24 ? "pcm_s24le" : "pcm_s16le"]
+      : ["-c:a", "flac"];
+  await runFfmpeg(["-i", source, "-t", seconds, "-map", "0:a", "-map_metadata", "-1", ...codec, "-ar", String(output.sampleRate), "-ac", output.channels === "stereo" ? "2" : "1", "-f", output.container, target]);
+}
+
 async function updateProgress(db: Db, exportId: string, detail: ExportDetail) {
   await db.update(bookxExports).set({ detail, updatedAt: new Date() }).where(eq(bookxExports.id, exportId));
 }
@@ -374,6 +487,54 @@ export async function assembleProjectExport(input: {
   let mixedCues = 0;
   let bytes = 0;
 
+  // The narrator's voice and name, for the book's own announcements. Both are
+  // best effort: a project with no narrator character simply skips the extras.
+  const creditsVoice = input.output.credits || input.output.chapterHeaders ? await narratorVoiceId(db, project).catch(() => null) : null;
+  const creditsName = input.output.credits ? await narratorName(db, project.id).catch(() => null) : null;
+  const creditsInput = { title: project.title, author: project.author, narrator: creditsName };
+  const openingText = input.output.credits ? openingCreditsText(creditsInput) : "";
+  const closingText = input.output.credits ? closingCreditsText(creditsInput) : "";
+  const canNarrateExtras = Boolean(openingText || closingText || input.output.chapterHeaders) && ffmpegAvailable;
+  const extrasWarnings: string[] = [];
+
+  let openingCreditsFile: { storageKey: string; fileName: string; bytes: number; durationMs: number } | null = null;
+  let closingCreditsFile: { storageKey: string; fileName: string; bytes: number; durationMs: number } | null = null;
+  if (canNarrateExtras && openingText) {
+    try {
+      detail.progress = { done: 0, total: chapters.length, stage: "Narrating the opening credits" };
+      await updateProgress(db, input.exportId, detail);
+      const audio = await renderAnnouncement({
+        projectId: project.id, ownerId: input.ownerId, provider: project.voiceProvider, model: project.voiceModel,
+        voiceId: creditsVoice, text: openingText, label: "opening credits",
+      });
+      const encoded = await encodeAnnouncement({ audio, durationMs: 0, output: input.output, tags: { title: OPENING_CREDITS_FILE_NAME, album: project.title, artist: project.author, track: 0, totalTracks: chapters.length } });
+      const fileName = chapterFileName(0, chapters.length + 2, OPENING_CREDITS_FILE_NAME, container);
+      const stored = await storagePut(`bookx/${project.id}/export/${input.exportId}/credits-opening.${container}`, encoded.buffer, mimeTypeFor(container));
+      openingCreditsFile = { storageKey: stored.key, fileName, bytes: encoded.buffer.length, durationMs: encoded.durationMs };
+      bytes += encoded.buffer.length;
+    } catch (error) {
+      extrasWarnings.push(`Opening credits were skipped: ${error instanceof Error ? error.message : "they could not be narrated"}`);
+    }
+  }
+  if (canNarrateExtras && closingText) {
+    try {
+      detail.progress = { done: 0, total: chapters.length, stage: "Narrating the closing credits" };
+      await updateProgress(db, input.exportId, detail);
+      const audio = await renderAnnouncement({
+        projectId: project.id, ownerId: input.ownerId, provider: project.voiceProvider, model: project.voiceModel,
+        voiceId: creditsVoice, text: closingText, label: "closing credits",
+      });
+      const encoded = await encodeAnnouncement({ audio, durationMs: 0, output: input.output, tags: { title: CLOSING_CREDITS_FILE_NAME, album: project.title, artist: project.author, track: chapters.length + 1, totalTracks: chapters.length + 2 } });
+      const fileName = chapterFileName(chapters.length + 1, chapters.length + 2, CLOSING_CREDITS_FILE_NAME, container);
+      const stored = await storagePut(`bookx/${project.id}/export/${input.exportId}/credits-closing.${container}`, encoded.buffer, mimeTypeFor(container));
+      closingCreditsFile = { storageKey: stored.key, fileName, bytes: encoded.buffer.length, durationMs: encoded.durationMs };
+      bytes += encoded.buffer.length;
+    } catch (error) {
+      extrasWarnings.push(`Closing credits were skipped: ${error instanceof Error ? error.message : "they could not be narrated"}`);
+    }
+  }
+  warnings.push(...extrasWarnings);
+
   try {
     if (input.output.fullBook) workDir = await mkdtemp(path.join(os.tmpdir(), "bookx-export-"));
 
@@ -385,6 +546,28 @@ export async function assembleProjectExport(input: {
       const own = segments.filter(segment => segment.chapterId === chapter.id);
       const audio = await buildChapterAudio({ chapter, segments: own, design, passthrough, sharedTarget });
       mixedCues += audio.mixedCues;
+
+      // A narrated header opens the file, as ACX asks: the listener landing on
+      // any file knows where they are. Best effort, like the credits.
+      if (canNarrateExtras && input.output.chapterHeaders) {
+        const headerText = chapterHeaderText(chapter.title);
+        if (headerText) {
+          try {
+            const headerAudio = await renderAnnouncement({
+              projectId: project.id, ownerId: input.ownerId, provider: project.voiceProvider, model: project.voiceModel,
+              voiceId: creditsVoice, text: headerText, label: `${chapter.title} header`,
+            });
+            const header = assembleAudio(
+              [{ buffer: headerAudio, label: `${chapter.title} header`, gapAfterMs: HEADER_GAP_MS }, { buffer: audio.buffer, label: chapter.title, gapAfterMs: 0 }],
+              { gapMs: 0 },
+            );
+            audio.buffer = header.buffer;
+            audio.durationMs = header.durationMs;
+          } catch (error) {
+            warnings.push(`"${chapter.title}" was exported without its narrated header: ${error instanceof Error ? error.message : "the header could not be narrated"}`);
+          }
+        }
+      }
 
       const tags = { title: chapter.title, album: project.title, artist: project.author, track: index + 1, totalTracks: chapters.length };
       let file: { buffer: Buffer; ext: "mp3" | "wav" | "flac"; durationMs: number; rmsDb: number | null; peakDb: number | null };
@@ -442,6 +625,55 @@ export async function assembleProjectExport(input: {
     });
     const totalMs = Math.max(0, cursor - gapMs);
 
+    // The retail sample: the opening of the first chapter, capped at five
+    // minutes, which is what Apple Books and Spotify play to a shopper.
+    if (input.output.retailSample && detail.chapters!.length) {
+      try {
+        detail.progress = { done: chapters.length, total: chapters.length, stage: "Cutting the retail sample" };
+        await updateProgress(db, input.exportId, detail);
+        const first = detail.chapters![0]!;
+        const firstBuffer = await fetchStoredAudio(first.storageKey, "retail sample source");
+        const sample = await buildRetailSample({
+          firstChapter: { buffer: firstBuffer, ext: container, durationMs: first.durationMs },
+          output: input.output,
+        });
+        if (sample) {
+          const fileName = chapterFileName(0, chapters.length + 2, RETAIL_SAMPLE_FILE_NAME, container);
+          const stored = await storagePut(`bookx/${input.projectId}/export/${input.exportId}/sample.${container}`, sample.buffer, mimeTypeFor(container));
+          detail.retailSample = { storageKey: stored.key, fileName, bytes: sample.buffer.length, durationMs: sample.durationMs };
+          bytes += sample.buffer.length;
+        }
+      } catch (error) {
+        warnings.push(`The retail sample was skipped: ${error instanceof Error ? error.message : "it could not be cut"}`);
+      }
+    }
+
+    // Quality check: the noise floor of the delivered files, which ACX caps at
+    // -60 dB RMS. Measured on a few chapters, not all of them, so a long book
+    // does not spend minutes re-reading its own output.
+    if (ffmpegAvailable && detail.chapters!.length) {
+      try {
+        const checkCount = Math.min(3, detail.chapters!.length);
+        let worst: number | null = null;
+        for (let check = 0; check < checkCount; check++) {
+          const chapter = detail.chapters![Math.floor((check * detail.chapters!.length) / checkCount)]!;
+          const buffer = await fetchStoredAudio(chapter.storageKey, `noise check on ${chapter.title}`);
+          const floor = await withTempDir(async dir => {
+            const file = path.join(dir, `check.${container}`);
+            await writeFile(file, buffer);
+            return measureNoiseFloor(file);
+          });
+          if (floor.floorDb !== null && (worst === null || floor.floorDb > worst)) worst = floor.floorDb;
+        }
+        detail.quality = { noiseFloorDb: worst, checkedFiles: checkCount };
+        if (worst !== null && worst > NOISE_FLOOR_MAX_DB) {
+          warnings.push(`The noise floor measures ${worst.toFixed(1)} dB, above the ${NOISE_FLOOR_MAX_DB} dB ceiling ACX sets. A different voice or a noise-reduction pass will fix it.`);
+        }
+      } catch {
+        // A QC miss never blocks a finished package.
+      }
+    }
+
     let bookKey: string | null = null;
     if (workDir && bookFiles.length) {
       detail.progress = { done: chapters.length, total: chapters.length, stage: "Joining the whole book" };
@@ -474,6 +706,7 @@ export async function assembleProjectExport(input: {
     }
 
     detail.container = container;
+    detail.credits = { opening: openingCreditsFile, closing: closingCreditsFile };
     if (design && mixedCues > 0) {
       detail.soundDesign = {
         effects: design.settings.effects,
@@ -585,9 +818,22 @@ export async function getExportDownloadUrl(input: { projectId: string; ownerId: 
     return { url: await storageDownloadUrl(book.storageKey, book.fileName), fileName: book.fileName };
   }
   const chapter = detail.chapters?.find(entry => entry.chapterId === input.file);
-  if (!chapter) throw new Error("That chapter is not part of this package");
-  const fileName = chapter.fileName ?? `${chapter.title}.${detail.container ?? "mp3"}`;
-  return { url: await storageDownloadUrl(chapter.storageKey, fileName), fileName };
+  if (chapter) {
+    const fileName = chapter.fileName ?? `${chapter.title}.${detail.container ?? "mp3"}`;
+    return { url: await storageDownloadUrl(chapter.storageKey, fileName), fileName };
+  }
+  // The credits and the retail sample are files of the package too.
+  const extras: Array<{ key: string; file: { storageKey: string; fileName?: string } | null | undefined }> = [
+    { key: "credits-opening", file: detail.credits?.opening },
+    { key: "credits-closing", file: detail.credits?.closing },
+    { key: "sample", file: detail.retailSample },
+  ];
+  const extra = extras.find(entry => entry.key === input.file && entry.file);
+  if (extra?.file) {
+    const fileName = extra.file.fileName ?? `${extra.key}.${detail.container ?? "mp3"}`;
+    return { url: await storageDownloadUrl(extra.file.storageKey, fileName), fileName };
+  }
+  throw new Error("That file is not part of this package");
 }
 
 /** Deletes a package and its files. */

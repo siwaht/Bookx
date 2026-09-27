@@ -14,7 +14,7 @@
  */
 
 export type SoundKind = "sfx" | "music";
-export type SoundLevel = "very-subtle" | "subtle";
+export type SoundLevel = "ultra-subtle" | "extra-subtle" | "subtle";
 export type SoundSourceSetting = "auto" | "elevenlabs" | "builtin";
 export type SoundSource = "elevenlabs" | "builtin";
 
@@ -434,9 +434,13 @@ export const DEFAULT_MUSIC_TAG = "music-calm";
  * from poking out even though its average is low.
  */
 export const SOUND_LEVELS: Record<SoundLevel, Record<SoundKind, { meanDb: number; peakDb: number }>> = {
-  "very-subtle": { sfx: { meanDb: -24, peakDb: -10 }, music: { meanDb: -26, peakDb: -14 } },
+  "ultra-subtle": { sfx: { meanDb: -30, peakDb: -16 }, music: { meanDb: -32, peakDb: -20 } },
+  "extra-subtle": { sfx: { meanDb: -24, peakDb: -10 }, music: { meanDb: -26, peakDb: -14 } },
   subtle: { sfx: { meanDb: -18, peakDb: -4 }, music: { meanDb: -20, peakDb: -8 } },
 };
+
+/** A project's level when it is unset or holds a value from an older vocabulary. */
+export const DEFAULT_SOUND_LEVEL: SoundLevel = "extra-subtle";
 
 /**
  * How long a cue plays and how much room it needs.

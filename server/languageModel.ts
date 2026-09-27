@@ -133,7 +133,7 @@ export async function resolveLanguageModel(input: {
 
   let routing: { provider: ProviderId; fallback: boolean };
   try {
-    routing = resolveProvider(requested, "language-model", await availableProviders(input.ownerId));
+    routing = resolveProvider(requested, "language-model", await availableProviders(input.ownerId, "language-model"));
   } catch {
     return null;
   }

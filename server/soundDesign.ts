@@ -26,8 +26,8 @@ import { mixTargetFor, mixUnderNarration, type MixTarget } from "./soundMixer";
 import {
   cueStartMs,
   finalizeCuePlan,
-  isSoundLevel,
   keywordProposals,
+  normalizeSoundLevel,
   layoutChapterCues,
   parseScenePlanReply,
   renderForScenePlanning,
@@ -77,7 +77,7 @@ export function soundSettings(project: Pick<ProjectRow, "soundEffectsEnabled" | 
   return {
     effects: Boolean(project.soundEffectsEnabled),
     music: Boolean(project.backgroundMusicEnabled),
-    level: isSoundLevel(project.soundLevel) ? project.soundLevel : "very-subtle",
+    level: normalizeSoundLevel(project.soundLevel),
     source: project.soundSource === "elevenlabs" || project.soundSource === "builtin" ? project.soundSource : "auto",
   };
 }
