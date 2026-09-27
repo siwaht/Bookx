@@ -24,6 +24,12 @@ export const exportOutputSchema = z.object({
   master: z.boolean(),
   /** Also produce one file for the whole book. */
   fullBook: z.boolean(),
+  /** Narrate opening and closing credits files, as ACX requires. */
+  credits: z.boolean(),
+  /** Narrate each chapter's title at the start of its file, as ACX requires. */
+  chapterHeaders: z.boolean(),
+  /** Also produce the first five minutes as a retail sample file. */
+  retailSample: z.boolean(),
 });
 
 export type ExportOutput = z.infer<typeof exportOutputSchema>;
@@ -33,7 +39,10 @@ export type ExportPresetId = (typeof EXPORT_PRESET_IDS)[number];
 
 export type ExportPreset = { id: ExportPresetId; label: string; detail: string; output: ExportOutput };
 
-const base: ExportOutput = { container: "mp3", mp3Bitrate: 192, bitDepth: 16, sampleRate: 44100, channels: "stereo", master: true, fullBook: true };
+const base: ExportOutput = {
+  container: "mp3", mp3Bitrate: 192, bitDepth: 16, sampleRate: 44100, channels: "stereo", master: true, fullBook: true,
+  credits: true, chapterHeaders: true, retailSample: true,
+};
 
 export const EXPORT_PRESETS: ExportPreset[] = [
   {
@@ -49,7 +58,7 @@ export const EXPORT_PRESETS: ExportPreset[] = [
     id: "original",
     label: "Original",
     detail: "The provider's own MP3 frames joined without re-encoding. Fastest, but not levelled.",
-    output: { ...base, mp3Bitrate: "original", master: false, channels: "mono" },
+    output: { ...base, mp3Bitrate: "original", master: false, channels: "mono", credits: false, chapterHeaders: false, retailSample: false },
   },
 ];
 
@@ -82,6 +91,8 @@ export const AUDIOBOOK_STANDARD = {
   minRmsDb: -23,
   maxRmsDb: -18,
   maxPeakDb: -3,
+  /** ACX's noise-floor ceiling, in dB RMS. */
+  maxNoiseFloorDb: -60,
   /** Silence before the first word and after the last. */
   headMs: 750,
   tailMs: 2500,
@@ -93,6 +104,12 @@ export const AUDIOBOOK_STANDARD = {
 export function meetsAudiobookStandard(rmsDb: number | null | undefined, peakDb: number | null | undefined): boolean {
   if (rmsDb == null || peakDb == null) return false;
   return rmsDb >= AUDIOBOOK_STANDARD.minRmsDb && rmsDb <= AUDIOBOOK_STANDARD.maxRmsDb && peakDb <= AUDIOBOOK_STANDARD.maxPeakDb;
+}
+
+/** True when a measured noise floor sits under ACX's ceiling. */
+export function noiseFloorPasses(floorDb: number | null | undefined): boolean {
+  if (floorDb == null) return false;
+  return floorDb <= AUDIOBOOK_STANDARD.maxNoiseFloorDb;
 }
 
 /** A download name that is safe on every filesystem: "03 - The Storm at Harrow Pass.mp3". */

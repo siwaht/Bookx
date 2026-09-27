@@ -81,7 +81,7 @@ describe(`Bookx sound design`, () => {
 
       // Off by default: nothing to plan, nothing blocks an export.
       const initial = await owner.bookx.soundDesign({ projectId });
-      expect(initial.settings).toEqual({ effects: false, music: false, level: "very-subtle", source: "auto" });
+      expect(initial.settings).toEqual({ effects: false, music: false, level: "extra-subtle", source: "auto" });
       expect(await soundDesignReadiness((await getDb())!, await project(), 990_101)).toEqual({ ready: true });
 
       await owner.bookx.updateSoundSettings({ projectId, effects: true, music: true, source: "builtin" });

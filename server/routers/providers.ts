@@ -5,9 +5,11 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { bookxProviderSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { providerCapabilities, resolveProvider, type ProviderId, type RoutingCapability } from "../providerRouting";
-import { PROVIDER_ENV_KEYS, availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, isWebsocketOnlyCloudflareModel, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { PROVIDER_ENV_KEYS, availableProviders, cloudflareAccountIdFromUrl, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, isWebsocketOnlyCloudflareModel, keyHint, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { customProviderCapabilities, customProviderHeaders, deleteCustomProvider, listCustomProviders, providerUrlProblem, requireCustomProvider, saveCustomProvider } from "../customProviders";
 import { extractJson, languageModelText } from "../languageModel";
 import { rankCatalogVoices, voiceCatalogFor } from "../voiceCatalog";
+import { CUSTOM_PROVIDER_LIMITS, builtInProviderSchema, customProviderIdSchema, isCustomProviderId, providerIdSchema } from "../../shared/providers";
 
 export type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 
@@ -25,13 +27,22 @@ type ProviderCatalogItem = {
   status: "connected" | "available" | "optional";
   /** Whether the key came from the Settings screen or the environment. */
   keySource?: "app" | "environment";
+  /** The last characters of the key in use, so the user can tell keys apart. */
+  keyHint?: string;
+  /** Whether the deployment also supplies a key, which applies if the saved one is removed. */
+  environmentKey?: boolean;
   /** Set when live model discovery failed, so the UI can explain the short list. */
   discoveryError?: string;
   capabilities: ProviderCapability[];
   models: ProviderModel[];
+  /** Cloudflare: the account in use, and whether it was saved in the app. */
+  accountId?: string;
+  accountSource?: "app" | "environment";
+  /** A provider the user added: its settings, for the edit form (never its key). */
+  custom?: { baseUrl: string; ttsModel: string; sttModel: string; voices: string[] };
 };
 
-const providerId = z.enum(["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "Fish Audio"]);
+const providerId = providerIdSchema;
 const capability = z.enum(["text-to-speech", "speech-to-text", "language-model"]);
 
 const capabilities = (taskName: string): ProviderCapability[] => {
@@ -127,14 +138,48 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
   }
 
   /** Connection state plus where the key came from, so the UI can say so. */
-  const state = (provider: ProviderId) => {
+  const state = (provider: Exclude<ProviderId, `custom:${string}`>) => {
     const configured = Boolean(keys[provider].apiKey);
     return {
       configured,
       status: (configured ? "connected" : "available") as ProviderCatalogItem["status"],
       keySource: keys[provider].source ?? undefined,
+      keyHint: keyHint(keys[provider].apiKey),
+      // Whether removing a saved key falls back to one from the deployment.
+      environmentKey: Boolean(process.env[PROVIDER_ENV_KEYS[provider]]?.trim()),
     };
   };
+
+  // Which Cloudflare account is in use: one saved in Settings, else the deployment's.
+  const db = await getDb();
+  const savedCloudflare = db && ownerId != null
+    ? (await db.select().from(bookxProviderSettings).where(and(eq(bookxProviderSettings.ownerId, ownerId), eq(bookxProviderSettings.provider, "Cloudflare"))).limit(1))[0]
+    : undefined;
+  const savedAccount = cloudflareAccountIdFromUrl(savedCloudflare?.apiBaseUrl);
+  const envAccount = process.env.CLOUDFLARE_ACCOUNT_ID?.trim() || undefined;
+  const account = savedAccount
+    ? { accountId: savedAccount, accountSource: "app" as const }
+    : endpoint?.mode === "native" && envAccount
+      ? { accountId: envAccount, accountSource: "environment" as const }
+      : {};
+
+  const customProviders: ProviderCatalogItem[] = (await listCustomProviders(ownerId)).map(custom => {
+    const caps = customProviderCapabilities(custom);
+    const models: ProviderModel[] = [];
+    if (custom.ttsModel) models.push({ id: custom.ttsModel, label: custom.ttsModel, capabilities: ["text-to-speech"], detail: `${custom.voices.length} voice${custom.voices.length === 1 ? "" : "s"}` });
+    if (custom.sttModel) models.push({ id: custom.sttModel, label: custom.sttModel, capabilities: ["speech-to-text"], detail: "Transcription" });
+    return {
+      id: custom.id,
+      label: custom.label,
+      configured: caps.length > 0,
+      status: caps.length > 0 ? "connected" : "available",
+      keySource: custom.apiKey ? "app" : undefined,
+      keyHint: keyHint(custom.apiKey),
+      capabilities: caps,
+      models,
+      custom: { baseUrl: custom.baseUrl, ttsModel: custom.ttsModel ?? "", sttModel: custom.sttModel ?? "", voices: custom.voices },
+    };
+  });
 
   return [
     {
@@ -163,8 +208,12 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
       id: "Cloudflare", label: "Cloudflare Workers AI", configured: cloudflareConfigured,
       status: cloudflareConfigured ? "connected" : "available",
       keySource: keys.Cloudflare.source ?? undefined,
+      // The token actually used, which is the saved one when there is one.
+      keyHint: keyHint(endpoint?.apiKey ?? keys.Cloudflare.apiKey),
+      environmentKey: Boolean(envAccount && process.env.CLOUDFLARE_API_TOKEN?.trim()),
       discoveryError: cloudflareError,
       capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: cloudflare,
+      ...account,
     },
     {
       id: "OpenAI", label: "OpenAI", ...state("OpenAI"),
@@ -176,12 +225,36 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
       ],
     },
     {
-      // No longer hardcoded to unconfigured: a saved key now enables it like any
-      // other provider.
+      id: "OpenRouter", label: "OpenRouter", ...state("OpenRouter"),
+      capabilities: ["language-model"],
+      models: [
+        { id: "openai/gpt-4o-mini", label: "GPT-4o mini", capabilities: ["language-model"], detail: "Fast, affordable editorial planning" },
+        { id: "openai/gpt-4o", label: "GPT-4o", capabilities: ["language-model"], detail: "Balanced reasoning and analysis" },
+        { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", capabilities: ["language-model"], detail: "Thoughtful long-form analysis" },
+        { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash", capabilities: ["language-model"], detail: "Quick, capable reasoning" },
+        { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B", capabilities: ["language-model"], detail: "Open-weight reasoning" },
+      ],
+    },
+    {
       id: "Fish Audio", label: "Fish Audio", ...state("Fish Audio"),
       capabilities: ["text-to-speech", "speech-to-text"],
-      models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" }],
+      models: [
+        { id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" },
+        { id: "s2-pro", label: "S2 Pro", capabilities: ["text-to-speech"], detail: "Previous generation" },
+        { id: "s1", label: "S1", capabilities: ["text-to-speech"], detail: "Earlier model" },
+        { id: "s2.1-pro-free", label: "S2.1 Pro (free tier)", capabilities: ["text-to-speech"], detail: "Fish Audio's free developer tier" },
+        { id: "transcribe-1", label: "Transcribe 1", capabilities: ["speech-to-text"], detail: "File transcription" },
+      ],
     },
+    {
+      id: "Gradium", label: "Gradium", ...state("Gradium"),
+      capabilities: ["text-to-speech"],
+      models: [
+        { id: "default", label: "Gradium TTS", capabilities: ["text-to-speech"], detail: "Natural narration in English, French, German, Spanish and Portuguese" },
+        { id: "gradium-tts-beta", label: "Gradium TTS (beta)", capabilities: ["text-to-speech"], detail: "Newest model; may change" },
+      ],
+    },
+    ...customProviders,
   ];
 }
 
@@ -191,7 +264,7 @@ export type DiscoverableVoice = {
   id: string;
   label: string;
   description: string;
-  provider: "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio";
+  provider: ProviderId;
 };
 
 /** Keyword ranking over a voice list; kept under its old name for callers and tests. */
@@ -237,9 +310,14 @@ export const providersRouter = router({
    * `input.x || null`, so a caller that sent only a fallback policy silently
    * erased the saved endpoint URL and the custom model names alongside it.
    */
-  savePreference: protectedProcedure.input(z.object({ provider: providerId, defaultTtsModel: z.string().max(160).optional(), defaultSttModel: z.string().max(160).optional(), defaultLlmModel: z.string().max(160).optional(), fallbackProvider: providerId.optional(), fallbackEnabled: z.boolean().optional(), apiBaseUrl: z.union([z.string().url().max(255), z.literal("")]).optional(), apiKey: z.string().max(512).optional() })).mutation(async ({ ctx, input }) => {
+  savePreference: protectedProcedure.input(z.object({ provider: builtInProviderSchema, defaultTtsModel: z.string().max(160).optional(), defaultSttModel: z.string().max(160).optional(), defaultLlmModel: z.string().max(160).optional(), fallbackProvider: builtInProviderSchema.optional(), fallbackEnabled: z.boolean().optional(), apiBaseUrl: z.union([z.string().url().max(255), z.literal("")]).optional(), apiKey: z.string().max(512).optional() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new Error("Database unavailable");
+    // The server calls this address itself, so it gets the same checks as a custom provider's.
+    if (input.apiBaseUrl) {
+      const problem = providerUrlProblem(input.apiBaseUrl);
+      if (problem) throw new Error(problem);
+    }
     const [existing] = await db.select().from(bookxProviderSettings).where(and(eq(bookxProviderSettings.ownerId, ctx.user.id), eq(bookxProviderSettings.provider, input.provider))).limit(1);
 
     const values: Record<string, unknown> = { updatedAt: new Date() };
@@ -266,7 +344,51 @@ export const providersRouter = router({
     await db.insert(bookxProviderSettings).values({ id, ownerId: ctx.user.id, provider: input.provider, defaultModel: input.defaultTtsModel || null, defaultPace: null, chapterGapMs: 2000, fallbackEnabled: 0, ...values });
     return { id };
   }),
+  /**
+   * Removes the key saved in the app. A deployment key, if there is one, then
+   * takes over again. Cloudflare's saved account goes with its token.
+   */
+  removeKey: protectedProcedure.input(z.object({ provider: builtInProviderSchema })).mutation(async ({ ctx, input }) => {
+    const db = await getDb();
+    if (!db) throw new Error("Database unavailable");
+    const [existing] = await db.select().from(bookxProviderSettings).where(and(eq(bookxProviderSettings.ownerId, ctx.user.id), eq(bookxProviderSettings.provider, input.provider))).limit(1);
+    if (!existing) return { removed: false };
+    const values: Record<string, unknown> = { apiKey: null, updatedAt: new Date() };
+    if (input.provider === "Cloudflare" && cloudflareAccountIdFromUrl(existing.apiBaseUrl)) values.apiBaseUrl = null;
+    values.secretConfigured = process.env[PROVIDER_ENV_KEYS[input.provider]]?.trim() ? 1 : 0;
+    await db.update(bookxProviderSettings).set(values).where(eq(bookxProviderSettings.id, existing.id));
+    return { removed: true };
+  }),
+  /** Adds a provider with an OpenAI-compatible speech API, or edits one. */
+  saveCustomProvider: protectedProcedure.input(z.object({
+    id: customProviderIdSchema.optional(),
+    label: z.string().trim().min(1).max(CUSTOM_PROVIDER_LIMITS.label),
+    baseUrl: z.string().trim().min(1).max(CUSTOM_PROVIDER_LIMITS.url),
+    apiKey: z.string().max(CUSTOM_PROVIDER_LIMITS.apiKey).optional(),
+    ttsModel: z.string().trim().max(CUSTOM_PROVIDER_LIMITS.model).optional(),
+    sttModel: z.string().trim().max(CUSTOM_PROVIDER_LIMITS.model).optional(),
+    voices: z.array(z.string().trim().min(1).max(CUSTOM_PROVIDER_LIMITS.voice)).max(CUSTOM_PROVIDER_LIMITS.voices).default([]),
+  })).mutation(({ ctx, input }) => saveCustomProvider(ctx.user.id, input)),
+  removeCustomProvider: protectedProcedure.input(z.object({ id: customProviderIdSchema })).mutation(({ ctx, input }) => deleteCustomProvider(ctx.user.id, input.id)),
   validate: protectedProcedure.input(z.object({ provider: providerId })).mutation(async ({ ctx, input }) => {
+    if (isCustomProviderId(input.provider)) {
+      // The user's own provider: ask its API for the model list, which needs a
+      // working address and key but costs nothing.
+      try {
+        const custom = await requireCustomProvider(input.provider, ctx.user.id);
+        const capabilities = customProviderCapabilities(custom);
+        if (!capabilities.length) return { provider: input.provider, status: "not-configured" as const, capabilities };
+        const response = await fetch(`${custom.baseUrl}/models`, { headers: customProviderHeaders(custom, false), signal: AbortSignal.timeout(15_000) });
+        if (response.ok || response.status === 404 || response.status === 405) {
+          return { provider: input.provider, status: "connected" as const, capabilities };
+        }
+        const detail = await response.text().catch(() => "");
+        return { provider: input.provider, status: "degraded" as const, capabilities, detail: `HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}` };
+      } catch (error) {
+        return { provider: input.provider, status: "degraded" as const, capabilities: [] as RoutingCapability[], detail: error instanceof Error ? error.message : "Connection test failed" };
+      }
+    }
+
     const available = await availableProviders(ctx.user.id);
     if (!available.includes(input.provider)) return { provider: input.provider, status: "not-configured" as const, capabilities: providerCapabilities[input.provider] };
     try {
@@ -289,15 +411,21 @@ export const providersRouter = router({
         const base = (await getOpenAiCompatibleBaseUrl(ctx.user.id)) || "https://api.openai.com/v1";
         await failIfNotOk(await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenAI", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
       }
+      if (input.provider === "OpenRouter") {
+        await failIfNotOk(await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenRouter", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+      }
       if (input.provider === "Fish Audio") {
-        await failIfNotOk(await fetch("https://api.fish.audio/model", { headers: { Authorization: `Bearer ${await requireProviderApiKey("Fish Audio", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+        await failIfNotOk(await fetch("https://api.fish.audio/model?self=true&page_size=1", { headers: { Authorization: `Bearer ${await requireProviderApiKey("Fish Audio", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+      }
+      if (input.provider === "Gradium") {
+        await failIfNotOk(await fetch("https://api.gradium.ai/api/voices/?limit=1", { headers: { "x-api-key": await requireProviderApiKey("Gradium", ctx.user.id) }, signal: AbortSignal.timeout(15_000) }));
       }
       return { provider: input.provider, status: "connected" as const, capabilities: providerCapabilities[input.provider] };
     } catch (error) {
       return { provider: input.provider, status: "degraded" as const, capabilities: providerCapabilities[input.provider], detail: error instanceof Error ? error.message : "Connection test failed" };
     }
   }),
-  resolve: protectedProcedure.input(z.object({ requested: providerId, capability })).query(async ({ ctx, input }) => ({ ...resolveProvider(input.requested, input.capability as RoutingCapability, await availableProviders(ctx.user.id)), capability: input.capability })),
+  resolve: protectedProcedure.input(z.object({ requested: providerId, capability })).query(async ({ ctx, input }) => ({ ...resolveProvider(input.requested, input.capability as RoutingCapability, await availableProviders(ctx.user.id, input.capability as RoutingCapability)), capability: input.capability })),
   voiceCatalog: protectedProcedure.input(z.object({ provider: providerId.default("ElevenLabs"), query: z.string().trim().max(160).optional() })).query(async ({ ctx, input }) => {
     // Real provider voices with their gender, age and accent. The starter
     // personas are only offered when the provider has no catalog of its own.
@@ -307,18 +435,18 @@ export const providersRouter = router({
     return rankCatalogVoices(voices, input.query || "").slice(0, input.query ? 40 : 200);
   }),
   recommendCast: protectedProcedure.input(z.object({
-    provider: z.enum(["Cloudflare", "OpenAI"]).optional(),
+    provider: providerId.optional(),
     model: z.string().min(1).max(160).optional(),
     text: z.string().trim().min(40).max(16_000),
     voices: z.array(castVoice).min(2).max(64),
   })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     const preferences = db ? await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ctx.user.id)) : [];
-    const requested = input.provider || (preferences.find((preference) => preference.defaultLlmModel)?.provider as "Cloudflare" | "OpenAI" | undefined) || "Cloudflare";
-    const routing = resolveProvider(requested, "language-model", await availableProviders(ctx.user.id));
-    const provider = routing.provider === "OpenAI" ? "OpenAI" : "Cloudflare";
+    const requested = input.provider || (preferences.find((preference) => preference.defaultLlmModel)?.provider as ProviderId | undefined) || "Cloudflare";
+    const routing = resolveProvider(requested, "language-model", await availableProviders(ctx.user.id, "language-model"));
+    const provider = routing.provider;
     const preference = preferences.find((item) => item.provider === provider);
-    const model = input.model || preference?.defaultLlmModel || (provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : "gpt-5");
+    const model = input.model || preference?.defaultLlmModel || (provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : provider === "OpenRouter" ? "openai/gpt-4o-mini" : "gpt-5");
     const system = `You are Bookx's casting director. Find the narrator and named speaking characters in the supplied manuscript. Assign every returned character a DISTINCT voice from the approved voice catalog. Respect the character's apparent age, role, temperament, regional cues only when stated, and dialogue style. Return ONLY one compact JSON object, with no analysis or prose: {"characters":[{"name":"","role":"","voiceId":"","voiceName":"","accent":"","rationale":"","sampleLine":"","confidence":0}]}. Do not invent names that are not in the manuscript. Voice IDs must exactly match the catalog.`;
     const result = await languageModelText({ provider, model, system: `${system}\nApproved voice catalog: ${JSON.stringify(input.voices)}`, text: input.text, ownerId: ctx.user.id });
     const parsed = z.object({ characters: z.array(castRecommendation).min(1).max(64) }).parse(extractJson(result));
@@ -343,9 +471,9 @@ export const providersRouter = router({
     const db = await getDb();
     const preferences = db ? await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ctx.user.id)) : [];
     const requested = input.provider || (preferences.find((preference) => preference.defaultLlmModel)?.provider as z.infer<typeof providerId> | undefined) || "Cloudflare";
-    const routing = resolveProvider(requested, "language-model", await availableProviders(ctx.user.id));
+    const routing = resolveProvider(requested, "language-model", await availableProviders(ctx.user.id, "language-model"));
     const preference = preferences.find((item) => item.provider === routing.provider);
-    const model = input.model || preference?.defaultLlmModel || (routing.provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : "gpt-5");
+    const model = input.model || preference?.defaultLlmModel || (routing.provider === "Cloudflare" ? "@cf/openai/gpt-oss-120b" : routing.provider === "OpenRouter" ? "openai/gpt-4o-mini" : "gpt-5");
     const result = await languageModelText({ provider: routing.provider, model, system: instructions, text: input.text, ownerId: ctx.user.id });
     return { result, provider: routing.provider, model, fallback: routing.fallback };
   }),

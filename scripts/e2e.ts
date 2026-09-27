@@ -1,11 +1,12 @@
 /**
  * End-to-end check against a running Bookx server (`pnpm dev`).
  *
- * Signs in with the local dev login, imports the sample EPUB, edits and
- * selects chapters, analyses the cast, narrates ONE chapter and exports it
- * (the other chapter must not block the export), checks every export format,
- * the ZIP and the levels, then narrates the rest and checks sound design.
- * The project and its files are removed afterwards unless --keep.
+ * Signs in with the one account's email + password, imports the sample EPUB,
+ * edits and selects chapters, analyses the cast, narrates ONE chapter and
+ * exports it (the other chapter must not block the export), checks every
+ * export format, the ZIP and the levels, then narrates the rest and checks
+ * sound design. The project and its files are removed afterwards unless
+ * --keep.
  *
  *   node --env-file=.env node_modules/tsx/dist/cli.mjs scripts/e2e.ts [--keep]
  *
@@ -58,9 +59,16 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 let cookie = "";
 if (!accessMode) {
-  const login = await fetch(`${BASE}/api/dev/login?returnTo=/`, { redirect: "manual" });
+  const email = process.env.BOOKX_SIGNIN_EMAIL;
+  const password = process.env.BOOKX_SIGNIN_PASSWORD;
+  if (!email || !password) throw new Error("BOOKX_SIGNIN_EMAIL and BOOKX_SIGNIN_PASSWORD must be set (see .env).");
+  const login = await fetch(`${BASE}/api/auth/login`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
   cookie = login.headers.getSetCookie().map(value => value.split(";")[0]).join("; ");
-  if (login.status !== 302 || !cookie) throw new Error(`Dev login failed (HTTP ${login.status}). Is the server running with BOOKX_DEV_LOGIN=1?`);
+  if (login.status !== 200 || !cookie) throw new Error(`Sign-in failed (HTTP ${login.status}). Is the server running, and are the credentials right?`);
 }
 const session = (): Record<string, string> => (cookie ? { cookie } : {});
 
@@ -208,13 +216,13 @@ try {
       check(seen === user?.email, "identity headers sent by a visitor are ignored", seen);
       const crossSite = await fetch(`${BASE}/api/trpc/bookx.createProject`, { method: "POST", headers: { origin: "https://evil.example", "content-type": "application/json" }, body: "{}" });
       check(crossSite.status === 403, "a cross-site POST is refused", `HTTP ${crossSite.status}`);
-      const devLogin = await fetch(`${BASE}/api/dev/login`, { redirect: "manual" });
-      check(devLogin.status === 404, "the local dev login does not exist here", `HTTP ${devLogin.status}`);
+      const appLogin = await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: "x@y.z", password: "x" }) });
+      check(appLogin.status === 404, "the app-level sign-in does not exist here", `HTTP ${appLogin.status}`);
     });
   } else {
-    await step("Sign in with the local dev login", async () => {
+    await step("Sign in with the one account", async () => {
       const user = await api.auth.me.query();
-      check(user?.openId === "local-dev-user", "signed in as the local dev user", user?.name);
+      check(user?.openId === "bookx-owner" && user.loginMethod === "password", "signed in as the account", user?.email);
       const anonymous = await fetch(`${BASE}/api/trpc/bookx.listProjects`);
       check(anonymous.status === 401, "tRPC refuses a request without the session cookie", `HTTP ${anonymous.status}`);
     });

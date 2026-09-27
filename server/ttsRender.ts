@@ -1,4 +1,7 @@
 import { nanoid } from "nanoid";
+import { isCustomProviderId } from "../shared/providers";
+import { wavHeader } from "./audioAssembly";
+import { customProviderHeaders, requireCustomProvider } from "./customProviders";
 import { AURA_2_SPEAKERS, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint, requireProviderApiKey } from "./providerCredentials";
 import type { ProviderId } from "./providerRouting";
 import { storagePut } from "./storage";
@@ -158,10 +161,133 @@ async function readWithStallWatchdog(
   return Buffer.concat(chunks);
 }
 
-type ProviderCall = { url: string; init: RequestInit; expectsJsonAudio: boolean };
+// ---------------------------------------------------------------------------
+// Fish Audio and Gradium
+// ---------------------------------------------------------------------------
 
-async function buildProviderCall(request: PinnedRenderRequest, signal: AbortSignal): Promise<ProviderCall> {
+export const FISH_AUDIO_DEFAULT_MODEL = "s2.1-pro";
+/** Fish Audio's documented example voice (Hannah), used when no voice is chosen. */
+export const FISH_AUDIO_DEFAULT_VOICE = "9a9cf47702da476aa4629e2506d4a857";
+
+/** Fish Audio voice (model) ids are 32 hex characters. */
+export function fishAudioVoice(voiceId?: string | null): string {
+  const raw = (voiceId || "").trim().toLowerCase();
+  return /^[a-f0-9]{32}$/.test(raw) ? raw : FISH_AUDIO_DEFAULT_VOICE;
+}
+
+/** One complete MP3 per segment, at the rate and bitrate every segment shares. */
+export function buildFishAudioBody(text: string, voiceId?: string | null): Record<string, unknown> {
+  return { text, reference_id: fishAudioVoice(voiceId), format: "mp3", mp3_bitrate: 128, sample_rate: 44_100, normalize: true, latency: "normal" };
+}
+
+export const GRADIUM_DEFAULT_MODEL = "default";
+/** Gradium's documented example voice, used when no voice is chosen. */
+export const GRADIUM_DEFAULT_VOICE = "YTpq7expH9539ERJ";
+/** Gradium is asked for raw 16-bit mono PCM at this rate, which Bookx wraps as WAV. */
+export const GRADIUM_SAMPLE_RATE = 44_100;
+
+/** Bookx's own starter personas are not Gradium voices. */
+const STARTER_VOICE_IDS = new Set(["iris-narrative", "theo-dramatic", "sage-conversational", "noor-global", "rowan-deep"]);
+
+export function gradiumVoice(voiceId?: string | null): string {
+  const raw = (voiceId || "").trim();
+  return /^[A-Za-z0-9_-]{8,64}$/.test(raw) && !STARTER_VOICE_IDS.has(raw) ? raw : GRADIUM_DEFAULT_VOICE;
+}
+
+export function buildGradiumBody(text: string, model: string, voiceId?: string | null): Record<string, unknown> {
+  const body: Record<string, unknown> = { text, voice_id: gradiumVoice(voiceId), output_format: `pcm_${GRADIUM_SAMPLE_RATE}`, only_audio: true };
+  if (model && model !== GRADIUM_DEFAULT_MODEL) body.model_name = model;
+  return body;
+}
+
+/**
+ * Gradium's raw PCM as a WAV file. Asking for PCM and writing the header here
+ * gives every segment an exact, identical format, whatever header a streamed
+ * WAV would have carried.
+ */
+export function pcm16MonoToWav(raw: Buffer, sampleRate = GRADIUM_SAMPLE_RATE): Buffer {
+  const head = raw.subarray(0, 4).toString("latin1");
+  // Already a WAV, or an error body: leave it for verification to judge.
+  if (head === "RIFF" || head.startsWith("{") || head.startsWith("[")) return raw;
+  const pcm = raw.subarray(0, raw.length - (raw.length % 2));
+  const format = { audioFormat: 1, channels: 1, sampleRate, bitsPerSample: 16, blockAlign: 2, byteRate: sampleRate * 2 };
+  return Buffer.concat([wavHeader(format, pcm.length), pcm]);
+}
+
+/** Gradium reports authentication and quota failures as HTTP 500 with the real status in the text. */
+export function gradiumErrorStatus(status: number, body: string): number {
+  const embedded = body.match(/error from server (\d{3})/i)?.[1];
+  return embedded ? Number(embedded) : status;
+}
+
+export type ProviderCall = {
+  url: string;
+  init: RequestInit;
+  expectsJsonAudio: boolean;
+  /** Turns the response body into a playable file, when the provider sends raw samples. */
+  decode?: (raw: Buffer) => Buffer;
+  /** The HTTP status to classify a failure by, when the provider hides it in the body. */
+  errorStatus?: (status: number, body: string) => number;
+};
+
+export type ProviderCallRequest = Pick<PinnedRenderRequest, "provider" | "model" | "voiceId" | "text" | "previousText" | "nextText" | "language" | "ownerId">;
+
+/** Audio bytes from a provider response, whatever shape the provider answered in. */
+export function decodeProviderAudio(call: ProviderCall, raw: Buffer, contentType: string): Buffer {
+  if (call.decode) return call.decode(raw);
+  const looksJson = contentType.includes("application/json") || raw.subarray(0, 1).toString("latin1") === "{";
+  return call.expectsJsonAudio && looksJson ? decodeJsonAudio(raw) ?? raw : raw;
+}
+
+export async function buildProviderCall(request: ProviderCallRequest, signal: AbortSignal): Promise<ProviderCall> {
   const { provider, model, voiceId, text } = request;
+
+  if (isCustomProviderId(provider)) {
+    const custom = await requireCustomProvider(provider, request.ownerId, "text-to-speech");
+    // A voice cast for another provider means nothing here; the first voice
+    // keeps the book rendering, as the OpenAI route does.
+    const voice = voiceId && custom.voices.includes(voiceId) ? voiceId : custom.voices[0]!;
+    return {
+      url: `${custom.baseUrl}/audio/speech`,
+      init: {
+        method: "POST",
+        headers: customProviderHeaders(custom),
+        body: JSON.stringify({ model: model || custom.ttsModel, input: text, voice, response_format: "mp3" }),
+        signal,
+      },
+      expectsJsonAudio: false,
+    };
+  }
+
+  if (provider === "Fish Audio") {
+    const key = await requireProviderApiKey("Fish Audio", request.ownerId);
+    return {
+      url: "https://api.fish.audio/v1/tts",
+      init: {
+        method: "POST",
+        headers: { Authorization: `Bearer ${key}`, "content-type": "application/json", model: model || FISH_AUDIO_DEFAULT_MODEL },
+        body: JSON.stringify(buildFishAudioBody(text, voiceId)),
+        signal,
+      },
+      expectsJsonAudio: false,
+    };
+  }
+
+  if (provider === "Gradium") {
+    const key = await requireProviderApiKey("Gradium", request.ownerId);
+    return {
+      url: "https://api.gradium.ai/api/post/speech/tts",
+      init: {
+        method: "POST",
+        headers: { "x-api-key": key, "content-type": "application/json" },
+        body: JSON.stringify(buildGradiumBody(text, model, voiceId)),
+        signal,
+      },
+      expectsJsonAudio: false,
+      decode: raw => pcm16MonoToWav(raw),
+      errorStatus: gradiumErrorStatus,
+    };
+  }
 
   if (provider === "Cloudflare") {
     const endpoint = await getCloudflareEndpoint(request.ownerId);
@@ -279,7 +405,8 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      const classification = classifyHttpFailure(response.status, response.headers.get("retry-after"), body);
+      const status = call.errorStatus ? call.errorStatus(response.status, body) : response.status;
+      const classification = classifyHttpFailure(status, response.headers.get("retry-after"), body);
       const error = new Error(classification.message);
       // Carry the classification so the worker does not have to re-derive it.
       Object.assign(error, { classification });
@@ -289,9 +416,7 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
     const declared = Number.parseInt(response.headers.get("content-length") || "", 10);
     const raw = await readWithStallWatchdog(response, stallTimeoutMs, request.signal);
 
-    const contentType = response.headers.get("content-type") || "";
-    const looksJson = contentType.includes("application/json") || raw.subarray(0, 1).toString("latin1") === "{";
-    const buffer = call.expectsJsonAudio && looksJson ? decodeJsonAudio(raw) ?? raw : raw;
+    const buffer = decodeProviderAudio(call, raw, response.headers.get("content-type") || "");
 
     const verdict = verifyAudioPayload(buffer, {
       text,

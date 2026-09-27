@@ -2,24 +2,26 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp, rm } from "node:fs/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { devLoginEnabled, safeReturnPath } from "./_core/devLogin";
+import { _internals, signinConfigured, signinEmail } from "./_core/passwordAuth";
 import { isSafeStorageKey, localObject, localPathForKey, localStorageRoot, storageGetBuffer, storageGetSignedUrl, storageMode, storagePut } from "./storage";
 import { buildElevenLabsBody, deepgramModelFor, supportsElevenLabsContinuity } from "./ttsRender";
 
-describe("dev sign-in", () => {
-  it("exists only when explicitly enabled outside production", () => {
-    expect(devLoginEnabled({ BOOKX_DEV_LOGIN: "1", NODE_ENV: "development" })).toBe(true);
-    expect(devLoginEnabled({ BOOKX_DEV_LOGIN: "1", NODE_ENV: "production" })).toBe(false);
-    expect(devLoginEnabled({ NODE_ENV: "development" })).toBe(false);
-    expect(devLoginEnabled({ BOOKX_DEV_LOGIN: "true", NODE_ENV: "development" })).toBe(false);
+describe("the one account's sign-in", () => {
+  it("is configured only when both an email and a password are set", () => {
+    expect(signinConfigured()).toBe(true); // .env provides both
+    expect(signinEmail()).toBe(process.env.BOOKX_SIGNIN_EMAIL!.trim().toLowerCase());
   });
 
-  it("only redirects to same-site paths", () => {
-    expect(safeReturnPath("/projects?tab=cast")).toBe("/projects?tab=cast");
-    for (const hostile of ["//evil.example", "/\\evil.example", "https://evil.example", "javascript:alert(1)", "", undefined, ["/a"]]) {
-      expect(safeReturnPath(hostile)).toBe("/");
-    }
-  });
+  it("hashes with scrypt so the password is never stored in plain form", async () => {
+    const { hashPassword, verifyPassword } = _internals;
+    const stored = await hashPassword("Hola173!");
+    expect(stored).toMatch(/^scrypt\$[0-9a-f]+\$[0-9a-f]+$/);
+    expect(stored).not.toContain("Hola173!");
+    expect(await verifyPassword("Hola173!", stored)).toBe(true);
+    expect(await verifyPassword("wrong", stored)).toBe(false);
+    // A fresh salt every time: two hashes of the same password differ.
+    expect(await hashPassword("Hola173!")).not.toBe(stored);
+  }, 30_000);
 });
 
 describe("local storage keys", () => {

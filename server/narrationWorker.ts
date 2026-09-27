@@ -386,7 +386,7 @@ export async function startNarrationRun(input: StartRunInput): Promise<{ jobId: 
   if (!project) throw new Error("Project not found");
 
   const provider = project.voiceProvider as ProviderId;
-  const available = await availableProviders(input.ownerId);
+  const available = await availableProviders(input.ownerId, "text-to-speech");
   if (!available.includes(provider)) {
     throw new Error(
       `${provider} is not configured, so narration cannot start. Connect it in Settings, or pick a connected provider for this project.`,

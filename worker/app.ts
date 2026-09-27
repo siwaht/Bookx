@@ -29,6 +29,7 @@ export const PROVIDER_SECRETS = [
   "OPENAI_API_KEY",
   "DEEPGRAM_API_KEY",
   "FISH_AUDIO_API_KEY",
+  "GRADIUM_API_KEY",
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_API_TOKEN",
   "CLOUDFLARE_GATEWAY_ID",
@@ -309,8 +310,8 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
       if (isStorage) return serveStorage(request, env, url, identity);
       const zip = url.pathname.match(/^\/api\/exports\/([A-Za-z0-9_-]+)\/zip$/);
       if (zip) return serveExportZip(request, env, url, identity, zip[1]!);
-      // Local-only sign-in routes; Access is the only way in here.
-      if (url.pathname.startsWith("/api/dev/") || url.pathname.startsWith("/api/oauth/")) return text("Not found", 404);
+      // App-level sign-in routes; Access is the only way in here.
+      if (url.pathname.startsWith("/api/auth/")) return text("Not found", 404);
 
       const secret = internalSecret(env);
       if (!secret) return text("Bookx is not set up yet: the BOOKX_INTERNAL_SECRET secret is missing.", 500);

@@ -195,7 +195,7 @@ describe.skipIf(!ffmpeg)("with ffmpeg", () => {
       const mixed = await mixUnderNarration({
         voice: assembled.buffer,
         voiceDurationMs: assembled.durationMs,
-        level: "very-subtle",
+        level: "extra-subtle",
         target,
         tailMs: layout.tailMs,
         cues: cues.map(cue => ({
@@ -215,7 +215,7 @@ describe.skipIf(!ffmpeg)("with ffmpeg", () => {
       expect(scan.format).toMatchObject({ sampleRate: 44100, bitrateKbps: 128, channelModeBits: 3 });
       expect(Math.abs(mixed.durationMs - assembled.durationMs)).toBeLessThan(120);
       expect(mixed.gainsDb).toEqual(cues.map(cue => cueGainDb({
-        narrationMeanDb: mixed.narrationMeanDb!, kind: cue.kind, level: "very-subtle", assetMeanDb: cue.asset.meanDb, assetPeakDb: cue.asset.peakDb, trimDb: 0,
+        narrationMeanDb: mixed.narrationMeanDb!, kind: cue.kind, level: "extra-subtle", assetMeanDb: cue.asset.meanDb, assetPeakDb: cue.asset.peakDb, trimDb: 0,
       })));
 
       const preRoll = [150, layout.leadInMs - 150] as const;
@@ -264,7 +264,7 @@ describe.skipIf(!ffmpeg)("with ffmpeg", () => {
   it("only re-encodes when a chapter has no cues", async () => {
     await withTempDir(async dir => {
       const voice = await speech(dir, "voice", 3);
-      const mixed = await mixUnderNarration({ voice, voiceDurationMs: scanMp3(voice).durationMs, level: "very-subtle", target: mixTargetFor(voice), cues: [] });
+      const mixed = await mixUnderNarration({ voice, voiceDurationMs: scanMp3(voice).durationMs, level: "extra-subtle", target: mixTargetFor(voice), cues: [] });
       expect(mixed.narrationMeanDb).toBeNull();
       expect(mixed.gainsDb).toEqual([]);
       expect(scanMp3(mixed.buffer).format).toMatchObject({ sampleRate: 44100, bitrateKbps: 128, channelModeBits: 3 });

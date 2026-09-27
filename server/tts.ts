@@ -1,7 +1,9 @@
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
+import { inspectAudio } from "./audioIntegrity";
 import { resolveProvider, type ProviderId } from "./providerRouting";
 import { AURA_2_SPEAKERS, DEFAULT_CLOUDFLARE_TTS_MODEL, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint, requireProviderApiKey } from "./providerCredentials";
+import { FISH_AUDIO_DEFAULT_MODEL, GRADIUM_DEFAULT_MODEL, buildProviderCall, decodeProviderAudio, type ProviderCall } from "./ttsRender";
 
 export type TtsProvider = ProviderId;
 
@@ -43,14 +45,29 @@ export async function synthesizeNarration(input: NarrationRequest): Promise<{ cl
 async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<TtsProvider>): Promise<{ clipId: string; storageKey: string; audioUrl: string; provider: TtsProvider; fallback: boolean }> {
   const request = validateNarrationRequest(input);
   if (!request.projectId) throw new Error("A project is required to store generated narration");
-  const available = await availableProviders(request.ownerId);
+  const available = await availableProviders(request.ownerId, "text-to-speech");
   const resolved = resolveProvider(request.provider, "text-to-speech", available);
   const provider = resolved.provider;
   tried.add(provider);
 
+  // Fish Audio, Gradium and the user's own providers use the same request as
+  // book narration, so a preview sounds exactly like the finished chapter.
+  const shared: ProviderCall | null = provider === "ElevenLabs" || provider === "Deepgram" || provider === "Cloudflare" || provider === "OpenAI"
+    ? null
+    : await buildProviderCall({
+      provider,
+      model: request.model || (provider === "Fish Audio" ? FISH_AUDIO_DEFAULT_MODEL : provider === "Gradium" ? GRADIUM_DEFAULT_MODEL : ""),
+      voiceId: request.voiceId,
+      text: request.text,
+      language: request.language,
+      ownerId: request.ownerId,
+    }, AbortSignal.timeout(120_000));
+
   // Keys resolve app-saved-first, so a key entered on the Settings screen is used
   // in preference to a deployment-wide environment value.
-  const response = provider === "ElevenLabs"
+  const response = shared
+    ? await fetch(shared.url, shared.init)
+    : provider === "ElevenLabs"
     ? await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${request.voiceId || "21m00Tcm4TlvDq8ikWAM"}`, {
       method: "POST",
       headers: { "xi-api-key": await requireProviderApiKey("ElevenLabs", request.ownerId), "content-type": "application/json", accept: "audio/mpeg" },
@@ -74,7 +91,7 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
     });
 
   if (!response.ok) {
-    const candidates: TtsProvider[] = ["ElevenLabs", "Deepgram", "OpenAI", "Cloudflare"];
+    const candidates: TtsProvider[] = ["ElevenLabs", "Deepgram", "OpenAI", "Cloudflare", "Fish Audio", "Gradium"];
     for (const candidate of candidates) {
       if (tried.has(candidate) || !available.includes(candidate)) continue;
       tried.add(candidate);
@@ -89,11 +106,18 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
   }
 
   const contentType = response.headers.get("content-type") || "";
-  const responseBody = contentType.includes("application/json") ? await response.json() as { result?: { audio?: string } | string } : null;
-  const base64Audio = typeof responseBody?.result === "string" ? responseBody.result : responseBody?.result?.audio;
-  const buffer = base64Audio ? Buffer.from(base64Audio, "base64") : Buffer.from(await response.arrayBuffer());
+  let buffer: Buffer;
+  if (shared) {
+    buffer = decodeProviderAudio(shared, Buffer.from(await response.arrayBuffer()), contentType);
+  } else {
+    const responseBody = contentType.includes("application/json") ? await response.json() as { result?: { audio?: string } | string } : null;
+    const base64Audio = typeof responseBody?.result === "string" ? responseBody.result : responseBody?.result?.audio;
+    buffer = base64Audio ? Buffer.from(base64Audio, "base64") : Buffer.from(await response.arrayBuffer());
+  }
+  // Stored under the container it really is, so a WAV preview is not labelled MP3.
+  const isWav = inspectAudio(buffer).container === "wav";
   const clipId = nanoid();
-  const stored = await storagePut(`bookx/${request.projectId}/narration/${clipId}.mp3`, buffer, "audio/mpeg");
+  const stored = await storagePut(`bookx/${request.projectId}/narration/${clipId}.${isWav ? "wav" : "mp3"}`, buffer, isWav ? "audio/wav" : "audio/mpeg");
   return { clipId, storageKey: stored.key, audioUrl: stored.url, provider, fallback: resolved.fallback };
 }
 

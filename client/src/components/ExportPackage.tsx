@@ -9,6 +9,7 @@ import {
   describeOutput,
   isPassthrough,
   meetsAudiobookStandard,
+  noiseFloorPasses,
   presetById,
   type ExportOutput,
   type ExportPresetId,
@@ -197,6 +198,26 @@ export function ExportPackage({ projectId, canExport, disabledReason }: { projec
                 label="Also make one file for the whole book"
                 detail={output.container === "mp3" ? "With chapter markers, for players and podcasts. Distributors want the chapter files." : "Handy for listening; distributors want the chapter files."}
               />
+              <Toggle
+                checked={output.credits}
+                disabled={passthrough}
+                onChange={value => tweak({ credits: value })}
+                label="Narrate opening and closing credits"
+                detail="ACX requires them: the title, author and narrator at the start, and a closing that says the book has ended."
+              />
+              <Toggle
+                checked={output.chapterHeaders}
+                disabled={passthrough}
+                onChange={value => tweak({ chapterHeaders: value })}
+                label="Speak each chapter's title at the start of its file"
+                detail="ACX requires each file to open with its section header, so a listener landing on any file knows where they are."
+              />
+              <Toggle
+                checked={output.retailSample}
+                onChange={value => tweak({ retailSample: value })}
+                label="Cut a retail sample (first 5 minutes)"
+                detail="What Apple Books and Spotify play to a shopper. Taken from the opening of the first chapter."
+              />
             </div>
           </Card>
 
@@ -261,7 +282,7 @@ export function ExportPackage({ projectId, canExport, disabledReason }: { projec
                           <strong className="block text-sm">{label} <span className="font-normal text-[#7e8b8d]">· {new Date(row.createdAt).toLocaleString()}</span></strong>
                           <span className="text-xs text-[#7e8b8d]">
                             {row.status === "ready"
-                              ? `${files.length} chapter file${files.length === 1 ? "" : "s"} · ${formatDuration(row.durationMs || 0)} · ${formatBytes(Number(row.bytes || 0) + (detail.fullBook?.bytes ?? 0))}${detail.output ? ` · ${describeOutput(detail.output)}` : ""}${detail.soundDesign ? ` · ${detail.soundDesign.cues} sound cues` : ""}`
+                              ? `${files.length} chapter file${files.length === 1 ? "" : "s"}${detail.credits?.opening || detail.credits?.closing ? " · credits" : ""}${detail.retailSample ? " · sample" : ""} · ${formatDuration(row.durationMs || 0)} · ${formatBytes(Number(row.bytes || 0) + (detail.fullBook?.bytes ?? 0))}${detail.output ? ` · ${describeOutput(detail.output)}` : ""}${detail.soundDesign ? ` · ${detail.soundDesign.cues} sound cues` : ""}`
                               : row.status === "failed"
                                 ? row.error || "Assembly failed"
                                 : detail.progress?.stage ?? "Assembling…"}
@@ -303,24 +324,37 @@ export function ExportPackage({ projectId, canExport, disabledReason }: { projec
                       )}
                       {open && (
                         <ul className="mt-3 space-y-1.5 rounded-xl bg-[#f7f9f5] p-3">
-                          {files.map(file => {
-                            const name = file.fileName ?? `${file.title}.${detail.container ?? "mp3"}`;
+                          {[
+                            ...(detail.credits?.opening ? [{ key: "opening", name: detail.credits.opening.fileName ?? "Opening Credits", storageKey: detail.credits.opening.storageKey, bytes: detail.credits.opening.bytes ?? 0, durationMs: detail.credits.opening.durationMs, rmsDb: null as number | null, peakDb: null as number | null }] : []),
+                            ...files.map(file => ({ key: file.chapterId, name: file.fileName ?? `${file.title}.${detail.container ?? "mp3"}`, storageKey: file.storageKey, bytes: file.bytes ?? 0, durationMs: file.durationMs, rmsDb: file.rmsDb ?? null, peakDb: file.peakDb ?? null })),
+                            ...(detail.credits?.closing ? [{ key: "closing", name: detail.credits.closing.fileName ?? "Closing Credits", storageKey: detail.credits.closing.storageKey, bytes: detail.credits.closing.bytes ?? 0, durationMs: detail.credits.closing.durationMs, rmsDb: null as number | null, peakDb: null as number | null }] : []),
+                            ...(detail.retailSample ? [{ key: "sample", name: detail.retailSample.fileName ?? "Retail Sample", storageKey: detail.retailSample.storageKey, bytes: detail.retailSample.bytes ?? 0, durationMs: detail.retailSample.durationMs, rmsDb: null as number | null, peakDb: null as number | null }] : []),
+                          ].map(file => {
                             const levelled = detail.output?.master;
                             const meets = meetsAudiobookStandard(file.rmsDb, file.peakDb);
                             return (
-                              <li key={file.chapterId} className="flex flex-wrap items-center gap-2 text-xs">
-                                <span className="min-w-0 flex-1 truncate text-[#34484b]">{name}</span>
-                                <span className="text-[#7e8b8d]">{formatDuration(file.durationMs)} · {formatBytes(file.bytes ?? 0)}</span>
+                              <li key={file.key} className="flex flex-wrap items-center gap-2 text-xs">
+                                <span className="min-w-0 flex-1 truncate text-[#34484b]">{file.name}</span>
+                                <span className="text-[#7e8b8d]">{formatDuration(file.durationMs)} · {formatBytes(file.bytes)}</span>
                                 {file.rmsDb != null && file.peakDb != null && (
                                   <span className={meets ? "text-[#397868]" : "text-[#8b9697]"} title="Whole-file RMS and peak level">
                                     {levelled && meets && <CheckCircle2 aria-hidden="true" className="mr-0.5 inline" size={12} />}
                                     {file.rmsDb} dB RMS · peak {file.peakDb} dB
                                   </span>
                                 )}
-                                <a href={fileHref(file.storageKey, name)} download={name} className="font-bold text-[#34736d]" aria-label={`Download ${name}`}>Download</a>
+                                <a href={fileHref(file.storageKey, file.name)} download={file.name} className="font-bold text-[#34736d]" aria-label={`Download ${file.name}`}>Download</a>
                               </li>
                             );
                           })}
+                          {detail.quality?.noiseFloorDb != null && (
+                            <li className="flex flex-wrap items-center gap-2 border-t border-[#e5eae2] pt-2 text-xs">
+                              <span className="min-w-0 flex-1 text-[#5d6f71]">Noise floor (checked {detail.quality.checkedFiles ?? 0} file{detail.quality.checkedFiles === 1 ? "" : "s"})</span>
+                              <span className={noiseFloorPasses(detail.quality.noiseFloorDb) ? "text-[#397868]" : "text-[#a35a44]"} title={`ACX requires the noise floor under ${AUDIOBOOK_STANDARD.maxNoiseFloorDb} dB`}>
+                                {noiseFloorPasses(detail.quality.noiseFloorDb) && <CheckCircle2 aria-hidden="true" className="mr-0.5 inline" size={12} />}
+                                {detail.quality.noiseFloorDb} dB
+                              </span>
+                            </li>
+                          )}
                         </ul>
                       )}
                     </li>

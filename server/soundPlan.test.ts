@@ -10,6 +10,7 @@ import {
   keywordMood,
   keywordProposals,
   layoutChapterCues,
+  normalizeSoundLevel,
   normalizeTag,
   parseScenePlanReply,
   renderForScenePlanning,
@@ -257,26 +258,37 @@ describe("levels", () => {
 
   it("places a cue under the narration by whichever limit is quieter", () => {
     // Mean limit: -20 - 24 + 26 = -18 dB. Peak limit: -20 - 10 + 9 = -21 dB.
-    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "very-subtle", ...rain })).toBe(-21);
+    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "extra-subtle", ...rain })).toBe(-21);
     // A steady texture with little crest is set by its average instead.
-    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "very-subtle", assetMeanDb: -26, assetPeakDb: -20 })).toBe(-18);
+    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "extra-subtle", assetMeanDb: -26, assetPeakDb: -20 })).toBe(-18);
   });
 
-  it("makes Subtle 6 dB louder than Very subtle and applies the creator's trim", () => {
-    const quiet = cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "very-subtle", ...rain });
-    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "subtle", ...rain })).toBe(quiet + 6);
-    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "very-subtle", ...rain, trimDb: -3 })).toBe(quiet - 3);
+  it("steps the three levels 6 dB apart, quietest first, and applies the creator's trim", () => {
+    const ultra = cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "ultra-subtle", ...rain });
+    const extra = cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "extra-subtle", ...rain });
+    const subtle = cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "subtle", ...rain });
+    expect(extra).toBe(ultra + 6);
+    expect(subtle).toBe(extra + 6);
+    expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "extra-subtle", ...rain, trimDb: -3 })).toBe(extra - 3);
   });
 
   it("puts music lower than effects at the same level", () => {
     const asset = { assetMeanDb: -26, assetPeakDb: -14 };
-    expect(cueGainDb({ narrationMeanDb: -20, kind: "music", level: "very-subtle", ...asset }))
-      .toBeLessThan(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "very-subtle", ...asset }));
+    expect(cueGainDb({ narrationMeanDb: -20, kind: "music", level: "extra-subtle", ...asset }))
+      .toBeLessThan(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "extra-subtle", ...asset }));
   });
 
   it("survives silent narration and silent assets", () => {
-    expect(cueGainDb({ narrationMeanDb: -91, kind: "sfx", level: "very-subtle", ...rain })).toBe(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "very-subtle", ...rain }));
+    expect(cueGainDb({ narrationMeanDb: -91, kind: "sfx", level: "extra-subtle", ...rain })).toBe(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "extra-subtle", ...rain }));
     expect(cueGainDb({ narrationMeanDb: -20, kind: "sfx", level: "subtle", assetMeanDb: -91, assetPeakDb: -91 })).toBe(12);
+  });
+
+  it("maps legacy and unknown level names onto the vocabulary", () => {
+    expect(normalizeSoundLevel("very-subtle")).toBe("extra-subtle");
+    expect(normalizeSoundLevel("ultra-subtle")).toBe("ultra-subtle");
+    expect(normalizeSoundLevel("subtle")).toBe("subtle");
+    expect(normalizeSoundLevel("loud")).toBe("extra-subtle");
+    expect(normalizeSoundLevel("")).toBe("extra-subtle");
   });
 
   it("ducks from about 10 dB under the narration's mean", () => {

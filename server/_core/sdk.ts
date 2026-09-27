@@ -1,22 +1,19 @@
-import { AXIOS_TIMEOUT_MS, COOKIE_NAME, ONE_YEAR_MS, decodeOAuthState } from "@shared/const";
-import { ForbiddenError } from "@shared/_core/errors";
-import axios, { type AxiosInstance } from "axios";
+import { COOKIE_NAME, ONE_YEAR_MS } from "@shared/const";
 import { parse as parseCookieHeader } from "cookie";
 import type { Request } from "express";
 import { SignJWT, jwtVerify } from "jose";
 import type { User } from "../../drizzle/schema";
 import * as db from "../db";
 import { ENV } from "./env";
-import type {
-  ExchangeTokenRequest,
-  ExchangeTokenResponse,
-  GetUserInfoResponse,
-  GetUserInfoWithJwtRequest,
-  GetUserInfoWithJwtResponse,
-} from "./types/manusTypes";
-// Utility function
-const isNonEmptyString = (value: unknown): value is string =>
-  typeof value === "string" && value.length > 0;
+
+/**
+ * Sessions for the one Bookx account.
+ *
+ * A successful sign-in (server/_core/passwordAuth.ts) mints an HS256 token
+ * signed with `JWT_SECRET` and stores it in the session cookie; every request
+ * verifies it and loads the account row. There is no external OAuth service
+ * any more — the account's email and password live in the environment.
+ */
 
 // `verifySession` runs on every request, so a config warning must not repeat
 // once per call.
@@ -33,128 +30,10 @@ export type SessionPayload = {
   name: string;
 };
 
-const EXCHANGE_TOKEN_PATH = `/webdev.v1.WebDevAuthPublicService/ExchangeToken`;
-const GET_USER_INFO_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfo`;
-const GET_USER_INFO_WITH_JWT_PATH = `/webdev.v1.WebDevAuthPublicService/GetUserInfoWithJwt`;
-
-class OAuthService {
-  constructor(private client: ReturnType<typeof axios.create>) {
-    // Behind Cloudflare Access (BOOKX_TRUST_PROXY_AUTH=1) Manus OAuth is not used at all.
-    if (process.env.BOOKX_TRUST_PROXY_AUTH === "1") return;
-    console.log("[OAuth] Initialized with baseURL:", ENV.oAuthServerUrl);
-    if (!ENV.oAuthServerUrl) {
-      console.error(
-        "[OAuth] ERROR: OAUTH_SERVER_URL is not configured! Set OAUTH_SERVER_URL environment variable."
-      );
-    }
-  }
-
-  private decodeState(state: string): string {
-    return decodeOAuthState(state).redirectUri;
-  }
-
-  async getTokenByCode(
-    code: string,
-    state: string
-  ): Promise<ExchangeTokenResponse> {
-    const payload: ExchangeTokenRequest = {
-      clientId: ENV.appId,
-      grantType: "authorization_code",
-      code,
-      redirectUri: this.decodeState(state),
-    };
-
-    const { data } = await this.client.post<ExchangeTokenResponse>(
-      EXCHANGE_TOKEN_PATH,
-      payload
-    );
-
-    return data;
-  }
-
-  async getUserInfoByToken(
-    token: ExchangeTokenResponse
-  ): Promise<GetUserInfoResponse> {
-    const { data } = await this.client.post<GetUserInfoResponse>(
-      GET_USER_INFO_PATH,
-      {
-        accessToken: token.accessToken,
-      }
-    );
-
-    return data;
-  }
-}
-
-const createOAuthHttpClient = (): AxiosInstance =>
-  axios.create({
-    baseURL: ENV.oAuthServerUrl,
-    timeout: AXIOS_TIMEOUT_MS,
-  });
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === "string" && value.length > 0;
 
 class SDKServer {
-  private readonly client: AxiosInstance;
-  private readonly oauthService: OAuthService;
-
-  constructor(client: AxiosInstance = createOAuthHttpClient()) {
-    this.client = client;
-    this.oauthService = new OAuthService(this.client);
-  }
-
-  private deriveLoginMethod(
-    platforms: unknown,
-    fallback: string | null | undefined
-  ): string | null {
-    if (fallback && fallback.length > 0) return fallback;
-    if (!Array.isArray(platforms) || platforms.length === 0) return null;
-    const set = new Set<string>(
-      platforms.filter((p): p is string => typeof p === "string")
-    );
-    if (set.has("REGISTERED_PLATFORM_EMAIL")) return "email";
-    if (set.has("REGISTERED_PLATFORM_GOOGLE")) return "google";
-    if (set.has("REGISTERED_PLATFORM_APPLE")) return "apple";
-    if (
-      set.has("REGISTERED_PLATFORM_MICROSOFT") ||
-      set.has("REGISTERED_PLATFORM_AZURE")
-    )
-      return "microsoft";
-    if (set.has("REGISTERED_PLATFORM_GITHUB")) return "github";
-    const first = Array.from(set)[0];
-    return first ? first.toLowerCase() : null;
-  }
-
-  /**
-   * Exchange OAuth authorization code for access token
-   * @example
-   * const tokenResponse = await sdk.exchangeCodeForToken(code, state);
-   */
-  async exchangeCodeForToken(
-    code: string,
-    state: string
-  ): Promise<ExchangeTokenResponse> {
-    return this.oauthService.getTokenByCode(code, state);
-  }
-
-  /**
-   * Get user information using access token
-   * @example
-   * const userInfo = await sdk.getUserInfo(tokenResponse.accessToken);
-   */
-  async getUserInfo(accessToken: string): Promise<GetUserInfoResponse> {
-    const data = await this.oauthService.getUserInfoByToken({
-      accessToken,
-    } as ExchangeTokenResponse);
-    const loginMethod = this.deriveLoginMethod(
-      (data as any)?.platforms,
-      (data as any)?.platform ?? data.platform ?? null
-    );
-    return {
-      ...(data as any),
-      platform: loginMethod,
-      loginMethod,
-    } as GetUserInfoResponse;
-  }
-
   private parseCookies(cookieHeader: string | undefined) {
     if (!cookieHeader) {
       return new Map<string, string>();
@@ -168,8 +47,8 @@ class SDKServer {
     const secret = ENV.cookieSecret;
     // `ENV.cookieSecret` defaults to "" when JWT_SECRET is unset, and jose then
     // fails deep inside signing with "Zero-length key is not supported" — which
-    // surfaces as an opaque 500 on the OAuth callback and a silent auth failure
-    // on every request. Name the actual cause instead.
+    // surfaces as an opaque 500 on sign-in and a silent auth failure on every
+    // request. Name the actual cause instead.
     if (!secret) {
       throw new Error(
         "JWT_SECRET is not configured, so session tokens cannot be signed or verified. Set JWT_SECRET in your environment."
@@ -184,9 +63,9 @@ class SDKServer {
   }
 
   /**
-   * Create a session token for a Manus user openId
+   * Create a session token for the account
    * @example
-   * const sessionToken = await sdk.createSessionToken(userInfo.openId);
+   * const sessionToken = await sdk.createSessionToken(openId);
    */
   async createSessionToken(
     openId: string,
@@ -195,7 +74,7 @@ class SDKServer {
     return this.signSession(
       {
         openId,
-        appId: ENV.appId,
+        appId: ENV.appId || "bookx",
         name: options.name || "",
       },
       options
@@ -225,7 +104,6 @@ class SDKServer {
     cookieValue: string | undefined | null
   ): Promise<{ openId: string; appId: string; name: string } | null> {
     if (!cookieValue) {
-      console.warn("[Auth] Missing session cookie");
       return null;
     }
 
@@ -256,38 +134,13 @@ class SDKServer {
     }
   }
 
-  async getUserInfoWithJwt(
-    jwtToken: string
-  ): Promise<GetUserInfoWithJwtResponse> {
-    const payload: GetUserInfoWithJwtRequest = {
-      jwtToken,
-      projectId: ENV.appId,
-    };
-
-    const { data } = await this.client.post<GetUserInfoWithJwtResponse>(
-      GET_USER_INFO_WITH_JWT_PATH,
-      payload
-    );
-
-    const loginMethod = this.deriveLoginMethod(
-      (data as any)?.platforms,
-      (data as any)?.platform ?? data.platform ?? null
-    );
-    return {
-      ...(data as any),
-      platform: loginMethod,
-      loginMethod,
-    } as GetUserInfoWithJwtResponse;
-  }
-
-  async authenticateRequest(req: Request): Promise<AuthenticatedUser> {
-    // 1. Prefer the session cookie (regular OAuth login).
+  async authenticateRequest(req: Request): Promise<User> {
+    // 1. Prefer the session cookie (the sign-in page).
     const cookies = this.parseCookies(req.headers.cookie);
     let sessionToken = cookies.get(COOKIE_NAME);
 
-    // 2. Fallback to the Authorization header (Preview auto-login via
-    //    sessionStorage), used when the browser blocks iframe cookies such as
-    //    Safari ITP, private browsing, or iOS/Android WebView.
+    // 2. Fallback to the Authorization header, used when the browser blocks
+    //    iframe cookies (Safari ITP, private browsing, iOS/Android WebView).
     if (!sessionToken) {
       const authHeader = req.headers.authorization;
       if (typeof authHeader === "string" && authHeader.startsWith("Bearer ")) {
@@ -298,53 +151,20 @@ class SDKServer {
     const session = await this.verifySession(sessionToken);
 
     if (!session) {
-      throw ForbiddenError("Invalid session cookie");
+      throw new Error("Invalid session cookie");
     }
 
-    if (session.openId.startsWith(CRON_OPEN_ID_PREFIX)) {
-      const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-      const taskUid = userInfo.taskUid ?? null;
-      if (!taskUid) {
-        throw ForbiddenError("Cron session missing task_uid");
-      }
-      return buildCronUser(userInfo);
-    }
-
-    const sessionUserId = session.openId;
-    const signedInAt = new Date();
-    let user = await db.getUserByOpenId(sessionUserId);
-    let syncedFromOAuth = false;
-
-    // If user not in DB, sync from OAuth server automatically
+    const user = await db.getUserByOpenId(session.openId);
     if (!user) {
-      try {
-        const userInfo = await this.getUserInfoWithJwt(sessionToken ?? "");
-        await db.upsertUser({
-          openId: userInfo.openId,
-          name: userInfo.name || null,
-          email: userInfo.email ?? null,
-          loginMethod: userInfo.loginMethod ?? userInfo.platform ?? null,
-          lastSignedIn: signedInAt,
-        });
-        user = await db.getUserByOpenId(userInfo.openId);
-        syncedFromOAuth = true;
-      } catch (error) {
-        console.error("[Auth] Failed to sync user from OAuth:", error);
-        throw ForbiddenError("Failed to sync user info");
-      }
+      throw new Error("User not found");
     }
 
-    if (!user) {
-      throw ForbiddenError("User not found");
-    }
-
-    // The sync branch above already wrote `lastSignedIn`; otherwise refresh it
-    // at most once per window so a purely informational column does not cost a
-    // database write on every single authenticated API call.
-    if (!syncedFromOAuth && shouldRefreshLastSignedIn(user.openId, signedInAt)) {
+    // Refresh `lastSignedIn` at most once per window so a purely informational
+    // column does not cost a database write on every single authenticated call.
+    if (shouldRefreshLastSignedIn(user.openId)) {
       await db.upsertUser({
         openId: user.openId,
-        lastSignedIn: signedInAt,
+        lastSignedIn: new Date(),
       });
     }
 
@@ -352,48 +172,21 @@ class SDKServer {
   }
 }
 
-const CRON_OPEN_ID_PREFIX = "cron_";
-
 const LAST_SEEN_REFRESH_MS = 5 * 60 * 1000;
 const LAST_SEEN_CACHE_LIMIT = 10_000;
 const lastSeenWrites = new Map<string, number>();
 
-function shouldRefreshLastSignedIn(openId: string, now: Date) {
-  const timestamp = now.getTime();
+function shouldRefreshLastSignedIn(openId: string) {
+  const timestamp = Date.now();
   const previous = lastSeenWrites.get(openId);
   if (previous !== undefined && timestamp - previous < LAST_SEEN_REFRESH_MS) {
     return false;
   }
-  // Bound the cache so a long-lived process with many users cannot grow it
-  // without limit; dropping entries only costs one extra write.
+  // Bound the cache so a long-lived process cannot grow it without limit;
+  // dropping entries only costs one extra write.
   if (lastSeenWrites.size >= LAST_SEEN_CACHE_LIMIT) lastSeenWrites.clear();
   lastSeenWrites.set(openId, timestamp);
   return true;
-}
-
-/** Result of `sdk.authenticateRequest`. Cron callbacks set `isCron=true` and `taskUid`; see `/home/ubuntu/skills/webdev-periodic-updates/SKILL.md`. */
-export type AuthenticatedUser = User & {
-  taskUid?: string;
-  isCron?: boolean;
-};
-
-function buildCronUser(
-  userInfo: GetUserInfoWithJwtResponse
-): AuthenticatedUser {
-  const now = new Date();
-  return {
-    id: -1,
-    openId: userInfo.openId,
-    name: userInfo.name || "Manus Scheduled Task",
-    email: null,
-    loginMethod: null,
-    role: "user",
-    createdAt: now,
-    updatedAt: now,
-    lastSignedIn: now,
-    taskUid: userInfo.taskUid ?? undefined,
-    isCron: true,
-  } as AuthenticatedUser;
 }
 
 export const sdk = new SDKServer();

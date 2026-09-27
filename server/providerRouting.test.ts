@@ -13,4 +13,10 @@ describe("provider capability routing", () => {
   it("only reports configured providers from the available environment", () => {
     expect(configuredProviders({ DEEPGRAM_API_KEY: "test", CLOUDFLARE_ACCOUNT_ID: "account", CLOUDFLARE_API_TOKEN: "token" } as NodeJS.ProcessEnv)).toEqual(["Deepgram", "Cloudflare"]);
   });
+
+  it("recognises OpenRouter as a language-model provider", () => {
+    expect(configuredProviders({ OPENROUTER_API_KEY: "sk-or-test" } as NodeJS.ProcessEnv)).toEqual(["OpenRouter"]);
+    expect(resolveProvider("OpenRouter", "language-model", ["OpenRouter"])).toEqual({ provider: "OpenRouter", fallback: false });
+    expect(resolveProvider("OpenRouter", "language-model", ["Cloudflare", "OpenAI"])).toEqual({ provider: "Cloudflare", fallback: true });
+  });
 });

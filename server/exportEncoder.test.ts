@@ -14,7 +14,10 @@ const spotify = presetById("spotify").output;
 
 describe("export presets", () => {
   it("default to a Spotify/ACX-compliant MP3", () => {
-    expect(spotify).toEqual({ container: "mp3", mp3Bitrate: 192, bitDepth: 16, sampleRate: 44100, channels: "stereo", master: true, fullBook: true });
+    expect(spotify).toEqual({
+      container: "mp3", mp3Bitrate: 192, bitDepth: 16, sampleRate: 44100, channels: "stereo", master: true, fullBook: true,
+      credits: true, chapterHeaders: true, retailSample: true,
+    });
     expect(describeOutput(spotify)).toBe("MP3 192 kbps · 44.1 kHz stereo · levelled");
     expect(new Set(EXPORT_PRESETS.map(preset => preset.id)).size).toBe(EXPORT_PRESETS.length);
   });
@@ -141,7 +144,7 @@ function overviewOf(states: Array<[string, "ready" | "outdated" | "partial" | "u
     exportableChapters: chapters.filter(chapter => chapter.exportable).length,
     readyChapters: chapters.filter(chapter => chapter.state === "ready").length,
     exportableDurationMs: 0,
-    soundDesign: { effects: false, music: false, level: "very-subtle" },
+    soundDesign: { effects: false, music: false, level: "extra-subtle" },
     ffmpeg: true,
   };
 }

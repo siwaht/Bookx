@@ -4,8 +4,7 @@ import { createServer } from "http";
 import net from "net";
 import { createExpressMiddleware } from "@trpc/server/adapters/express";
 import { PROXY_HEADERS, sameSecret, trustsProxyAuth } from "./authenticate";
-import { registerDevLoginRoutes } from "./devLogin";
-import { registerOAuthRoutes } from "./oauth";
+import { registerPasswordRoutes } from "./passwordAuth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
@@ -101,10 +100,9 @@ async function startServer() {
   }
   registerStorageProxy(app);
   registerExportDownloads(app);
-  // Behind Cloudflare Access the Worker has already signed the visitor in, and
-  // the Manus OAuth callback would only be an unused way around it.
-  if (!trustsProxyAuth()) registerOAuthRoutes(app);
-  registerDevLoginRoutes(app);
+  // The one account's sign-in. Behind Cloudflare Access the Worker has
+  // already signed the visitor in, so the routes are not needed there.
+  if (!trustsProxyAuth()) registerPasswordRoutes(app);
   // tRPC API
   app.use(
     "/api/trpc",

@@ -34,13 +34,14 @@ import { EnhancedProduction } from "@/components/EnhancedProduction";
 import { CastingReview, type CastingCharacter } from "@/components/CastingReview";
 import { PodcastImportDialog, type PodcastImport } from "@/components/PodcastImportDialog";
 import { PodcastScriptEditor } from "@/components/PodcastScriptEditor";
-import { ProviderSettings, type CloudflareConnectionDraft, type ProviderCatalog } from "@/components/ProviderSettings";
+import { ProviderSettings, type CloudflareConnectionDraft, type CustomProviderDraft, type ProviderCatalog } from "@/components/ProviderSettings";
 import { NarrationRun } from "@/components/NarrationRun";
 import { ExportPackage } from "@/components/ExportPackage";
 import { SoundDesign } from "@/components/SoundDesign";
 import { ManuscriptEditor } from "@/components/ManuscriptEditor";
 import { MANUSCRIPT_ACCEPT, readManuscriptFile, type ManuscriptUpload } from "@/lib/files";
 import { projectReadiness, projectSetupSchema, type ProjectSetup } from "@shared/bookx";
+import { isBuiltInProvider, isCustomProviderId, isProviderId, parseVoiceList, type BuiltInProviderId, type ProviderId } from "@shared/providers";
 
 type Screen = "dashboard" | "workspace";
 type WorkspaceTab = "manuscript" | "cast" | "pronunciation" | "generation" | "studio" | "review" | "export" | "settings";
@@ -51,26 +52,23 @@ type Rule = { word: string; alias: string; phoneme: string };
 type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 type VoiceChoice = { id: string; name: string; detail: string; color: string };
 
-const catalogProviders = ["ElevenLabs", "Deepgram", "Cloudflare", "OpenAI", "Fish Audio"] as const;
-type CatalogProvider = (typeof catalogProviders)[number];
-/** Providers that can synthesise narration; Fish Audio is catalog-only for now. */
-const narrationProviders = ["ElevenLabs", "OpenAI", "Deepgram", "Cloudflare"] as const;
-type NarrationProvider = (typeof narrationProviders)[number];
-
 /**
  * `Project.voiceProvider` is free-form text (see `projectSetupSchema`), so narrow
  * it before using it as a provider id.
  */
-function voiceCatalogProvider(voiceProvider: string): CatalogProvider {
-  return (catalogProviders as readonly string[]).includes(voiceProvider)
-    ? (voiceProvider as CatalogProvider)
-    : "ElevenLabs";
+function voiceCatalogProvider(voiceProvider: string): ProviderId {
+  return isProviderId(voiceProvider) ? voiceProvider : "ElevenLabs";
 }
 
-function narrationProvider(voiceProvider: string): NarrationProvider | undefined {
-  return (narrationProviders as readonly string[]).includes(voiceProvider)
-    ? (voiceProvider as NarrationProvider)
-    : undefined;
+/**
+ * The project's provider when the server can narrate with it: every built-in
+ * provider, and the user's own ones once they have a voice model and voices.
+ */
+function narrationProvider(voiceProvider: string, providers: ProviderCatalog[]): ProviderId | undefined {
+  if (!isProviderId(voiceProvider)) return undefined;
+  const entry = providers.find((provider) => provider.id === voiceProvider);
+  if (!entry) return isBuiltInProvider(voiceProvider) ? voiceProvider : undefined;
+  return entry.capabilities.includes("text-to-speech") ? voiceProvider : undefined;
 }
 
 const voicePalette = ["#d8a665", "#89b5c2", "#b7a0c8", "#8cab91", "#d48a7e"] as const;
@@ -135,7 +133,9 @@ const previewProviders: ProviderCatalog[] = [
   { id: "Deepgram", label: "Deepgram", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "aura-2-thalia-en", label: "Aura-2 Thalia", capabilities: ["text-to-speech"], detail: "Natural voice" }, { id: "nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Podcast transcription" }] },
   { id: "Cloudflare", label: "Cloudflare Workers AI", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: [{ id: "@cf/deepgram/aura-2-en", label: "Aura-2", capabilities: ["text-to-speech"], detail: "Cloudflare-hosted voice" }, { id: "@cf/zai-org/glm-5.3-flash", label: "GLM-5.3 Flash", capabilities: ["language-model"], detail: "Story organisation" }, { id: "@cf/deepgram/nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Audio transcription" }] },
   { id: "OpenAI", label: "OpenAI", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text", "language-model"], models: [{ id: "gpt-4o-mini-tts", label: "GPT-4o mini TTS", capabilities: ["text-to-speech"], detail: "Narration" }, { id: "gpt-5", label: "GPT-5", capabilities: ["language-model"], detail: "Editorial planning" }] },
-  { id: "Fish Audio", label: "Fish Audio", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" }] },
+  { id: "OpenRouter", label: "OpenRouter", configured: false, status: "available", capabilities: ["language-model"], models: [{ id: "openai/gpt-4o-mini", label: "GPT-4o mini", capabilities: ["language-model"], detail: "Fast editorial planning" }, { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", capabilities: ["language-model"], detail: "Thoughtful analysis" }] },
+  { id: "Fish Audio", label: "Fish Audio", configured: false, status: "available", capabilities: ["text-to-speech", "speech-to-text"], models: [{ id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" }, { id: "transcribe-1", label: "Transcribe 1", capabilities: ["speech-to-text"], detail: "File transcription" }] },
+  { id: "Gradium", label: "Gradium", configured: false, status: "available", capabilities: ["text-to-speech"], models: [{ id: "default", label: "Gradium TTS", capabilities: ["text-to-speech"], detail: "Natural multilingual narration" }] },
 ];
 
 const nav: Array<{ id: WorkspaceTab; label: string; icon: typeof FileText; group: string }> = [
@@ -165,6 +165,9 @@ export default function Home() {
   const providers: ProviderCatalog[] = providerCatalogQuery.data?.length ? providerCatalogQuery.data : previewProviders;
   const savedCloudflare = providerPreferencesQuery.data?.find((preference) => preference.provider === "Cloudflare") || null;
   const saveProviderPreference = trpc.providers.savePreference.useMutation();
+  const removeProviderKey = trpc.providers.removeKey.useMutation();
+  const saveCustomProviderMutation = trpc.providers.saveCustomProvider.useMutation();
+  const removeCustomProviderMutation = trpc.providers.removeCustomProvider.useMutation();
   const validateProvider = trpc.providers.validate.useMutation();
   const startCastAnalysis = trpc.bookx.startCastAnalysis.useMutation();
   const cancelAnalysis = trpc.bookx.cancelAnalysis.useMutation();
@@ -410,7 +413,8 @@ export default function Home() {
   };
   const persistProviderDefaults = (customEndpoint?: string) => {
     if (!isAuthenticated) { notify("Sign in to save your routing defaults."); return; }
-    const targets = providers.filter((provider) => provider.configured);
+    // The user's own providers keep their models on their own settings.
+    const targets = providers.filter((provider) => provider.configured && isBuiltInProvider(provider.id));
     if (!targets.length) { notify("Connect a provider before saving routing defaults."); return; }
     const savedPreferences = providerPreferencesQuery.data || [];
     const firstModel = (provider: ProviderCatalog, capability: ProviderCapability) =>
@@ -419,7 +423,7 @@ export default function Home() {
     Promise.all(targets.map((provider) => {
       const saved = savedPreferences.find((preference) => preference.provider === provider.id);
       return saveProviderPreference.mutateAsync({
-        provider: provider.id as "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio",
+        provider: provider.id as BuiltInProviderId,
         // Seed a default only where none is stored. Sending a catalog model for a
         // provider that already has one would replace the custom model names
         // typed into the connection panel above.
@@ -442,7 +446,7 @@ export default function Home() {
       })
       .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Bookx could not save the routing defaults."));
   };
-  const checkProvider = (provider: string) => validateProvider.mutate({ provider: provider as "ElevenLabs" | "Deepgram" | "Cloudflare" | "OpenAI" | "Fish Audio" }, {
+  const checkProvider = (provider: string) => validateProvider.mutate({ provider: provider as ProviderId }, {
     onSuccess: (result) => setProviderChecks((current) => ({ ...current, [provider]: { status: result.status, detail: "detail" in result ? result.detail : undefined } })),
     // Without this the button sat on "Check" forever with no explanation.
     onError: (error) => setProviderChecks((current) => ({ ...current, [provider]: { status: "degraded", detail: error.message || "Connection test failed" } })),
@@ -452,21 +456,98 @@ export default function Home() {
    * only feedback is the provider flipping to "connected" once the catalog
    * refreshes.
    */
+  const refreshProviders = () => Promise.all([
+    utils.providers.catalog.invalidate(),
+    utils.providers.listPreferences.invalidate(),
+    utils.providers.voiceCatalog.invalidate(),
+  ]);
+  /** A new key's result replaces any earlier check for the provider. */
+  const forgetCheck = (provider: string) => setProviderChecks((current) => {
+    const { [provider]: _dropped, ...rest } = current;
+    return rest;
+  });
   const persistProviderKey = (provider: string, apiKey: string) => {
     if (!isAuthenticated) { notify("Sign in to save provider keys."); return; }
-    if (!apiKey) return;
+    if (!apiKey || !isBuiltInProvider(provider)) return;
     setSavingKeyFor(provider);
-    saveProviderPreference.mutate({ provider: provider as CatalogProvider, apiKey }, {
+    saveProviderPreference.mutate({ provider, apiKey }, {
       onSuccess: async () => {
-        await Promise.all([
-          utils.providers.catalog.invalidate(),
-          utils.providers.listPreferences.invalidate(),
-          utils.providers.voiceCatalog.invalidate(),
-        ]);
-        toast.success(`${provider} key saved.`, { description: "Use Check to verify it against the provider." });
+        await refreshProviders();
+        forgetCheck(provider);
+        toast.success(`${provider} key saved.`, { description: "Checking it against the provider now." });
+        // Verify straight away, so a mistyped key shows up here rather than mid-book.
+        checkProvider(provider);
       },
       onError: (error) => toast.error(error.message || `Bookx could not save the ${provider} key.`),
       onSettled: () => setSavingKeyFor(null),
+    });
+  };
+  const forgetProviderKey = (provider: string) => {
+    if (!isAuthenticated) { notify("Sign in to manage provider keys."); return; }
+    if (!isBuiltInProvider(provider)) return;
+    removeProviderKey.mutate({ provider }, {
+      onSuccess: async (result) => {
+        await refreshProviders();
+        forgetCheck(provider);
+        toast.success(result.removed ? `${provider} key removed.` : `No ${provider} key was saved here.`);
+      },
+      onError: (error) => toast.error(error.message || `Bookx could not remove the ${provider} key.`),
+    });
+  };
+  /** Saves the Cloudflare account ID and/or token from the Cloudflare card. */
+  const persistCloudflareAccount = (accountId: string, apiToken: string) => {
+    if (!isAuthenticated) { notify("Sign in to save your Cloudflare connection."); return; }
+    if (!accountId && !apiToken) return;
+    setSavingKeyFor("Cloudflare");
+    saveProviderPreference.mutate({
+      provider: "Cloudflare",
+      ...(accountId ? { apiBaseUrl: `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai` } : {}),
+      ...(apiToken ? { apiKey: apiToken } : {}),
+    }, {
+      onSuccess: async () => {
+        await refreshProviders();
+        forgetCheck("Cloudflare");
+        toast.success("Cloudflare connection saved.", { description: "Checking it now." });
+        checkProvider("Cloudflare");
+      },
+      onError: (error) => toast.error(error.message || "Bookx could not save the Cloudflare connection."),
+      onSettled: () => setSavingKeyFor(null),
+    });
+  };
+  const persistCustomProvider = async (draft: CustomProviderDraft): Promise<boolean> => {
+    if (!isAuthenticated) { notify("Sign in to add providers."); return false; }
+    const apiKey = draft.removeKey ? "" : draft.apiKey.trim() || undefined;
+    try {
+      const saved = await saveCustomProviderMutation.mutateAsync({
+        ...(draft.id && isCustomProviderId(draft.id) ? { id: draft.id } : {}),
+        label: draft.label.trim(),
+        baseUrl: draft.baseUrl.trim(),
+        // Adding: the key if one was typed. Editing: blank keeps the saved key.
+        ...(apiKey !== undefined ? { apiKey } : {}),
+        ttsModel: draft.ttsModel.trim(),
+        sttModel: draft.sttModel.trim(),
+        voices: parseVoiceList(draft.voices),
+      });
+      await refreshProviders();
+      forgetCheck(saved.id);
+      toast.success(draft.id ? `${draft.label.trim()} updated.` : `${draft.label.trim()} added.`, { description: "Checking the connection now." });
+      checkProvider(saved.id);
+      return true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Bookx could not save that provider.");
+      return false;
+    }
+  };
+  const forgetCustomProvider = (id: string) => {
+    if (!isAuthenticated || !isCustomProviderId(id)) return;
+    const label = providers.find((provider) => provider.id === id)?.label || "Provider";
+    removeCustomProviderMutation.mutate({ id }, {
+      onSuccess: async () => {
+        await refreshProviders();
+        forgetCheck(id);
+        toast.success(`${label} removed.`, { description: "Projects that used it need another voice provider." });
+      },
+      onError: (error) => toast.error(error.message || `Bookx could not remove ${label}.`),
     });
   };
   const persistCloudflareConnection = (connection: CloudflareConnectionDraft) => {
@@ -680,7 +761,7 @@ export default function Home() {
   };
   const previewCharacter = (character: Character) => {
     const persisted = workspaceQuery.data?.characters.find((value) => value.name === character.name);
-    const provider = narrationProvider(activeProject.voiceProvider);
+    const provider = narrationProvider(activeProject.voiceProvider, providers);
     if (!activeProjectIsSaved || !persisted || !provider) { playBrowserSample(character.voice); notify(`${character.name} browser preview is playing.`); return; }
     previewCharacterVoice.mutate({ projectId: activeProject.id, characterId: persisted.id, provider, voiceId: character.voiceId, model: activeProject.voiceModel }, {
       onSuccess: (result) => { setPreviewUrls((current) => ({ ...current, [character.name]: result.audioUrl })); toast.success(`${character.name} preview is ready.`); },
@@ -696,7 +777,7 @@ export default function Home() {
     notify(`Playing a browser sample for ${voiceName}. Sign in to render the selected provider voice.`);
   };
   const previewLibraryVoice = (voice: VoiceChoice) => {
-    const provider = narrationProvider(activeProject.voiceProvider);
+    const provider = narrationProvider(activeProject.voiceProvider, providers);
     if (!activeProjectIsSaved || !provider) { playBrowserSample(voice.name); notify(`${voice.name} browser preview is playing.`); return; }
     previewVoice.mutate({ projectId: activeProject.id, provider, voiceId: voice.id, model: activeProject.voiceModel, text: `This is a Bookx sample for ${voice.name}. A clear voice helps listeners follow every moment.` }, {
       onSuccess: (result) => { setLibraryPreviewUrls((current) => ({ ...current, [voice.id]: result.audioUrl })); toast.success(`${voice.name} provider preview is ready.`); },
@@ -771,11 +852,14 @@ export default function Home() {
           {tab === "settings" && (
             <ProviderSettings
               providers={providers}
-              preferences={providerPreferencesQuery.data ?? []}
               saved={settingsSaved}
               checks={providerChecks}
               onSave={persistProviderDefaults}
               onSaveKey={persistProviderKey}
+              onRemoveKey={forgetProviderKey}
+              onSaveCloudflareAccount={persistCloudflareAccount}
+              onSaveCustomProvider={persistCustomProvider}
+              onRemoveCustomProvider={forgetCustomProvider}
               onValidate={checkProvider}
               cloudflareSaved={savedCloudflare}
               onSaveCloudflare={persistCloudflareConnection}

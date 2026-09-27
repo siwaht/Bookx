@@ -50,7 +50,7 @@ describe.skipIf(!ffmpeg)("chapter mixing for export", () => {
       ];
 
       const plain = assembleAudio(parts, { gapMs: 350 });
-      const mixed = await assembleAndMixChapter({ parts, cues, level: "very-subtle", defaultGapMs: 350 });
+      const mixed = await assembleAndMixChapter({ parts, cues, level: "extra-subtle", defaultGapMs: 350 });
       expect(mixed.mixedCues).toBe(2);
       expect(mixed.container).toBe("mp3");
       // The swell's lead-in and the widened pause after line two, and nothing else.
@@ -58,7 +58,7 @@ describe.skipIf(!ffmpeg)("chapter mixing for export", () => {
       const expected = CUE_TIMING.music.gapBeforeMs + (CUE_TIMING.sfx.gapAfterMs - 350);
       expect(Math.abs(added - expected)).toBeLessThan(150);
 
-      const quiet = await assembleAndMixChapter({ parts: parts.slice(0, 1), cues: [], level: "very-subtle", defaultGapMs: 350, target: mixed.target });
+      const quiet = await assembleAndMixChapter({ parts: parts.slice(0, 1), cues: [], level: "extra-subtle", defaultGapMs: 350, target: mixed.target });
       expect(quiet.mixedCues).toBe(0);
       const book = assembleAudio([{ buffer: mixed.buffer, label: "One" }, { buffer: quiet.buffer, label: "Two" }], { gapMs: 2000 });
       expect(book.marks).toHaveLength(2);

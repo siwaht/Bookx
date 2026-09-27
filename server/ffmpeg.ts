@@ -119,6 +119,34 @@ export function parseLoudness(stderr: string): Loudness {
   return { meanDb: toDb(mean), peakDb: toDb(peak), durationMs };
 }
 
+/**
+ * The noise floor of a file: the loudness of its quietest stretch, which is
+ * what ACX measures when it checks a submission for hiss and room tone.
+ *
+ * `volumedetect` reports only the whole-file mean and peak, so the floor is
+ * measured with `astats` over short windows: the quietest window's RMS is the
+ * noise floor. Windows shorter than a spoken syllable keep a pause from being
+ * counted as speech.
+ */
+export type NoiseFloor = { floorDb: number | null; durationMs: number };
+
+export function parseNoiseFloor(stderr: string): NoiseFloor {
+  // astats prints one "Parsed_astats" section per window, each ending with a
+  // line like "RMS level dB: -61.4".
+  const levels = [...stderr.matchAll(/RMS level dB:\s*(-?[\d.]+|-inf)/g)].map(match => (match[1] === "-inf" ? -91 : Number(match[1])));
+  const floor = levels.length ? Math.max(...levels) : null; // the loudest quiet window is the floor
+  const times = [...stderr.matchAll(/time=(\d+):(\d+):(\d+(?:\.\d+)?)/g)];
+  const last = times[times.length - 1];
+  const durationMs = last ? Math.round(((Number(last[1]) * 60 + Number(last[2])) * 60 + Number(last[3])) * 1000) : 0;
+  return { floorDb: floor === null ? null : Math.round(floor * 10) / 10, durationMs };
+}
+
+/** Measures a file's noise floor with ffmpeg's `astats` over 500 ms windows. */
+export async function measureNoiseFloor(file: string, timeoutMs?: number): Promise<NoiseFloor> {
+  const { stderr } = await runFfmpeg(["-i", file, "-af", "astats=metadata=1:reset=500,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], { timeoutMs });
+  return parseNoiseFloor(stderr);
+}
+
 /** Mean and peak level of an audio file, plus its decoded duration. */
 export async function measureLoudness(filePath: string): Promise<Loudness> {
   const { stderr } = await runFfmpeg(["-i", filePath, "-af", "volumedetect", "-f", "null", "-"], { timeoutMs: 180_000 });

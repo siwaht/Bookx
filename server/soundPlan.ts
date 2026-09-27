@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   CUE_TIMING,
   DEFAULT_MUSIC_TAG,
+  DEFAULT_SOUND_LEVEL,
   IMPACT_FADE_IN_MS,
   SOUND_LEVELS,
   isSoundTag,
@@ -399,4 +400,13 @@ export function duckThreshold(narrationMeanDb: number): number {
   return Math.max(0.001, Math.min(0.5, Number(linear.toFixed(5))));
 }
 
-export const isSoundLevel = (value: string): value is SoundLevel => value === "very-subtle" || value === "subtle";
+export const isSoundLevel = (value: string): value is SoundLevel =>
+  value === "ultra-subtle" || value === "extra-subtle" || value === "subtle";
+
+/** "very-subtle" was renamed "extra-subtle"; older projects still hold the old value. */
+const LEGACY_SOUND_LEVELS: Record<string, SoundLevel> = { "very-subtle": "extra-subtle" };
+
+/** A project's level, with legacy names mapped and unknown values at the default. */
+export function normalizeSoundLevel(value: string): SoundLevel {
+  return isSoundLevel(value) ? value : LEGACY_SOUND_LEVELS[value] ?? DEFAULT_SOUND_LEVEL;
+}
