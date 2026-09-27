@@ -6,6 +6,7 @@ import { createRoot } from "react-dom/client";
 import superjson from "superjson";
 import App from "./App";
 import { startLogin } from "./const";
+import { isNetworkFailure } from "./_core/hooks/useAuth";
 import "./index.css";
 
 const queryClient = new QueryClient();
@@ -13,6 +14,11 @@ const queryClient = new QueryClient();
 const redirectToLoginIfUnauthorized = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (typeof window === "undefined") return;
+
+  // A request that never reached the server says nothing about the session.
+  // Redirecting here is what turned a dead server into a bogus "sign in"
+  // prompt, so a connection failure is deliberately ignored.
+  if (isNetworkFailure(error)) return;
 
   const isUnauthorized = error.message === UNAUTHED_ERR_MSG;
 

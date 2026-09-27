@@ -157,7 +157,7 @@ function IconButton({ children, label, onClick }: { children: React.ReactNode; l
 }
 
 export default function Home() {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, offline } = useAuth();
   const utils = trpc.useUtils();
   const persistedProjects = trpc.bookx.listProjects.useQuery(undefined, { enabled: isAuthenticated });
   const providerCatalogQuery = trpc.providers.catalog.useQuery(undefined, { enabled: isAuthenticated });
@@ -765,6 +765,13 @@ export default function Home() {
       }
     }
   };
+  /** What a disabled panel should say: reconnecting beats a bogus sign-in prompt. */
+  const panelDisabledReason = (signedInReason: string, signedOutReason: string) =>
+    offline
+      ? "Prosecast cannot reach the server. Reconnecting… your session and work are safe; this recovers by itself once the server is back."
+      : isAuthenticated
+        ? signedInReason
+        : signedOutReason;
   const storeLocalCastOverride = (name: string, voice: VoiceChoice) => {
     try {
       const key = `bookx-cast-overrides:${activeProject.id}`;
@@ -842,16 +849,16 @@ export default function Home() {
   return (
     <main className="min-h-screen bg-[#f7f5ef] text-[#203038] noise-bg">
       {screen === "dashboard" ? (
-        <Dashboard projects={isAuthenticated ? projects.filter((project) => !demoProjectIds.has(project.id)) : projects} loading={isAuthenticated && persistedProjects.isLoading} isAuthenticated={isAuthenticated} onNew={() => { setDraft(initialDraft); setPendingPodcastImport(null); setWizardOpen(true); setWizardStep(1); }} onImport={() => setImportOpen(true)} onOpen={openProject} />
+        <Dashboard projects={isAuthenticated ? projects.filter((project) => !demoProjectIds.has(project.id)) : projects} loading={isAuthenticated && persistedProjects.isLoading} isAuthenticated={isAuthenticated} offline={offline} onNew={() => { setDraft(initialDraft); setPendingPodcastImport(null); setWizardOpen(true); setWizardStep(1); }} onImport={() => setImportOpen(true)} onOpen={openProject} />
       ) : (
         <Workspace project={activeProject} tab={tab} setTab={setTab} onBack={() => setScreen("dashboard")} onShare={() => notify("Preview link prepared for sharing.")} onSettings={() => setTab("settings")}>
           {tab === "manuscript" && (
             <ManuscriptEditor
               projectId={activeProject.id}
               canEdit={activeProjectIsSaved}
-              disabledReason={isAuthenticated
-                ? "This project only exists in this browser. Create or open a saved project to write chapters that Prosecast can narrate."
-                : "Sign in to write chapters. The manuscript is stored server-side so narration and export can read it."}
+              disabledReason={panelDisabledReason(
+                "This project only exists in this browser. Create or open a saved project to write chapters that Prosecast can narrate.",
+                "Sign in to write chapters. The manuscript is stored server-side so narration and export can read it.")}
               onNext={() => setTab("cast")}
             />
           )}
@@ -861,18 +868,18 @@ export default function Home() {
             <NarrationRun
               projectId={activeProject.id}
               canRender={activeProjectIsSaved}
-              disabledReason={isAuthenticated
-                ? "This project only exists in this browser. Create or open a saved project to render narration you can pause and resume."
-                : "Sign in to render narration. Runs are checkpointed on the server so a long book survives a closed tab or a dropped connection."}
+              disabledReason={panelDisabledReason(
+                "This project only exists in this browser. Create or open a saved project to render narration you can pause and resume.",
+                "Sign in to render narration. Runs are checkpointed on the server so a long book survives a closed tab or a dropped connection.")}
             />
           )}
           {tab === "studio" && (activeProject.kind === "audiobook" ? (
             <SoundDesign
               projectId={activeProject.id}
               canEdit={activeProjectIsSaved}
-              disabledReason={isAuthenticated
-                ? "This project only exists in this browser. Create or open a saved project to add background sounds and music."
-                : "Sign in to add background sounds and music. Sounds are planned, made and mixed on the server."}
+              disabledReason={panelDisabledReason(
+                "This project only exists in this browser. Create or open a saved project to add background sounds and music.",
+                "Sign in to add background sounds and music. Sounds are planned, made and mixed on the server.")}
             />
           ) : (
             <EnhancedProduction kind={activeProject.kind} playing={playing} setPlaying={setPlaying} />
@@ -882,9 +889,9 @@ export default function Home() {
             <ExportPackage
               projectId={activeProject.id}
               canExport={activeProjectIsSaved}
-              disabledReason={isAuthenticated
-                ? "This project only exists in this browser. Create or open a saved project to assemble a package."
-                : "Sign in to assemble a package. Prosecast joins the rendered segments server-side and verifies nothing is missing first."}
+              disabledReason={panelDisabledReason(
+                "This project only exists in this browser. Create or open a saved project to assemble a package.",
+                "Sign in to assemble a package. Prosecast joins the rendered segments server-side and verifies nothing is missing first.")}
             />
           )}
           {tab === "settings" && (
@@ -913,12 +920,12 @@ export default function Home() {
   );
 }
 
-function Dashboard({ projects, loading, isAuthenticated, onNew, onImport, onOpen }: { projects: Project[]; loading: boolean; isAuthenticated: boolean; onNew: () => void; onImport: () => void; onOpen: (project: Project) => void }) {
+function Dashboard({ projects, loading, isAuthenticated, offline, onNew, onImport, onOpen }: { projects: Project[]; loading: boolean; isAuthenticated: boolean; offline: boolean; onNew: () => void; onImport: () => void; onOpen: (project: Project) => void }) {
   return <div className="mx-auto min-h-screen max-w-[1440px] px-5 pb-12 pt-5 md:px-10">
     <header className="flex items-center justify-between border-b border-[#e2e4dd] pb-5">
       <button className="flex items-center gap-3 text-left" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}><span className="grid h-10 w-10 place-items-center rounded-[14px] bg-[#245f63] text-white shadow-[0_8px_20px_rgba(36,95,99,.22)]"><Headphones size={19} /></span><span><span className="block text-[17px] font-bold tracking-[-.04em]">Prosecast</span><span className="block text-[10px] tracking-[.14em] text-[#718084]">AUDIO WORKSPACE</span></span></button>
       <nav aria-label="Workspace context" className="hidden items-center gap-2 md:flex"><button aria-current="page" onClick={() => document.getElementById("recent-work")?.scrollIntoView({ behavior: "smooth" })} className="rounded-full bg-[#e3f0ed] px-4 py-2 text-sm font-semibold text-[#256d69]">Projects</button><button type="button" disabled title="Library is not available yet" className="rounded-full px-4 py-2 text-sm text-[#6f7d80] disabled:cursor-not-allowed">Library</button><button type="button" disabled title="Series is not available yet" className="rounded-full px-4 py-2 text-sm text-[#6f7d80] disabled:cursor-not-allowed">Series</button></nav>
-      <div className="flex items-center gap-2"><IconButton label="Search"><Search size={16} /></IconButton>{isAuthenticated ? <div className="flex items-center gap-2" title="Signed in"><span className="rounded-full bg-[#edf4ef] px-2.5 py-1.5 text-[11px] font-bold text-[#3d716a]">Signed in</span><div className="grid h-9 w-9 place-items-center rounded-full bg-[#d9b66b] text-xs font-bold text-[#2a3537]">ME</div></div> : <button onClick={() => startLogin()} className="btn-primary">Sign in</button>}</div>
+      <div className="flex items-center gap-2"><IconButton label="Search"><Search size={16} /></IconButton>{offline ? <span className="rounded-full bg-[#f3e8d3] px-2.5 py-1.5 text-[11px] font-bold text-[#9b712f]" title="The server cannot be reached; retrying automatically">Reconnecting…</span> : isAuthenticated ? <div className="flex items-center gap-2" title="Signed in"><span className="rounded-full bg-[#edf4ef] px-2.5 py-1.5 text-[11px] font-bold text-[#3d716a]">Signed in</span><div className="grid h-9 w-9 place-items-center rounded-full bg-[#d9b66b] text-xs font-bold text-[#2a3537]">ME</div></div> : <button onClick={() => startLogin()} className="btn-primary">Sign in</button>}</div>
     </header>
 
     <section className="brand-wave fade-up grid gap-8 py-12 lg:grid-cols-[1.25fr_.75fr] lg:items-end">
