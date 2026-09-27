@@ -69,11 +69,11 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
 
   const startPlan = trpc.bookx.startScenePlan.useMutation({
     onSuccess: () => void utils.bookx.analysisStatus.invalidate({ projectId, kind: "scenes" }),
-    onError: error => toast.error(error.message || "Bookx could not start planning."),
+    onError: error => toast.error(error.message || "Prosecast could not start planning."),
   });
   const prepare = trpc.bookx.prepareSounds.useMutation({
     onSuccess: () => void utils.bookx.analysisStatus.invalidate({ projectId, kind: "sounds" }),
-    onError: error => toast.error(error.message || "Bookx could not prepare the sounds."),
+    onError: error => toast.error(error.message || "Prosecast could not prepare the sounds."),
   });
   const cancel = trpc.bookx.cancelAnalysis.useMutation({
     onSuccess: () => {
@@ -101,7 +101,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     },
     onError: (error, _next, context) => {
       if (context?.previous) utils.bookx.soundDesign.setData({ projectId }, context.previous);
-      toast.error(error.message || "Bookx could not save the sound settings.");
+      toast.error(error.message || "Prosecast could not save the sound settings.");
     },
     onSettled: refresh,
   });
@@ -131,7 +131,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     },
     onError: (error, _next, context) => {
       if (context?.previous) utils.bookx.soundDesign.setData({ projectId }, context.previous);
-      toast.error(error.message || "Bookx could not update that sound.");
+      toast.error(error.message || "Prosecast could not update that sound.");
     },
     onSettled: refresh,
   });
@@ -146,7 +146,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     setPendingPreview(key);
     previewCue.mutate({ projectId, cueId, inContext }, {
       onSuccess: result => setPreview({ key, url: result.url }),
-      onError: error => toast.error(error.message || "Bookx could not play that sound."),
+      onError: error => toast.error(error.message || "Prosecast could not play that sound."),
       onSettled: () => {
         setPendingPreview(null);
         refresh();
@@ -158,7 +158,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     setPendingPreview(key);
     previewChapter.mutate({ projectId, chapterId }, {
       onSuccess: result => setPreview({ key, url: result.url }),
-      onError: error => toast.error(error.message || "Bookx could not mix that chapter."),
+      onError: error => toast.error(error.message || "Prosecast could not mix that chapter."),
       onSettled: () => {
         setPendingPreview(null);
         refresh();
@@ -260,7 +260,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
                 <p className="mt-0.5 text-xs text-[#748285]">
                   {plannedChapters
                     ? `${plannedChapters} of ${bookChapters} chapters planned${availability.languageModel ? ` with ${availability.languageModel}` : " with keyword rules"}. Mute or trim anything; your changes are kept when you re-plan.`
-                    : "Bookx reads each scene and suggests where a sound or a music swell belongs."}
+                    : "Prosecast reads each scene and suggests where a sound or a music swell belongs."}
                 </p>
               </div>
               <div className="flex flex-wrap gap-2">

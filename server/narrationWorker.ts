@@ -6,6 +6,7 @@ import {
   bookxCharacters,
   bookxGenerationJobs,
   bookxProjects,
+  bookxPronunciations,
   bookxSegments,
   bookxSoundCues,
   type GenerationJobDetail,
@@ -27,6 +28,7 @@ import { hashSegmentText, segmentChapter, type SegmentUnit } from "./textSegment
 import { attributeSpeakersHeuristically, type CastMember } from "./speakerAttribution";
 import { renderSegmentAudio } from "./ttsRender";
 import { textLimitForModel } from "../shared/narration";
+import { applyPronunciationRules, pronunciationHash, type PronunciationRule } from "./pronunciation";
 
 /**
  * The durable narration worker.
@@ -340,6 +342,7 @@ export async function loadPlannableSegments(projectId: string, chapterIds?: stri
     chapterOrderIndex: chapterOrder.get(row.chapterId) ?? 0,
     text: row.text,
     textHash: row.textHash,
+    pronunciationHash: row.pronunciationHash,
     audioStorageKey: row.audioStorageKey,
     voiceProvider: row.voiceProvider,
     voiceModel: row.voiceModel,
@@ -349,6 +352,12 @@ export async function loadPlannableSegments(projectId: string, chapterIds?: stri
     sceneBreakBefore: Boolean(row.delivery?.sceneBreakBefore),
     kind: row.delivery?.kind ?? "narration",
   }));
+}
+
+/** Loads the project's pronunciation rules, longest word first. */
+async function loadPronunciationRules(db: Db, projectId: string): Promise<PronunciationRule[]> {
+  const rows = await db.select().from(bookxPronunciations).where(eq(bookxPronunciations.projectId, projectId));
+  return rows.map(row => ({ word: row.word, alias: row.alias, phoneme: row.phoneme }));
 }
 
 // ---------------------------------------------------------------------------
@@ -571,6 +580,8 @@ async function renderWithRetries(input: {
   provider: ProviderId;
   model: string;
   language?: string | null;
+  pronunciationRules: PronunciationRule[];
+  pronunciationHash: string;
   maxAttempts: number;
   requestTimeoutMs: number;
   stallTimeoutMs: number;
@@ -592,7 +603,7 @@ async function renderWithRetries(input: {
         provider: input.provider,
         model: input.model,
         voiceId: segment.targetVoiceId,
-        text: segment.text,
+        text: applyPronunciationRules(segment.text, input.pronunciationRules),
         previousText: input.previousText,
         nextText: input.nextText,
         language: input.language,
@@ -610,6 +621,7 @@ async function renderWithRetries(input: {
         .set({
           audioStorageKey: result.storageKey,
           textHash: hashSegmentText(segment.text),
+          pronunciationHash: input.pronunciationHash,
           voiceProvider: input.provider,
           voiceModel: input.model,
           voiceId: segment.targetVoiceId ?? null,
@@ -715,9 +727,12 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
     const chapterIds = (job.detail as GenerationJobDetail | null)?.chapterIds ?? options.chapterIds;
 
     const segments = await loadPlannableSegments(job.projectId, chapterIds);
+    const pronunciationRules = await loadPronunciationRules(db, job.projectId);
+    const pronHash = pronunciationHash(pronunciationRules);
     const plan = planNarrationRun({
       segments,
       pinned: { provider, model },
+      pronunciationHash: pronHash,
       cursorSegmentId: job.cursorSegmentId,
       rewindSegments: job.rewindSegments,
       force: options.force,
@@ -811,6 +826,8 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         provider,
         model,
         language: project.language,
+        pronunciationRules,
+        pronunciationHash: pronHash,
         maxAttempts,
         requestTimeoutMs,
         stallTimeoutMs,
@@ -1025,6 +1042,8 @@ export async function auditProjectAudio(input: { projectId: string; ownerId: num
 
   const segments = await loadPlannableSegments(input.projectId);
   const chapters = await includedChapters(db, input.projectId);
+  const pronunciationRules = await loadPronunciationRules(db, input.projectId);
+  const pronHash = pronunciationHash(pronunciationRules);
 
   const durations = new Map<string, number | null>();
   if (chapters.length) {
@@ -1039,5 +1058,5 @@ export async function auditProjectAudio(input: { projectId: string; ownerId: num
     }
   }
 
-  return auditSegments(segments, { provider: project.voiceProvider, model: project.voiceModel }, durations);
+  return auditSegments(segments, { provider: project.voiceProvider, model: project.voiceModel }, durations, pronHash);
 }

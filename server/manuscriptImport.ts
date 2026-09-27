@@ -469,7 +469,7 @@ function finalizeSections(sections: Section[], warnings: string[]): ImportedChap
   if (!chapters.some(chapter => chapter.included) && chapters.length) {
     // Never hand back a book with nothing selected; the classifier was wrong.
     chapters.forEach(chapter => { chapter.included = true; });
-    warnings.push("Bookx could not tell the chapters from the front matter, so every section is selected.");
+    warnings.push("Prosecast could not tell the chapters from the front matter, so every section is selected.");
   }
   return chapters;
 }

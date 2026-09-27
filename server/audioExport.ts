@@ -8,6 +8,7 @@ import {
   bookxCharacters,
   bookxExports,
   bookxProjects,
+  bookxPronunciations,
   bookxProviderSettings,
   bookxSegments,
   type ExportChapterFile,
@@ -29,6 +30,7 @@ import { getDb } from "./db";
 import { assembleAudio, buildSilentMp3, scanMp3, scanWav, wavHeader } from "./audioAssembly";
 import { bookMetadata, buildId3Tag, encodeChapter, joinBookFiles, measureBuffer, writeSilence } from "./exportEncoder";
 import { measureNoiseFloor, resolveFfmpeg, withTempDir } from "./ffmpeg";
+import { pronunciationHash } from "./pronunciation";
 import {
   CLOSING_CREDITS_FILE_NAME,
   OPENING_CREDITS_FILE_NAME,
@@ -161,11 +163,14 @@ async function segmentDurations(db: Db, projectId: string): Promise<Map<string, 
 async function chapterStatuses(db: Db, project: ProjectRow): Promise<{ chapters: ChapterRow[]; statuses: Map<string, ChapterAudioStatus>; segments: PlannableSegment[] }> {
   const chapters = await includedChapters(db, project.id);
   const segments = chapters.length ? await loadPlannableSegments(project.id) : [];
+  const pronunciations = await db.select().from(bookxPronunciations).where(eq(bookxPronunciations.projectId, project.id));
+  const pronHash = pronunciationHash(pronunciations.map(row => ({ word: row.word, alias: row.alias, phoneme: row.phoneme })));
   const statuses = chapterAudioStates(
     segments,
     { provider: project.voiceProvider, model: project.voiceModel },
     await segmentDurations(db, project.id),
     chapters.map(chapter => chapter.id),
+    pronHash,
   );
   return { chapters, statuses, segments };
 }

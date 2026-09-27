@@ -29,6 +29,13 @@
       "when": 1790505207276,
       "tag": "0003_dazzling_patch",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790513680392,
+      "tag": "0004_pronunciation_hash",
+      "breakpoints": true
     }
   ]
 }

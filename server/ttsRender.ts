@@ -91,7 +91,7 @@ const openAiVoiceForStarter: Record<string, string> = {
 
 const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer", "ash", "sage", "coral"]);
 
-/** Maps a Bookx voice id onto a voice the OpenAI speech API accepts. */
+/** Maps a Prosecast voice id onto a voice the OpenAI speech API accepts. */
 function openAiVoice(voiceId?: string | null): string {
   const raw = (voiceId || "").trim();
   if (!raw) return "alloy";

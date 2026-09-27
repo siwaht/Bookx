@@ -20,7 +20,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe(`Bookx isolated multi-cast podcast workflow`, () => {
+describe(`Prosecast isolated multi-cast podcast workflow`, () => {
   it("creates, casts, mixes, reviews, and prepares a Podcast package without retaining QA data", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({

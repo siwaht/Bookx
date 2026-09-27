@@ -93,11 +93,11 @@ export function ExportPackage({ projectId, canExport, disabledReason }: { projec
       void utils.bookx.listExports.invalidate({ projectId });
       toast.success(`Assembling ${result.chapters} chapter${result.chapters === 1 ? "" : "s"}.`, { description: describeOutput(output) });
     },
-    onError: error => toast.error(error.message || "Bookx could not start the export."),
+    onError: error => toast.error(error.message || "Prosecast could not start the export."),
   });
   const remove = trpc.bookx.deleteExport.useMutation({
     onSuccess: () => void utils.bookx.listExports.invalidate({ projectId }),
-    onError: error => toast.error(error.message || "Bookx could not delete that package."),
+    onError: error => toast.error(error.message || "Prosecast could not delete that package."),
   });
 
   if (!canExport) {

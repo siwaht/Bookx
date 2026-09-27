@@ -10,7 +10,7 @@ export type ManuscriptUpload = { name: string; size: number; base64: string };
 export function readFileAsBase64(file: File): Promise<string> {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error(`Bookx could not read ${file.name}.`));
+    reader.onerror = () => reject(new Error(`Prosecast could not read ${file.name}.`));
     reader.onload = () => {
       const result = typeof reader.result === "string" ? reader.result : "";
       resolve(result.includes(",") ? result.slice(result.indexOf(",") + 1) : result);

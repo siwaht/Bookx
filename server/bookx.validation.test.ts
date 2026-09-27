@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { projectReadiness, projectSetupSchema } from "../shared/bookx";
 
-describe("Bookx project setup", () => {
+describe("Prosecast project setup", () => {
   it("accepts a complete audiobook setup", () => {
     const result = projectSetupSchema.safeParse({
       title: "A Quiet Current",

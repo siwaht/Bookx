@@ -99,23 +99,23 @@ export function NarrationRun({
       invalidate();
       toast.success(result.resumed ? "Picking up where the last run stopped." : "Narration started.");
     },
-    onError: onError("Bookx could not start narration."),
+    onError: onError("Prosecast could not start narration."),
   });
   const pause = trpc.bookx.pauseNarration.useMutation({
     onSuccess: () => { invalidate(); toast("Pausing after the current segment. Everything rendered is kept."); },
-    onError: onError("Bookx could not pause the run."),
+    onError: onError("Prosecast could not pause the run."),
   });
   const resume = trpc.bookx.resumeNarration.useMutation({
     onSuccess: () => { invalidate(); toast.success("Resuming just before where it stopped."); },
-    onError: onError("Bookx could not resume the run."),
+    onError: onError("Prosecast could not resume the run."),
   });
   const cancel = trpc.bookx.cancelNarration.useMutation({
     onSuccess: () => { invalidate(); toast("Run cancelled. Rendered audio is kept."); },
-    onError: onError("Bookx could not cancel the run."),
+    onError: onError("Prosecast could not cancel the run."),
   });
   const retry = trpc.bookx.retryFailedNarration.useMutation({
     onSuccess: result => { invalidate(); toast.success(`Retrying ${result.reset} unrendered segment(s).`); },
-    onError: onError("Bookx could not retry the unrendered segments."),
+    onError: onError("Prosecast could not retry the unrendered segments."),
   });
 
   const data = status.data;
@@ -212,7 +212,7 @@ export function NarrationRun({
               tone="warn"
               icon={<TriangleAlert size={16} />}
               title="The provider has gone quiet"
-              body={`No progress for ${data?.secondsSinceHeartbeat}s. Bookx is still retrying the current segment with backoff. You can pause and resume later — it will restart just before this point, so nothing overlaps or goes missing.`}
+              body={`No progress for ${data?.secondsSinceHeartbeat}s. Prosecast is still retrying the current segment with backoff. You can pause and resume later — it will restart just before this point, so nothing overlaps or goes missing.`}
             />
           )}
 
@@ -244,7 +244,7 @@ export function NarrationRun({
               tone="info"
               icon={<AlertCircle size={16} />}
               title="No narration segments yet"
-              body="Add chapter text in Write. Bookx splits it into render units sized for your voice model when you start a run."
+              body="Add chapter text in Write. Prosecast splits it into render units sized for your voice model when you start a run."
             />
           )}
 

@@ -32,7 +32,7 @@ function stubAllProviderKeys() {
   vi.stubEnv("CLOUDFLARE_API_TOKEN", "qa-token");
 }
 
-describe("Bookx narration request validation", () => {
+describe("Prosecast narration request validation", () => {
   it("normalizes an eligible narration request", () => {
     expect(validateNarrationRequest({ provider: "OpenAI", text: "  The tide was turning.  ", voiceId: "alloy" })).toEqual({
       provider: "OpenAI",

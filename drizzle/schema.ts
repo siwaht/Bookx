@@ -125,6 +125,8 @@ export const bookxSegments = sqliteTable("bookxSegments", {
   // audio.
   /** SHA-256 of the exact text that produced `audioStorageKey`. */
   textHash: text("textHash"),
+  /** Hash of the pronunciation rules applied when `audioStorageKey` was made. */
+  pronunciationHash: text("pronunciationHash"),
   voiceProvider: text("voiceProvider"),
   voiceModel: text("voiceModel"),
   voiceId: text("voiceId"),

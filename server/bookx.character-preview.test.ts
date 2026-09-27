@@ -31,7 +31,7 @@ function createAuthContext(): TrpcContext {
   return { user, req: { protocol: "https", headers: {} } as TrpcContext["req"], res: {} as TrpcContext["res"] };
 }
 
-describe(`Bookx character preview`, () => {
+describe(`Prosecast character preview`, () => {
   it("uses the persisted character voice and saves the generated preview key", async () => {
     const caller = appRouter.createCaller(createAuthContext());
     const created = await caller.bookx.createProject({

@@ -303,7 +303,7 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
       const identity = await accessIdentity(request, env, ctx);
       if (!identity) {
         const connected = Boolean(ctx.access) || accessSettings(env) !== null;
-        return text(connected ? "Sign in through Cloudflare Access to use Bookx." : "Bookx is not connected to Cloudflare Access yet.", 401);
+        return text(connected ? "Sign in through Cloudflare Access to use Prosecast." : "Prosecast is not connected to Cloudflare Access yet.", 401);
       }
       if (isCrossSite(request, url)) return text("Cross-site request refused", 403);
 
@@ -314,12 +314,12 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
       if (url.pathname.startsWith("/api/auth/")) return text("Not found", 404);
 
       const secret = internalSecret(env);
-      if (!secret) return text("Bookx is not set up yet: the BOOKX_INTERNAL_SECRET secret is missing.", 500);
+      if (!secret) return text("Prosecast is not set up yet: the BOOKX_INTERNAL_SECRET secret is missing.", 500);
       try {
         return await upstream(forAppWithIdentity(request, secret, identity), env);
       } catch (error) {
         console.error("[Bookx] The app did not answer:", error);
-        return text("Bookx is starting up. Try again in a few seconds.", 503, { "retry-after": "5" });
+        return text("Prosecast is starting up. Try again in a few seconds.", 503, { "retry-after": "5" });
       }
     },
   };

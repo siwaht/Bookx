@@ -235,7 +235,7 @@ export const bookxRouter = router({
     } catch (error) {
       if (error instanceof ManuscriptImportError) throw new TRPCError({ code: "BAD_REQUEST", message: error.message });
       console.error("[Import] Manuscript parse failed:", error);
-      throw new TRPCError({ code: "BAD_REQUEST", message: "Bookx could not read that file. Try exporting it again as EPUB or DOCX." });
+      throw new TRPCError({ code: "BAD_REQUEST", message: "Prosecast could not read that file. Try exporting it again as EPUB or DOCX." });
     }
     if (!parsed.chapters.length) throw new TRPCError({ code: "BAD_REQUEST", message: "No readable chapters were found in that file." });
 

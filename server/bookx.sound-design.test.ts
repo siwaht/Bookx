@@ -53,7 +53,7 @@ const setup = {
 
 const hasFfmpeg = Boolean(await resolveFfmpeg());
 
-describe(`Bookx sound design`, () => {
+describe(`Prosecast sound design`, () => {
   it("plans cues from the text, keeps the creator's edits, and guards every cue", async () => {
     const owner = caller(990_101, "sound-owner");
     const intruder = caller(990_102, "sound-intruder");

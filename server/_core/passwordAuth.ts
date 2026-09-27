@@ -82,12 +82,12 @@ async function syncStoredHash(): Promise<void> {
     .onConflictDoUpdate({ target: settingsTable.id, set: { signinHash: next } });
 }
 
-/** The single Bookx account, created or refreshed on first sign-in. */
+/** The single Prosecast account, created or refreshed on first sign-in. */
 async function upsertOwner(): Promise<void> {
   const email = signinEmail();
   await db.upsertUser({
     openId: SESSION_OPEN_ID,
-    name: email.split("@")[0] || "Bookx owner",
+    name: email.split("@")[0] || "Prosecast owner",
     email,
     loginMethod: "password",
     lastSignedIn: new Date(),
