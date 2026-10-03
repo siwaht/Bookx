@@ -87,10 +87,23 @@ const LIVE_TTL_MS = 30 * 60_000;
 const LIVE_TIMEOUT_MS = 8_000;
 const liveCache = new Map<string, { at: number; models: CatalogModel[] }>();
 
+/** The provider's own words for a failure, without the JSON wrapped around them. */
+function errorWords(body: string): string {
+  try {
+    const parsed = JSON.parse(body) as { detail?: unknown; error?: unknown; message?: unknown; err_msg?: unknown } | null;
+    const nested = (value: unknown) => (value && typeof value === "object" ? (value as { message?: unknown }).message : value);
+    const found = [nested(parsed?.detail), nested(parsed?.error), parsed?.err_msg, parsed?.message].find(value => typeof value === "string" && value.trim());
+    if (typeof found === "string") return found.trim();
+  } catch {
+    // Not JSON; the text itself is the message.
+  }
+  return body.replace(/\s+/g, " ").trim();
+}
+
 async function getJson(url: string, headers: Record<string, string>): Promise<unknown> {
   const response = await fetch(url, { headers, signal: AbortSignal.timeout(LIVE_TIMEOUT_MS), redirect: "manual" });
   if (!response.ok) {
-    const detail = await response.text().catch(() => "");
+    const detail = errorWords(await response.text().catch(() => ""));
     throw new Error(`Model list returned HTTP ${response.status}${detail ? `: ${detail.slice(0, 160)}` : ""}`);
   }
   return response.json();

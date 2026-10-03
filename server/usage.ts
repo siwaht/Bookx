@@ -164,16 +164,24 @@ const num = (value: unknown): number | undefined => {
   return Number.isFinite(parsed) ? parsed : undefined;
 };
 
-const refused = (status: number, what: string): Fetched => ({
-  status: "error",
-  detail: status === 401 || status === 403
-    ? `This key cannot read ${what}. Give it account (user) read access, or check the balance in the provider's dashboard.`
-    : `The provider answered HTTP ${status} when asked for ${what}.`,
-});
+/** A key the provider rejects outright, as opposed to one that is valid but limited. */
+const INVALID_KEY = /invalid[\s_-]*(api[\s_-]*)?(key|token|credentials?|auth)/i;
+
+const refused = (result: { status: number; body: unknown }, what: string): Fetched => {
+  const { status } = result;
+  if (status !== 401 && status !== 403) return { status: "error", detail: `The provider answered HTTP ${status} when asked for ${what}.` };
+  const said = typeof result.body === "string" ? result.body : JSON.stringify(result.body ?? "");
+  return {
+    status: "error",
+    detail: INVALID_KEY.test(said)
+      ? "The provider does not accept this key. Check it in the connection settings."
+      : `This key cannot read ${what}. Give it account (user) read access, or check the balance in the provider's dashboard.`,
+  };
+};
 
 async function elevenLabsBalance(key: string): Promise<Fetched> {
   const result = await getJson("https://api.elevenlabs.io/v1/user/subscription", { "xi-api-key": key });
-  if (!result.ok) return refused(result.status, "its subscription");
+  if (!result.ok) return refused(result, "its subscription");
   const body = result.body as { tier?: string; status?: string; character_count?: number; character_limit?: number; next_character_count_reset_unix?: number };
   const used = num(body.character_count);
   const limit = num(body.character_limit);
@@ -192,7 +200,7 @@ async function elevenLabsBalance(key: string): Promise<Fetched> {
 async function openRouterBalance(key: string): Promise<Fetched> {
   const headers = { Authorization: `Bearer ${key}` };
   const result = await getJson("https://openrouter.ai/api/v1/key", headers);
-  if (!result.ok) return refused(result.status, "its key limits");
+  if (!result.ok) return refused(result, "its key limits");
   const data = (result.body as { data?: { label?: string; usage?: number; limit?: number | null; limit_remaining?: number | null; is_free_tier?: boolean } }).data ?? {};
   const used = num(data.usage);
   const limit = num(data.limit);
@@ -213,11 +221,11 @@ async function openRouterBalance(key: string): Promise<Fetched> {
 async function deepgramBalance(key: string): Promise<Fetched> {
   const headers = { Authorization: `Token ${key}` };
   const projects = await getJson("https://api.deepgram.com/v1/projects", headers);
-  if (!projects.ok) return refused(projects.status, "its projects");
+  if (!projects.ok) return refused(projects, "its projects");
   const project = ((projects.body as { projects?: Array<{ project_id?: string; name?: string }> }).projects ?? [])[0];
   if (!project?.project_id) return { status: "error", detail: "This key has no Deepgram project." };
   const balances = await getJson(`https://api.deepgram.com/v1/projects/${encodeURIComponent(project.project_id)}/balances`, headers);
-  if (!balances.ok) return refused(balances.status, "the project balance");
+  if (!balances.ok) return refused(balances, "the project balance");
   const entries = (balances.body as { balances?: Array<{ amount?: number; units?: string }> }).balances ?? [];
   const remaining = entries.reduce((total, entry) => total + (num(entry.amount) ?? 0), 0);
   const units = entries[0]?.units?.toLowerCase();
@@ -233,7 +241,7 @@ async function deepgramBalance(key: string): Promise<Fetched> {
 
 async function fishAudioBalance(key: string): Promise<Fetched> {
   const result = await getJson("https://api.fish.audio/wallet/self/api-credit", { Authorization: `Bearer ${key}` });
-  if (!result.ok) return refused(result.status, "its API credit");
+  if (!result.ok) return refused(result, "its API credit");
   const body = result.body as { credit?: string | number };
   return { status: "ok", unit: "usd", remaining: num(body.credit), resetsAt: null, plan: null, detail: "Prepaid API credit." };
 }
