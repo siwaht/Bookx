@@ -1,4 +1,5 @@
 import { BookOpenText, LoaderCircle, Play, RefreshCw, Search, Sparkles, Trash2, Volume2, Wand2, X } from "lucide-react";
+import { StepTiming } from "./studio/StepTiming";
 
 export type CastingCharacter = {
   id?: string;
@@ -28,6 +29,10 @@ export type CastAnalysisState = {
   message: string | null;
   errors: string[];
   jobId: string | null;
+  /** Step counts and start time, for the time-left estimate. */
+  totalSteps?: number;
+  completedSteps?: number;
+  startedAt?: string | null;
 };
 
 type NarrationStyle = "single" | "cast" | "narrator-cast";
@@ -152,6 +157,7 @@ export function CastingReview({
                     {running ? "Reading the book" : analysis.status === "completed" ? "Cast ready" : analysis.status === "cancelled" ? "Analysis stopped" : "Analysis did not finish"}
                   </strong>
                   <span className="block text-xs text-[#66807b]">{analysis.message}</span>
+                {running && <StepTiming run={analysis} />}
                 </div>
                 {running && onCancelAnalysis && (
                   <button onClick={onCancelAnalysis} aria-label="Stop the analysis" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-[#66807b] hover:bg-[#e3efe9]"><X size={14} /></button>

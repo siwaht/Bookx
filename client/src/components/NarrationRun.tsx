@@ -14,7 +14,14 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { isTerminalJobStatus, type NarrationJobStatus } from "@shared/narration";
+import { isTerminalJobStatus, type ChapterProgress, type NarrationJobStatus } from "@shared/narration";
+import { ttsTraits } from "@shared/direction";
+import { ChapterPlayer } from "./studio/ChapterPlayer";
+import { DirectionEditor } from "./studio/DirectionEditor";
+import { NarrationChapterList } from "./studio/NarrationChapterList";
+import { NarrationProgressPanel } from "./studio/NarrationProgressPanel";
+import { NarrationVoicePanel } from "./studio/NarrationVoicePanel";
+import { RegenerateDialog } from "./studio/RegenerateDialog";
 
 /**
  * Live view of a narration run.
@@ -74,6 +81,11 @@ export function NarrationRun({
   const utils = trpc.useUtils();
   const [selectedChapters, setSelectedChapters] = useState<Set<string>>(new Set());
   const [showLog, setShowLog] = useState(false);
+  const [playerChapter, setPlayerChapter] = useState<string | null>(null);
+  const [directChapter, setDirectChapter] = useState<string | null>(null);
+  const [regenChapter, setRegenChapter] = useState<ChapterProgress | null>(null);
+  const workspace = trpc.bookx.getWorkspace.useQuery({ projectId }, { enabled: canRender });
+  const project = workspace.data?.project;
 
   const status = trpc.bookx.narrationStatus.useQuery(
     { projectId },
@@ -180,6 +192,11 @@ export function NarrationRun({
         status={jobStatus}
         actions={
           <>
+            {project && (
+              <span className="rounded-full border border-[#dfe5de] bg-white px-3 py-1.5 text-[10px] font-bold text-[#4a6360]" title={`${project.voiceProvider} · ${project.voiceModel}`}>
+                {project.voiceProvider} · {ttsTraits(project.voiceProvider, project.voiceModel).label}
+              </span>
+            )}
             {jobStatus === "running" || jobStatus === "queued" ? (
               <>
                 <button
@@ -219,7 +236,7 @@ export function NarrationRun({
         }
       />
 
-      <div className="grid flex-1 gap-6 overflow-auto p-6 lg:grid-cols-[minmax(0,1fr)_340px] md:p-9">
+      <div className="grid flex-1 grid-cols-1 gap-6 overflow-auto p-6 lg:grid-cols-[minmax(0,1fr)_340px] md:p-9">
         <section className="space-y-5">
           {stalled && (
             <Banner
@@ -262,94 +279,39 @@ export function NarrationRun({
             />
           )}
 
-          <div className="grid gap-3 sm:grid-cols-4">
-            <Stat label="Segments" value={total ? `${completed} / ${total}` : "—"} />
-            <Stat label="Audio rendered" value={formatDuration(data?.renderedDurationMs ?? 0)} />
-            <Stat label="Reused" value={data?.skippedSegments ? String(data.skippedSegments) : "0"} />
-            <Stat label="Unrendered" value={total ? String(Math.max(0, total - completed)) : "—"} />
-          </div>
+          {playerChapter && (
+            <ChapterPlayer
+              projectId={projectId}
+              chapterId={playerChapter}
+              live={active && ["rendering", "queued"].includes(chapters.find(chapter => chapter.chapterId === playerChapter)?.state ?? "")}
+              onNavigate={setPlayerChapter}
+              onClose={() => setPlayerChapter(null)}
+            />
+          )}
 
-          <div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5">
-            <div className="mb-3 flex items-end justify-between">
-              <div>
-                <h3 className="font-bold">Progress</h3>
-                <p className="mt-1 text-sm text-[#7b888a]">
-                  Measured from stored audio, so this is how much of the book exists — not an estimate.
-                </p>
-              </div>
-              <span className="text-sm font-bold text-[#2d7470]">{percent}%</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-[#ebeeea]">
-              <div
-                className="h-full rounded-full bg-[#4e9287] transition-[width] duration-500 ease-out"
-                style={{ width: `${percent}%` }}
-                role="progressbar"
-                aria-valuenow={percent}
-                aria-valuemin={0}
-                aria-valuemax={100}
-                aria-label="Narration progress"
-              />
-            </div>
-            {data?.pinnedVoice && (
-              <p className="mt-3 text-xs text-[#7b888a]">
-                Pinned to <strong className="text-[#4a6360]">{data.pinnedVoice.provider}</strong> · {data.pinnedVoice.model}.
-                A run never switches provider partway through, so the narrator stays the same voice from start to finish.
-              </p>
-            )}
-          </div>
+          <NarrationProgressPanel data={data} />
+          {data?.pinnedVoice && (
+            <p className="-mt-2 px-1 text-xs text-[#7b888a]">
+              This run is pinned to <strong className="text-[#4a6360]">{data.pinnedVoice.provider}</strong> · {data.pinnedVoice.model}, so the narrator stays the same voice from start to finish.
+              {data.skippedSegments > 0 && ` ${data.skippedSegments} line${data.skippedSegments === 1 ? " was" : "s were"} reused from earlier runs.`}
+            </p>
+          )}
 
-          <div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
-                <h3 className="font-bold">Chapters</h3>
-                <p className="mt-1 text-sm text-[#7b888a]">
-                  {selectedChapters.size ? `${selectedChapters.size} selected for the next run.` : "Nothing selected renders the whole project."}
-                </p>
-              </div>
-              {selectedChapters.size > 0 && (
-                <button onClick={() => setSelectedChapters(new Set())} className="text-xs font-bold text-[#34736d]">Clear selection</button>
-              )}
-            </div>
-
-            {chapters.length === 0 ? (
-              <p className="border-t border-[#edf0eb] pt-4 text-sm text-[#7b888a]">No chapters yet.</p>
-            ) : (
-              chapters.map(chapter => {
-                const chapterPercent = chapter.totalSegments
-                  ? Math.round((chapter.renderedSegments / chapter.totalSegments) * 100)
-                  : 0;
-                const done = chapter.totalSegments > 0 && chapter.renderedSegments === chapter.totalSegments;
-                return (
-                  <label key={chapter.chapterId} className="flex cursor-pointer items-center gap-3 border-t border-[#edf0eb] py-3.5">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 accent-[#3f827a]"
-                      checked={selectedChapters.has(chapter.chapterId)}
-                      onChange={() => toggleChapter(chapter.chapterId)}
-                      disabled={active}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <strong className="block truncate text-sm">{chapter.title}</strong>
-                      <span className="text-xs text-[#7e8b8d]">
-                        {chapter.renderedSegments} / {chapter.totalSegments} segments
-                        {chapter.durationMs > 0 && ` · ${formatDuration(chapter.durationMs)}`}
-                        {chapter.failedSegments > 0 && ` · ${chapter.failedSegments} failed`}
-                      </span>
-                    </div>
-                    <div className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-[#ebeeea] sm:block">
-                      <div className="h-full rounded-full bg-[#7fb0a4]" style={{ width: `${chapterPercent}%` }} />
-                    </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] ${done ? "bg-[#e7f2ec] text-[#428174]" : chapter.failedSegments ? "bg-[#fbe9e4] text-[#a35a44]" : "bg-[#eef0ed] text-[#819091]"}`}>
-                      {done ? "Ready" : chapter.failedSegments ? "Needs 1+" : `${chapterPercent}%`}
-                    </span>
-                  </label>
-                );
-              })
-            )}
-          </div>
+          <NarrationChapterList
+            chapters={chapters}
+            selected={selectedChapters}
+            onToggle={toggleChapter}
+            onClearSelection={() => setSelectedChapters(new Set())}
+            locked={active}
+            playingChapterId={playerChapter}
+            onListen={setPlayerChapter}
+            onDirect={setDirectChapter}
+            onRegenerate={setRegenChapter}
+          />
         </section>
 
         <aside className="space-y-4">
+          <NarrationVoicePanel projectId={projectId} disabled={active} />
           <IntegrityCard audit={audit.data} loading={audit.isLoading} />
 
           {(data?.failures.length ?? 0) > 0 && (
@@ -399,6 +361,15 @@ export function NarrationRun({
           </div>
         </aside>
       </div>
+
+      <DirectionEditor projectId={projectId} chapterId={directChapter} open={Boolean(directChapter)} onOpenChange={open => { if (!open) setDirectChapter(null); }} />
+      <RegenerateDialog
+        projectId={projectId}
+        chapter={regenChapter ? { id: regenChapter.chapterId, title: regenChapter.title } : null}
+        open={Boolean(regenChapter)}
+        onOpenChange={open => { if (!open) setRegenChapter(null); }}
+        activeJobId={jobStatus === "running" || jobStatus === "queued" ? data?.jobId ?? null : null}
+      />
     </div>
   );
 }
@@ -485,7 +456,7 @@ function IntegrityCard({
 
   const rows: Array<[string, number, string]> = [
     ["Never rendered", audit.missingSegments.length, "No audio exists for these yet."],
-    ["Text changed since", audit.staleSegments.length, "The manuscript was edited after these were rendered."],
+    ["Text or direction changed", audit.staleSegments.length, "The text, pronunciation or direction changed after these were rendered."],
     ["Different voice", audit.mismatchedVoiceSegments.length, "Rendered before the project's voice changed."],
     ["Unverified audio", audit.suspectSegments.length, "Stored without a measurable duration."],
   ];
