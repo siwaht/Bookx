@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, Cloud, Cpu, Eye, EyeOff, KeyRound, Mic2, Pencil, Plus, RefreshCw, Sparkles, Trash2, TriangleAlert, Waves } from "lucide-react";
 import { CUSTOM_PROVIDER_LIMITS, parseVoiceList } from "@shared/providers";
+import { SettingsInsights } from "./studio/SettingsInsights";
 
 type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 
@@ -172,6 +173,7 @@ export function ProviderSettings({
 
       <div className="grid flex-1 grid-cols-1 content-start gap-6 overflow-auto p-6 lg:grid-cols-[minmax(0,1fr)_340px] md:p-9">
         <section>
+          <SettingsInsights />
           <div className="mb-4 flex items-center justify-between">
             <div>
               <h3 className="serif text-[24px] leading-tight text-ink-950">Provider layer</h3>
