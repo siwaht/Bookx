@@ -14,13 +14,15 @@ describe("the one account's sign-in", () => {
 
   it("hashes with scrypt so the password is never stored in plain form", async () => {
     const { hashPassword, verifyPassword } = _internals;
-    const stored = await hashPassword("Hola173!");
+    // A sample password, never the account's real one.
+    const sample = "sample-Passw0rd!";
+    const stored = await hashPassword(sample);
     expect(stored).toMatch(/^scrypt\$[0-9a-f]+\$[0-9a-f]+$/);
-    expect(stored).not.toContain("Hola173!");
-    expect(await verifyPassword("Hola173!", stored)).toBe(true);
+    expect(stored).not.toContain(sample);
+    expect(await verifyPassword(sample, stored)).toBe(true);
     expect(await verifyPassword("wrong", stored)).toBe(false);
     // A fresh salt every time: two hashes of the same password differ.
-    expect(await hashPassword("Hola173!")).not.toBe(stored);
+    expect(await hashPassword(sample)).not.toBe(stored);
   }, 30_000);
 });
 

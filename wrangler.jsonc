@@ -40,6 +40,9 @@
   // `wrangler d1 migrations apply` is never needed and should not be used.
   "d1_databases": [{ "binding": "DB", "database_name": "bookx", "database_id": "71f5b0e1-5e64-4132-8e0c-283065a56c76" }],
   "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "bookx-audio" }],
+  // Email + password sign-in attempts per visitor IP (worker/signin.ts). The
+  // Worker also locks an IP out after repeated wrong passwords.
+  "ratelimits": [{ "name": "SIGNIN_LIMITER", "namespace_id": "52731", "simple": { "limit": 5, "period": 60 } }],
   // Local `wrangler dev` only: pretends Cloudflare Access signed this person in.
   "access": {
     "dev": {

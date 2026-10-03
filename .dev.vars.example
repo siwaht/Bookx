@@ -11,6 +11,12 @@ BOOKX_INTERNAL_SECRET=
 ACCESS_TEAM_DOMAIN=
 ACCESS_AUD=
 
+# Email + password sign-in, checked by the Worker (with or without Access).
+# Only a hash of the password is stored; make it with:
+#   node scripts/signin-hash.mjs
+BOOKX_SIGNIN_EMAIL=
+BOOKX_SIGNIN_PASSWORD_HASH=
+
 # Voice and AI providers (each is optional; keys can also be saved in the app).
 ELEVENLABS_API_KEY=
 OPENAI_API_KEY=

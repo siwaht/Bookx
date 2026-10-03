@@ -5,6 +5,7 @@ import { accessOpenId, PROXY_HEADERS } from "../shared/proxyHeaders";
 import { isSafeStorageKey, projectIdFromKey } from "../shared/storageKeys";
 import { zipResponse } from "../server/zipStream";
 import { objectResponse } from "./bindings";
+import { clearedSessionCookie, handleSignin, sessionEmail, signedOutTrpcResponse, signinSettings, trpcProcedures, type SigninSecrets } from "./signin";
 
 /**
  * The Bookx Worker's request handling, shared by the real entry (worker/index.ts,
@@ -12,10 +13,11 @@ import { objectResponse } from "./bindings";
  * (worker/dev-bridge.ts, which forwards to an app process on this machine).
  *
  * - The web app is static assets, served by the platform.
- * - Every `/api/*` and `/manus-storage/*` request comes here first. Cloudflare
- *   Access has already signed the visitor in; the Worker checks the Access
- *   token itself (see Identity below), and without a valid Access identity
- *   nothing is served (fail closed).
+ * - Every `/api/*` and `/manus-storage/*` request comes here first. A visitor
+ *   is signed in either by Cloudflare Access, whose token the Worker checks
+ *   itself (see Identity below), or by the app's own email + password sign-in,
+ *   whose session cookie the Worker issues and checks (worker/signin.ts).
+ *   Without one of the two nothing is served (fail closed).
  * - Audio and export files stream straight from R2 after an ownership check
  *   against D1, and so do export ZIPs, so playback and downloads never wait
  *   on the container.
@@ -44,10 +46,10 @@ export type BookxSecrets = {
   ACCESS_TEAM_DOMAIN?: string;
   /** The AUD tag of the Access application protecting the Worker (comma-separated for several). */
   ACCESS_AUD?: string;
-} & Partial<Record<(typeof PROVIDER_SECRETS)[number], string>>;
+} & SigninSecrets & Partial<Record<(typeof PROVIDER_SECRETS)[number], string>>;
 
-/** The bindings every Bookx Worker entry has. */
-export type BookxBindings = { DB: D1Database; BUCKET: R2Bucket; ASSETS: Fetcher } & BookxSecrets;
+/** The bindings every Bookx Worker entry has; the sign-in rate limiter is optional (the dev bridge has none). */
+export type BookxBindings = { DB: D1Database; BUCKET: R2Bucket; ASSETS: Fetcher; SIGNIN_LIMITER?: RateLimit } & BookxSecrets;
 
 /** Sends a request, already carrying the trusted identity headers, to the app. */
 export type AppUpstream<E> = (request: Request, env: E) => Promise<Response>;
@@ -152,6 +154,12 @@ async function accessIdentity(request: Request, env: BookxSecrets, ctx: Executio
     identities.set(token, { identity, until });
   }
   return identity;
+}
+
+/** The visitor signed in with the app's own email + password, as the same kind of identity Access gives. */
+async function passwordIdentity(request: Request, signin: ReturnType<typeof signinSettings>, secret: string | null): Promise<Identity | null> {
+  const email = await sessionEmail(request, signin, secret);
+  return email ? { email, name: email.split("@")[0]!, openId: accessOpenId(email) } : null;
 }
 
 /** State-changing requests must come from Bookx's own pages. */
@@ -309,10 +317,32 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
       if (!isStorage && !url.pathname.startsWith("/api/")) return env.ASSETS.fetch(request);
       if (url.pathname === "/api/__health" && request.method === "GET") return serveHealth(request, env, upstream);
 
-      const identity = await accessIdentity(request, env, ctx);
+      const signin = signinSettings(env);
+      const secret = internalSecret(env);
+      const passwordSignin = Boolean(signin && secret);
+
+      // The sign-in page's two requests, answered here whether or not anyone is signed in.
+      if (url.pathname.startsWith("/api/auth/")) {
+        if (url.pathname === "/api/auth/config" && request.method === "GET") {
+          // The page only needs to know whether sign-in works; the account's email stays private.
+          return Response.json({ configured: passwordSignin, email: null }, { headers: { "cache-control": "no-store" } });
+        }
+        if (url.pathname === "/api/auth/login") {
+          if (isCrossSite(request, url)) return text("Cross-site request refused", 403);
+          return handleSignin(request, signin, secret, env.SIGNIN_LIMITER);
+        }
+        return text("Not found", 404);
+      }
+
+      const identity = (await accessIdentity(request, env, ctx)) ?? (await passwordIdentity(request, signin, secret));
       if (!identity) {
-        const connected = Boolean(ctx.access) || accessSettings(env) !== null;
-        return text(connected ? "Sign in through Cloudflare Access to use Prosecast." : "Prosecast is not connected to Cloudflare Access yet.", 401);
+        // The web app understands these answers and moves to its sign-in page.
+        if (passwordSignin && url.pathname.startsWith("/api/trpc/")) return signedOutTrpcResponse(url);
+        const accessConnected = Boolean(ctx.access) || accessSettings(env) !== null;
+        return text(
+          passwordSignin ? "Sign in to use Prosecast." : accessConnected ? "Sign in through Cloudflare Access to use Prosecast." : "Prosecast is not connected to Cloudflare Access yet.",
+          401,
+        );
       }
       if (isCrossSite(request, url)) return text("Cross-site request refused", 403);
 
@@ -327,13 +357,16 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
           return text("Storage is unavailable, try again", 503, { "retry-after": "5" });
         }
       }
-      // App-level sign-in routes; Access is the only way in here.
-      if (url.pathname.startsWith("/api/auth/")) return text("Not found", 404);
-
-      const secret = internalSecret(env);
       if (!secret) return text("Prosecast is not set up yet: the BOOKX_INTERNAL_SECRET secret is missing.", 500);
       try {
-        return await upstream(forAppWithIdentity(request, secret, identity), env);
+        const response = await upstream(forAppWithIdentity(request, secret, identity), env);
+        // Signing out ends the Worker's session too; the app cannot clear a cookie it never sees.
+        if (passwordSignin && url.pathname.startsWith("/api/trpc/") && trpcProcedures(url).includes("auth.logout")) {
+          const headers = new Headers(response.headers);
+          headers.append("set-cookie", clearedSessionCookie());
+          return new Response(response.body, { status: response.status, statusText: response.statusText, headers });
+        }
+        return response;
       } catch (error) {
         console.error("[Bookx] The app did not answer:", error);
         return text("Prosecast is starting up. Try again in a few seconds.", 503, { "retry-after": "5" });
