@@ -37,17 +37,21 @@ function App() {
           <Toaster
             position="bottom-right"
             closeButton
+            // The toasts are paper cards, so pin sonner's light palette rather
+            // than following the OS setting.
+            theme="light"
             toastOptions={{
               style: {
-                background: "#203f42",
-                color: "#fffefa",
-                borderRadius: "16px",
+                background: "var(--color-paper)",
+                color: "var(--color-ink-900)",
+                borderRadius: "14px",
                 fontFamily: "var(--font-sans)",
                 fontSize: "13px",
                 fontWeight: 600,
-                border: "1px solid rgba(255, 255, 255, 0.12)",
-                boxShadow: "0 12px 32px rgba(23, 48, 52, 0.28)",
+                border: "1px solid var(--color-stone-150)",
+                boxShadow: "var(--shadow-float)",
               },
+              classNames: { description: "text-ink-500! font-normal!" },
             }}
           />
           <Router />

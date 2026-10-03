@@ -253,10 +253,10 @@ export function ManuscriptEditor({
       <div className="flex min-h-0 flex-1 flex-col">
         <Header actions={null} />
         <div className="flex flex-1 items-center justify-center p-9">
-          <div className="max-w-md rounded-[22px] border border-dashed border-[#d4ded7] bg-[#fbfcf9] p-7 text-center">
-            <Split aria-hidden="true" className="mx-auto mb-4 text-[#a3b3ac]" size={26} />
-            <h3 className="font-bold text-[#35494b]">The manuscript lives on the server</h3>
-            <p className="mt-2 text-sm leading-6 text-[#748285]">{disabledReason}</p>
+          <div className="max-w-md rounded-card border border-dashed border-stone-300 bg-paper/70 p-8 text-center">
+            <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-stone-50 text-ink-400 ring-1 ring-stone-150"><Split aria-hidden="true" size={22} /></span>
+            <h3 className="serif text-[22px] leading-tight text-ink-950">The manuscript lives on the server</h3>
+            <p className="mt-2 text-sm leading-6 text-ink-500">{disabledReason}</p>
           </div>
         </div>
       </div>
@@ -276,7 +276,7 @@ export function ManuscriptEditor({
       <Header
         actions={
           <>
-            <span className="text-xs text-[#849092]" role="status">
+            <span className="text-xs text-ink-500" role="status">
               {updateChapter.isPending ? "Saving…" : dirty ? "Unsaved changes" : chapters.length ? "Saved" : ""}
             </span>
             <button onClick={() => fileInput.current?.click()} disabled={importing || !workspace.isSuccess} className="btn-soft disabled:opacity-50">
@@ -301,10 +301,10 @@ export function ManuscriptEditor({
       />
 
       {pendingImport && (
-        <div role="alertdialog" aria-labelledby="import-choice-title" className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eadfc7] bg-[#fff9ec] px-6 py-4 md:px-9">
+        <div role="alertdialog" aria-labelledby="import-choice-title" className="flex flex-wrap items-center justify-between gap-3 border-b border-gold-100 bg-gold-50 px-6 py-4 md:px-9">
           <div className="min-w-0">
-            <strong id="import-choice-title" className="block text-sm text-[#5b4a2b]">Import “{pendingImport.name}”</strong>
-            <span className="text-xs text-[#8a7446]">
+            <strong id="import-choice-title" className="block text-sm text-gold-800">Import “{pendingImport.name}”</strong>
+            <span className="text-xs text-gold-700">
               {chapters.length
                 ? `This project already has ${chapters.length} chapter${chapters.length === 1 ? "" : "s"}. Replacing removes them and their narration.`
                 : "Replacing removes any chapters this project already has, and their narration."}
@@ -313,16 +313,16 @@ export function ManuscriptEditor({
           <div className="flex flex-wrap gap-2">
             <button disabled={importing} onClick={() => importManuscript.mutate({ projectId, filename: pendingImport.name, base64: pendingImport.base64, mode: "replace" })} className="btn-primary disabled:opacity-50">Replace chapters</button>
             <button disabled={importing} onClick={() => importManuscript.mutate({ projectId, filename: pendingImport.name, base64: pendingImport.base64, mode: "append" })} className="btn-soft disabled:opacity-50">Add at the end</button>
-            <button disabled={importing} onClick={() => setPendingImport(null)} aria-label="Cancel import" className="grid h-9 w-9 place-items-center rounded-xl text-[#8a7446] hover:bg-[#f6ecd6]"><X aria-hidden="true" size={15} /></button>
+            <button disabled={importing} onClick={() => setPendingImport(null)} aria-label="Cancel import" className="grid h-9 w-9 place-items-center rounded-xl text-gold-700 hover:bg-gold-100"><X aria-hidden="true" size={15} /></button>
           </div>
         </div>
       )}
 
       {workspace.isError ? (
         <div className="flex flex-1 items-center justify-center p-9">
-          <div role="alert" className="max-w-md rounded-[22px] border border-dashed border-[#e3c9c0] bg-[#fdf6f3] p-7 text-center">
-            <h3 className="font-bold text-[#6b3f33]">The manuscript did not load</h3>
-            <p className="mt-2 text-sm leading-6 text-[#8a6359]">{workspace.error.message || "Prosecast could not reach the server."}</p>
+          <div role="alert" className="max-w-md rounded-card border border-clay-200 bg-clay-50 p-8 text-center">
+            <h3 className="serif text-[22px] leading-tight text-clay-800">The manuscript did not load</h3>
+            <p className="mt-2 text-sm leading-6 text-clay-700">{workspace.error.message || "Prosecast could not reach the server."}</p>
             <button onClick={() => void workspace.refetch()} disabled={workspace.isFetching} className="btn-soft mt-4 disabled:opacity-50">
               {workspace.isFetching ? "Trying again…" : "Try again"}
             </button>
@@ -331,25 +331,25 @@ export function ManuscriptEditor({
       ) : workspace.isSuccess && chapters.length === 0 ? (
         <EmptyManuscript importing={importing} adding={createChapter.isPending} onImport={() => fileInput.current?.click()} onAdd={() => createChapter.mutate({ projectId, title: "Chapter 1", body: "" })} />
       ) : (
-        <div className="grid min-h-0 flex-1 lg:grid-cols-[270px_minmax(0,1fr)_320px]">
-          <aside className="border-b border-[#e1e5de] bg-[#fafbf7] p-4 lg:border-b-0 lg:border-r lg:overflow-auto">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="mono text-[10px] tracking-[.12em] text-[#899494]">CHAPTERS</span>
+        <div className="grid min-h-0 flex-1 grid-cols-1 lg:grid-cols-[270px_minmax(0,1fr)_320px]">
+          <aside className="border-b border-stone-150 bg-paper-50 p-4 lg:border-b-0 lg:border-r lg:overflow-auto">
+            <div className="mb-3 flex items-center justify-between px-1">
+              <span className="eyebrow text-ink-500">CHAPTERS</span>
               <button
                 onClick={() => { saveNow(); createChapter.mutate({ projectId, title: `Chapter ${chapters.length + 1}`, body: "" }); }}
                 disabled={createChapter.isPending}
                 aria-label="Add chapter"
-                className="rounded-lg bg-[#e5f0ec] p-1.5 text-[#36746e] transition hover:bg-[#d9ebe4] disabled:opacity-50"
+                className="grid h-7 w-7 place-items-center rounded-lg bg-white text-brand-600 shadow-hairline ring-1 ring-stone-150 transition hover:text-brand-800 hover:ring-brand-200 disabled:opacity-50"
               >
                 <Plus aria-hidden="true" size={14} />
               </button>
             </div>
             {chapters.length > 0 && (
-              <div className="mb-3 rounded-xl bg-[#eef4f0] px-3 py-2 text-[11px] text-[#557570]">
-                <span className="font-bold">{includedChapters.length} of {chapters.length}</span> in the audiobook · {formatWordCount(includedWords)}
-                <div className="mt-1 flex gap-3">
-                  <button disabled={setIncluded.isPending} onClick={() => setIncluded.mutate({ projectId, chapterIds: chapters.map(chapter => chapter.id), included: true })} className="font-bold text-[#34736d] hover:underline disabled:opacity-50">Select all</button>
-                  <button disabled={setIncluded.isPending} onClick={() => setIncluded.mutate({ projectId, chapterIds: chapters.map(chapter => chapter.id), included: false })} className="font-bold text-[#34736d] hover:underline disabled:opacity-50">Select none</button>
+              <div className="mb-3 rounded-xl border border-stone-150 bg-paper px-3 py-2.5 text-2xs text-ink-500">
+                <span className="font-semibold tabular-nums text-ink-800">{includedChapters.length} of {chapters.length}</span> in the audiobook · {formatWordCount(includedWords)}
+                <div className="mt-1.5 flex gap-3">
+                  <button disabled={setIncluded.isPending} onClick={() => setIncluded.mutate({ projectId, chapterIds: chapters.map(chapter => chapter.id), included: true })} className="font-semibold text-brand-600 underline-offset-2 hover:underline disabled:opacity-50">Select all</button>
+                  <button disabled={setIncluded.isPending} onClick={() => setIncluded.mutate({ projectId, chapterIds: chapters.map(chapter => chapter.id), included: false })} className="font-semibold text-brand-600 underline-offset-2 hover:underline disabled:opacity-50">Select none</button>
                 </div>
               </div>
             )}
@@ -363,25 +363,25 @@ export function ManuscriptEditor({
                 const active = chapter.id === activeChapter?.id;
                 const included = Boolean(chapter.included);
                 return (
-                  <div key={chapter.id} className={`mb-1 flex items-start gap-2 rounded-xl p-2.5 ${active ? "bg-[#e5f0ed]" : "hover:bg-[#f0f2ee]"} ${included ? "" : "opacity-60"}`}>
+                  <div key={chapter.id} className={`mb-1 flex items-start gap-2.5 rounded-xl p-2.5 transition ${active ? "bg-white shadow-soft ring-1 ring-stone-150" : "hover:bg-stone-50"} ${included ? "" : "opacity-60"}`}>
                     <input
                       type="checkbox"
                       checked={included}
                       onChange={event => toggleIncluded(chapter.id, event.target.checked)}
-                      className="mt-0.5 h-4 w-4 shrink-0 accent-[#3f827a]"
+                      className="mt-0.5 h-4 w-4 shrink-0 accent-brand-600"
                       aria-label={`Include ${chapter.title} in the audiobook`}
                     />
                     <button
                       onClick={() => { saveNow(); setSelectedChapterId(chapter.id); }}
                       aria-current={active}
-                      className="min-w-0 flex-1 text-left"
+                      className="min-w-0 flex-1 rounded text-left"
                     >
-                      <span className={`line-clamp-2 text-xs font-semibold ${included ? "text-[#3c5052]" : "text-[#7c8a8b] line-through decoration-[#b9c3c1]"}`}>{index + 1}. {chapter.title}</span>
-                      <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-[#7f8a8c]">
-                        {KIND_LABEL[chapter.kind] && <span className="rounded-full bg-[#f1ece0] px-1.5 py-0.5 text-[#8a7446]">{KIND_LABEL[chapter.kind]}</span>}
+                      <span className={`line-clamp-2 text-[13px] leading-snug ${active ? "font-semibold" : "font-medium"} ${included ? (active ? "text-ink-950" : "text-ink-700") : "text-ink-500 line-through decoration-stone-300"}`}><span className="tabular-nums text-ink-500">{index + 1}.</span> {chapter.title}</span>
+                      <span className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-3xs text-ink-500">
+                        {KIND_LABEL[chapter.kind] && <span className="rounded-full bg-gold-50 px-1.5 py-0.5 text-gold-700 ring-1 ring-gold-100">{KIND_LABEL[chapter.kind]}</span>}
                         <span>{formatWordCount(chapterWords.get(chapter.id) ?? 0)}</span>
                         {included && (
-                          <span className={ready ? "text-[#4a8e7b]" : own.length ? "text-[#bd8432]" : "text-[#829092]"}>
+                          <span className={ready ? "text-brand-600" : own.length ? "text-gold-700" : "text-ink-500"}>
                             {ready ? "Narrated" : own.length ? `${own.filter(segment => segment.audioStorageKey).length}/${own.length} segments` : "Not split yet"}
                           </span>
                         )}
@@ -393,31 +393,31 @@ export function ManuscriptEditor({
             )}
           </aside>
 
-          <section className="flex min-w-0 flex-col border-b border-[#e1e5de] bg-[#fffefa] p-5 lg:border-b-0 lg:p-7">
+          <section className="flex min-w-0 flex-col border-b border-stone-150 bg-paper px-5 py-6 lg:border-b-0 lg:px-10 lg:py-9">
             {!activeChapter ? (
-              <div className="flex flex-1 items-center justify-center text-sm text-[#849092]">Choose a chapter to edit.</div>
+              <div className="flex flex-1 items-center justify-center text-sm text-ink-500">Choose a chapter to edit.</div>
             ) : (
-              <>
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="mx-auto flex w-full max-w-[46rem] flex-1 flex-col">
+                <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <label className="block">
-                      <span className="mono text-[10px] tracking-[.12em] text-[#90a0a0]">CHAPTER TITLE</span>
+                      <span className="eyebrow text-ink-500">CHAPTER TITLE</span>
                       <input
                         value={draftTitle}
                         onChange={event => { setDraftTitle(event.target.value); queueSave(event.target.value, draftBody); }}
                         onBlur={saveNow}
-                        className="mt-1 w-full border-0 bg-transparent text-base font-bold text-[#304548] outline-none focus:underline"
+                        className="serif mt-1.5 w-full border-0 bg-transparent text-[30px] leading-tight tracking-[-.018em] text-ink-950 decoration-stone-300 underline-offset-8 outline-none focus:underline"
                         aria-label="Chapter title"
                       />
                     </label>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <button onClick={() => moveChapter(-1)} disabled={activeIndex <= 0 || reorder.isPending} aria-label="Move chapter up" className="rounded-lg p-2 text-[#8a9899] transition hover:bg-[#eef3ef] hover:text-[#36746e] disabled:opacity-30"><ArrowUp aria-hidden="true" size={15} /></button>
-                    <button onClick={() => moveChapter(1)} disabled={activeIndex < 0 || activeIndex >= chapters.length - 1 || reorder.isPending} aria-label="Move chapter down" className="rounded-lg p-2 text-[#8a9899] transition hover:bg-[#eef3ef] hover:text-[#36746e] disabled:opacity-30"><ArrowDown aria-hidden="true" size={15} /></button>
+                  <div className="flex shrink-0 items-center gap-0.5 rounded-xl border border-stone-150 bg-paper-50 p-0.5">
+                    <button onClick={() => moveChapter(-1)} disabled={activeIndex <= 0 || reorder.isPending} aria-label="Move chapter up" className="rounded-lg p-2 text-ink-500 transition hover:bg-white hover:text-brand-700 disabled:opacity-30"><ArrowUp aria-hidden="true" size={15} /></button>
+                    <button onClick={() => moveChapter(1)} disabled={activeIndex < 0 || activeIndex >= chapters.length - 1 || reorder.isPending} aria-label="Move chapter down" className="rounded-lg p-2 text-ink-500 transition hover:bg-white hover:text-brand-700 disabled:opacity-30"><ArrowDown aria-hidden="true" size={15} /></button>
                     <button
                       onClick={() => { if (window.confirm(`Delete "${activeChapter.title}" and its audio? This cannot be undone.`)) deleteChapter.mutate({ projectId, chapterId: activeChapter.id }); }}
                       disabled={deleteChapter.isPending}
-                      className="rounded-lg p-2 text-[#9aa2a3] transition hover:bg-[#fbeeea] hover:text-[#af5d5d] disabled:opacity-50"
+                      className="rounded-lg p-2 text-ink-500 transition hover:bg-clay-50 hover:text-clay-600 disabled:opacity-50"
                       aria-label={`Delete ${activeChapter.title}`}
                     >
                       <Trash2 aria-hidden="true" size={15} />
@@ -426,9 +426,9 @@ export function ManuscriptEditor({
                 </div>
 
                 {!activeChapter.included && (
-                  <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#eadfc7] bg-[#fff9ec] px-4 py-3 text-xs text-[#8a7446]">
+                  <div className="mb-5 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-gold-100 bg-gold-50 px-4 py-3 text-xs text-gold-700">
                     <span>{KIND_LABEL[activeChapter.kind] ? `Detected as ${KIND_LABEL[activeChapter.kind]!.toLowerCase()}, so it` : "This chapter"} is left out of the audiobook. Its text is kept.</span>
-                    <button onClick={() => toggleIncluded(activeChapter.id, true)} className="font-bold text-[#6b5520] hover:underline">Include it</button>
+                    <button onClick={() => toggleIncluded(activeChapter.id, true)} className="font-semibold text-gold-800 underline-offset-2 hover:underline">Include it</button>
                   </div>
                 )}
 
@@ -437,61 +437,61 @@ export function ManuscriptEditor({
                   onChange={event => { setDraftBody(event.target.value); queueSave(draftTitle, event.target.value); }}
                   onBlur={saveNow}
                   placeholder="Paste or write this chapter's text. Leave a blank line between paragraphs; a line with * * * marks a scene break."
-                  className="min-h-[320px] flex-1 w-full resize-none border-0 bg-transparent text-[16px] leading-8 text-[#35474a] outline-none"
+                  className="manuscript-page min-h-[320px] w-full flex-1 resize-none border-0 bg-transparent outline-none"
                   aria-label={`${activeChapter.title} text`}
                 />
 
-                <div className="mt-3 flex flex-wrap justify-between gap-3 border-t border-[#edf0eb] pt-3 text-[11px] text-[#849092]">
+                <div className="mt-4 flex flex-wrap justify-between gap-3 border-t border-stone-100 pt-3 text-2xs tabular-nums text-ink-500">
                   <span>{words.toLocaleString()} words · ~{readMinutes} min listen</span>
                   <span>{segments.length} segment{segments.length === 1 ? "" : "s"} · {renderedSegments} with audio</span>
                 </div>
-              </>
+              </div>
             )}
           </section>
 
-          <aside className="bg-[#fafbf7] p-4 lg:overflow-auto">
-            <div className="mb-4 flex items-center justify-between">
-              <span className="mono text-[10px] tracking-[.12em] text-[#899494]">NARRATION SEGMENTS</span>
+          <aside className="bg-paper-50 p-4 lg:overflow-auto">
+            <div className="mb-3 flex items-center justify-between px-1">
+              <span className="eyebrow text-ink-500">NARRATION SEGMENTS</span>
               <button
                 onClick={() => activeChapter && resegment.mutate({ projectId, chapterIds: [activeChapter.id] })}
                 disabled={!activeChapter || !activeChapter.included || resegment.isPending || dirty}
                 title={dirty ? "Save your edits first" : !activeChapter?.included ? "Include the chapter first" : "Re-split this chapter"}
                 aria-label="Re-split this chapter"
-                className="rounded-lg bg-[#e5f0ec] p-1.5 text-[#36746e] disabled:opacity-40"
+                className="grid h-7 w-7 place-items-center rounded-lg bg-white text-brand-600 shadow-hairline ring-1 ring-stone-150 transition hover:text-brand-800 hover:ring-brand-200 disabled:opacity-40"
               >
                 <Split aria-hidden="true" size={14} />
               </button>
             </div>
 
             {segments.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-[#d8e1dc] p-4 text-xs leading-5 text-[#778689]">
-                No segments yet. Use <strong>Split into segments</strong>, or analyze the cast, once this chapter has text. Prosecast breaks it at paragraph and sentence boundaries{multiVoice ? " and separates dialogue so each character can speak their own lines" : ""}.
+              <p className="rounded-xl border border-dashed border-stone-300 bg-paper/60 p-4 text-xs leading-5 text-ink-500">
+                No segments yet. Use <strong className="font-semibold text-ink-700">Split into segments</strong>, or analyze the cast, once this chapter has text. Prosecast breaks it at paragraph and sentence boundaries{multiVoice ? " and separates dialogue so each character can speak their own lines" : ""}.
               </p>
             ) : (
               segments.map((segment, index) => {
                 const dialogue = segment.delivery?.kind === "dialogue";
                 const speaker = segment.characterId ? speakerName.get(segment.characterId) : undefined;
                 return (
-                  <div key={segment.id} className={`mb-2 rounded-xl border bg-white p-3 ${dialogue ? "border-[#d9e2ec]" : "border-[#e1e5de]"}`}>
+                  <div key={segment.id} className={`mb-2 rounded-xl border bg-white p-3 shadow-hairline ${dialogue ? "border-sky-200 border-l-2 border-l-sky-500" : "border-stone-150"}`}>
                     <div className="mb-2 flex items-center justify-between gap-2">
-                      <span className="flex items-center gap-1.5 mono text-[10px] text-[#899494]">
+                      <span className="mono flex items-center gap-1.5 text-3xs text-ink-500">
                         {String(index + 1).padStart(2, "0")}
-                        {dialogue && <Quote aria-label="Dialogue" size={11} className="text-[#6f8fae]" />}
-                        {segment.delivery?.sceneBreakBefore && <span className="rounded bg-[#f1ece0] px-1 text-[9px] text-[#8a7446]">SCENE</span>}
+                        {dialogue && <Quote aria-label="Dialogue" size={11} className="text-sky-500" />}
+                        {segment.delivery?.sceneBreakBefore && <span className="rounded bg-gold-50 px-1 text-3xs text-gold-700 ring-1 ring-gold-100">SCENE</span>}
                       </span>
-                      <span className={`rounded-full px-2 py-0.5 text-[9px] ${segment.audioStorageKey ? "bg-[#e7f3ef] text-[#397b70]" : segment.lastError ? "bg-[#fbe9e4] text-[#a35a44]" : "bg-[#fbefd9] text-[#9e722c]"}`}>
+                      <span className={`rounded-full px-2 py-0.5 text-3xs font-medium ${segment.audioStorageKey ? "bg-brand-50 text-brand-700" : segment.lastError ? "bg-clay-50 text-clay-700" : "bg-gold-50 text-gold-700"}`}>
                         {segment.audioStorageKey ? "Audio ready" : segment.lastError ? "Failed" : "Needs audio"}
                       </span>
                     </div>
-                    <p className="line-clamp-4 text-xs leading-5 text-[#516064]">{segment.text}</p>
+                    <p className="line-clamp-4 text-xs leading-5 text-ink-600">{segment.text}</p>
                     {multiVoice && (
-                      <label className="mt-2 flex items-center gap-2 text-[10px] font-semibold text-[#6d7f81]">
+                      <label className="mt-2 flex items-center gap-2 text-3xs font-semibold text-ink-500">
                         Voice
                         <select
                           value={segment.characterId ?? ""}
                           onChange={event => updateSegment.mutate({ projectId, segmentId: segment.id, characterId: event.target.value || null })}
                           disabled={updateSegment.isPending}
-                          className="min-w-0 flex-1 rounded-lg border border-[#dfe6e0] bg-[#fbfcfa] px-2 py-1 text-[11px] text-[#3c5052] outline-none focus:border-[#7ba9a1]"
+                          className="min-w-0 flex-1 rounded-lg border border-stone-150 bg-paper px-2 py-1 text-2xs text-ink-700 outline-none focus:border-brand-400"
                           aria-label={`Speaker for segment ${index + 1}`}
                         >
                           <option value="">Narrator</option>
@@ -500,7 +500,7 @@ export function ManuscriptEditor({
                         </select>
                       </label>
                     )}
-                    <div className="mt-2 flex items-center justify-between text-[10px] text-[#8a9492]">
+                    <div className="mt-2 flex items-center justify-between text-3xs text-ink-500">
                       <span>{segment.text.length} chars{dialogue && !segment.characterId ? " · speaker not identified yet" : ""}</span>
                       {segment.audioDurationMs ? <span>{(segment.audioDurationMs / 1000).toFixed(1)}s</span> : null}
                     </div>
@@ -513,7 +513,7 @@ export function ManuscriptEditor({
                         aria-label={`Segment ${index + 1} narration`}
                       />
                     )}
-                    {segment.lastError && <p className="mt-2 text-[10px] leading-4 text-[#a35a44]">{segment.lastError}</p>}
+                    {segment.lastError && <p className="mt-2 text-3xs leading-4 text-clay-600">{segment.lastError}</p>}
                   </div>
                 );
               })
@@ -528,10 +528,10 @@ export function ManuscriptEditor({
 function EmptyManuscript({ importing, adding, onImport, onAdd }: { importing: boolean; adding: boolean; onImport: () => void; onAdd: () => void }) {
   return (
     <div className="flex flex-1 items-center justify-center p-9">
-      <div className="w-full max-w-xl rounded-[26px] border border-dashed border-[#9fbfb7] bg-[#f4f9f6] p-8 text-center">
-        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-[#e2f0ea] text-[#3d7f75]"><BookOpen aria-hidden="true" size={24} /></span>
-        <h3 className="serif mt-5 text-2xl tracking-[-.03em] text-[#25393c]">Bring in the whole book</h3>
-        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-[#6d7f82]">
+      <div className="w-full max-w-xl rounded-card border border-dashed border-stone-300 bg-paper p-10 text-center shadow-hairline">
+        <span className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-brand-50 text-brand-600 ring-1 ring-brand-100"><BookOpen aria-hidden="true" size={24} strokeWidth={1.75} /></span>
+        <h3 className="serif mt-5 text-[28px] leading-tight tracking-[-.015em] text-ink-950">Bring in the whole book</h3>
+        <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-ink-500">
           Import an EPUB, Word document, Markdown, HTML or text file. Bookx splits it into chapters and leaves the cover, copyright and contents pages out of the audiobook. You can edit, remove or re-include anything afterwards.
         </p>
         <div className="mt-6 flex flex-wrap items-center justify-center gap-3">
@@ -548,11 +548,11 @@ function EmptyManuscript({ importing, adding, onImport, onAdd }: { importing: bo
 
 function Header({ actions }: { actions: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-5 border-b border-[#e1e5de] bg-[#fffefa] px-6 py-6 md:flex-row md:items-end md:justify-between md:px-9">
-      <div>
-        <p className="mono text-[10px] tracking-[.15em] text-[#5a918b]">01 · WRITE</p>
-        <h2 className="serif mt-2 text-3xl tracking-[-.04em] text-[#25393c]">The manuscript</h2>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#738084]">
+    <div className="flex flex-col gap-5 border-b border-stone-150 bg-paper px-6 py-7 md:flex-row md:items-end md:justify-between md:px-9">
+      <div className="min-w-0">
+        <p className="eyebrow text-brand-600">01 · WRITE</p>
+        <h2 className="serif mt-2 text-[34px] leading-[1.1] tracking-[-.02em] text-ink-950">The manuscript</h2>
+        <p className="mt-2.5 max-w-2xl text-sm leading-6 text-ink-500">
           Import the book or write it here. Tick the chapters that belong in the audiobook; edits save as you type, and re-splitting keeps the audio for anything you did not change.
         </p>
       </div>

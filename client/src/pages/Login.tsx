@@ -74,32 +74,31 @@ export default function Login() {
   };
 
   return (
-    <main className="noise-bg flex min-h-screen items-center justify-center bg-[#f7f5ef] px-5 py-10 text-[#203038]">
-      <div className="fade-up w-full max-w-sm">
-        <div className="mb-8 flex items-center gap-3">
-          <span className="grid h-10 w-10 place-items-center rounded-[14px] bg-[#245f63] text-white shadow-[0_8px_20px_rgba(36,95,99,.22)]">
-            <Headphones size={19} />
+    <main className="noise-bg relative flex min-h-screen items-center justify-center overflow-hidden bg-paper-100 px-5 py-10 text-ink-900">
+      <div aria-hidden="true" className="pointer-events-none absolute left-1/2 top-1/2 h-[min(52rem,140vw)] w-[min(52rem,140vw)] -translate-x-1/2 -translate-y-1/2 rounded-full bg-[repeating-radial-gradient(circle_at_center,transparent_0_40px,rgb(34_95_97/.06)_40px_41px)] [mask-image:radial-gradient(circle_at_center,black_0_30%,transparent_70%)]" />
+      <div className="fade-up relative w-full max-w-[400px]">
+        <div className="mb-8 flex flex-col items-center text-center">
+          <span className="brand-mark h-12 w-12 rounded-2xl">
+            <Headphones size={20} strokeWidth={1.75} />
           </span>
-          <span>
-            <span className="block text-[17px] font-bold tracking-[-.04em]">Prosecast</span>
-            <span className="block text-[10px] tracking-[.14em] text-[#718084]">AUDIO WORKSPACE</span>
-          </span>
+          <span className="serif mt-4 block text-[30px] leading-none tracking-[-.01em] text-ink-950">Prosecast</span>
+          <span className="eyebrow mt-2 block text-3xs tracking-[.22em] text-ink-500">AUDIO WORKSPACE</span>
         </div>
 
-        <div className="panel-shadow rounded-[26px] border border-[#dfe5dd] bg-[#fffefa] p-7">
-          <h1 className="serif text-3xl tracking-[-.04em] text-[#203438]">Welcome back</h1>
-          <p className="mt-2 text-sm leading-6 text-[#647276]">Sign in to your studio.</p>
+        <div className="rounded-panel border border-stone-150 bg-paper/95 p-7 shadow-float backdrop-blur-sm sm:p-8">
+          <h1 className="serif text-[32px] leading-tight tracking-[-.02em] text-ink-950">Welcome back</h1>
+          <p className="mt-1.5 text-sm leading-6 text-ink-500">Sign in to your studio.</p>
 
           {config && !config.configured && (
-            <p className="mt-4 rounded-xl border border-[#e8d5b5] bg-[#faf3e3] px-4 py-3 text-xs leading-5 text-[#8a6d3b]">
+            <p className="mt-5 rounded-xl border border-gold-200 bg-gold-50 px-4 py-3 text-xs leading-5 text-gold-800">
               Sign-in is not configured on the server. Set <code className="mono">BOOKX_SIGNIN_EMAIL</code> and{" "}
               <code className="mono">BOOKX_SIGNIN_PASSWORD</code> in the environment, then restart.
             </p>
           )}
 
-          <form onSubmit={submit} className="mt-6 grid gap-4">
+          <form onSubmit={submit} className="mt-7 grid gap-4">
             <label className="grid gap-1.5">
-              <span className="text-xs font-semibold tracking-[.06em] text-[#526065]">EMAIL</span>
+              <span className="eyebrow text-3xs text-ink-600">EMAIL</span>
               <input
                 className="input"
                 type="email"
@@ -112,7 +111,7 @@ export default function Login() {
               />
             </label>
             <label className="grid gap-1.5">
-              <span className="text-xs font-semibold tracking-[.06em] text-[#526065]">PASSWORD</span>
+              <span className="eyebrow text-3xs text-ink-600">PASSWORD</span>
               <input
                 className="input"
                 type="password"
@@ -126,18 +125,18 @@ export default function Login() {
             </label>
 
             {error && (
-              <p role="alert" className="rounded-xl border border-[#eccfce] bg-[#fbeae5] px-4 py-3 text-xs leading-5 text-[#a04a2f]">
+              <p role="alert" className="rounded-xl border border-clay-200 bg-clay-50 px-4 py-3 text-xs leading-5 text-clay-700">
                 {error}
               </p>
             )}
 
-            <button type="submit" disabled={submitting} className="btn-primary mt-1 w-full py-2.5 text-sm">
+            <button type="submit" disabled={submitting} className="btn-primary btn-lg mt-2 w-full">
               {submitting ? "Signing in…" : "Sign in"}
             </button>
           </form>
         </div>
 
-        <p className="mt-6 text-center text-xs text-[#8a979a]">Prosecast · your private audio studio</p>
+        <p className="mt-8 text-center text-xs text-ink-500">Prosecast · your private audio studio</p>
       </div>
     </main>
   );

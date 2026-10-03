@@ -52,13 +52,13 @@ const statusLabel: Record<NarrationJobStatus | "idle", string> = {
 };
 
 const statusTone: Record<NarrationJobStatus | "idle", string> = {
-  idle: "bg-[#eef0ed] text-[#7b8584]",
-  queued: "bg-[#e9f0f5] text-[#4a6f85]",
-  running: "bg-[#e4f2eb] text-[#397868]",
-  paused: "bg-[#fff1dc] text-[#a87528]",
-  completed: "bg-[#e4f2eb] text-[#397868]",
-  failed: "bg-[#fbe9e4] text-[#a35a44]",
-  cancelled: "bg-[#eef0ed] text-[#7b8584]",
+  idle: "bg-stone-50 text-ink-500",
+  queued: "bg-sky-50 text-sky-600",
+  running: "bg-brand-50 text-brand-600",
+  paused: "bg-gold-100 text-gold-700",
+  completed: "bg-brand-50 text-brand-600",
+  failed: "bg-clay-100 text-clay-600",
+  cancelled: "bg-stone-50 text-ink-500",
 };
 
 export function NarrationRun({
@@ -160,10 +160,10 @@ export function NarrationRun({
       <div className="flex min-h-0 flex-1 flex-col">
         <Header status="idle" />
         <div className="flex flex-1 items-center justify-center p-9">
-          <div className="max-w-md rounded-[22px] border border-dashed border-[#d4ded7] bg-[#fbfcf9] p-7 text-center">
-            <Sparkles className="mx-auto mb-4 text-[#a3b3ac]" size={26} />
-            <h3 className="font-bold text-[#35494b]">Narration runs on saved projects</h3>
-            <p className="mt-2 text-sm leading-6 text-[#748285]">{disabledReason}</p>
+          <div className="max-w-md rounded-card border border-dashed border-stone-300 bg-paper/70 p-8 text-center">
+            <span className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-2xl bg-stone-50 text-ink-400 ring-1 ring-stone-150"><Sparkles size={22} /></span>
+            <h3 className="serif text-[22px] leading-tight text-ink-950">Narration runs on saved projects</h3>
+            <p className="mt-2 text-sm leading-6 text-ink-500">{disabledReason}</p>
           </div>
         </div>
       </div>
@@ -219,8 +219,8 @@ export function NarrationRun({
         }
       />
 
-      <div className="grid flex-1 gap-6 overflow-auto p-6 lg:grid-cols-[minmax(0,1fr)_340px] md:p-9">
-        <section className="space-y-5">
+      <div className="grid flex-1 grid-cols-1 content-start gap-6 overflow-auto p-6 lg:grid-cols-[minmax(0,1fr)_340px] md:p-9">
+        <section className="min-w-0 space-y-5">
           {stalled && (
             <Banner
               tone="warn"
@@ -269,19 +269,19 @@ export function NarrationRun({
             <Stat label="Unrendered" value={total ? String(Math.max(0, total - completed)) : "—"} />
           </div>
 
-          <div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5">
-            <div className="mb-3 flex items-end justify-between">
+          <div className="rounded-card border border-stone-150 bg-paper p-6 shadow-hairline">
+            <div className="mb-4 flex items-end justify-between gap-4">
               <div>
-                <h3 className="font-bold">Progress</h3>
-                <p className="mt-1 text-sm text-[#7b888a]">
+                <h3 className="text-[15px] font-semibold text-ink-900">Progress</h3>
+                <p className="mt-1 text-sm text-ink-500">
                   Measured from stored audio, so this is how much of the book exists — not an estimate.
                 </p>
               </div>
-              <span className="text-sm font-bold text-[#2d7470]">{percent}%</span>
+              <span className="serif text-[30px] leading-none tabular-nums text-brand-700">{percent}%</span>
             </div>
-            <div className="h-2 overflow-hidden rounded-full bg-[#ebeeea]">
+            <div className="h-1.5 overflow-hidden rounded-full bg-stone-100">
               <div
-                className="h-full rounded-full bg-[#4e9287] transition-[width] duration-500 ease-out"
+                className="h-full rounded-full bg-[linear-gradient(90deg,var(--color-brand-500),var(--color-brand-600))] transition-[width] duration-500 ease-out"
                 style={{ width: `${percent}%` }}
                 role="progressbar"
                 aria-valuenow={percent}
@@ -291,28 +291,28 @@ export function NarrationRun({
               />
             </div>
             {data?.pinnedVoice && (
-              <p className="mt-3 text-xs text-[#7b888a]">
-                Pinned to <strong className="text-[#4a6360]">{data.pinnedVoice.provider}</strong> · {data.pinnedVoice.model}.
+              <p className="mt-3 text-xs text-ink-500">
+                Pinned to <strong className="font-semibold text-ink-800">{data.pinnedVoice.provider}</strong> · {data.pinnedVoice.model}.
                 A run never switches provider partway through, so the narrator stays the same voice from start to finish.
               </p>
             )}
           </div>
 
-          <div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5">
-            <div className="mb-4 flex items-center justify-between">
+          <div className="rounded-card border border-stone-150 bg-paper p-6 shadow-hairline">
+            <div className="mb-4 flex items-center justify-between gap-4">
               <div>
-                <h3 className="font-bold">Chapters</h3>
-                <p className="mt-1 text-sm text-[#7b888a]">
+                <h3 className="text-[15px] font-semibold text-ink-900">Chapters</h3>
+                <p className="mt-1 text-sm text-ink-500">
                   {selectedChapters.size ? `${selectedChapters.size} selected for the next run.` : "Nothing selected renders the whole project."}
                 </p>
               </div>
               {selectedChapters.size > 0 && (
-                <button onClick={() => setSelectedChapters(new Set())} className="text-xs font-bold text-[#34736d]">Clear selection</button>
+                <button onClick={() => setSelectedChapters(new Set())} className="rounded-lg px-2 py-1 text-xs font-semibold text-brand-600 transition hover:bg-brand-50 hover:text-brand-800">Clear selection</button>
               )}
             </div>
 
             {chapters.length === 0 ? (
-              <p className="border-t border-[#edf0eb] pt-4 text-sm text-[#7b888a]">No chapters yet.</p>
+              <p className="border-t border-stone-100 pt-4 text-sm text-ink-500">No chapters yet.</p>
             ) : (
               chapters.map(chapter => {
                 const chapterPercent = chapter.totalSegments
@@ -320,26 +320,26 @@ export function NarrationRun({
                   : 0;
                 const done = chapter.totalSegments > 0 && chapter.renderedSegments === chapter.totalSegments;
                 return (
-                  <label key={chapter.chapterId} className="flex cursor-pointer items-center gap-3 border-t border-[#edf0eb] py-3.5">
+                  <label key={chapter.chapterId} className="-mx-2 flex cursor-pointer items-center gap-3 rounded-xl border-t border-stone-100 px-2 py-3.5 transition hover:bg-paper-50">
                     <input
                       type="checkbox"
-                      className="h-4 w-4 accent-[#3f827a]"
+                      className="h-4 w-4 accent-brand-600"
                       checked={selectedChapters.has(chapter.chapterId)}
                       onChange={() => toggleChapter(chapter.chapterId)}
                       disabled={active}
                     />
                     <div className="min-w-0 flex-1">
-                      <strong className="block truncate text-sm">{chapter.title}</strong>
-                      <span className="text-xs text-[#7e8b8d]">
+                      <strong className="block truncate text-sm font-semibold text-ink-900">{chapter.title}</strong>
+                      <span className="text-xs tabular-nums text-ink-500">
                         {chapter.renderedSegments} / {chapter.totalSegments} segments
                         {chapter.durationMs > 0 && ` · ${formatDuration(chapter.durationMs)}`}
                         {chapter.failedSegments > 0 && ` · ${chapter.failedSegments} failed`}
                       </span>
                     </div>
-                    <div className="hidden h-1.5 w-24 overflow-hidden rounded-full bg-[#ebeeea] sm:block">
-                      <div className="h-full rounded-full bg-[#7fb0a4]" style={{ width: `${chapterPercent}%` }} />
+                    <div className="hidden h-1 w-24 overflow-hidden rounded-full bg-stone-100 sm:block">
+                      <div className="h-full rounded-full bg-brand-500" style={{ width: `${chapterPercent}%` }} />
                     </div>
-                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] ${done ? "bg-[#e7f2ec] text-[#428174]" : chapter.failedSegments ? "bg-[#fbe9e4] text-[#a35a44]" : "bg-[#eef0ed] text-[#819091]"}`}>
+                    <span className={`shrink-0 rounded-full px-2.5 py-1 text-3xs font-semibold tabular-nums ring-1 ${done ? "bg-brand-50 text-brand-700 ring-brand-100" : chapter.failedSegments ? "bg-clay-50 text-clay-700 ring-clay-100" : "bg-stone-50 text-ink-600 ring-stone-150"}`}>
                       {done ? "Ready" : chapter.failedSegments ? "Needs 1+" : `${chapterPercent}%`}
                     </span>
                   </label>
@@ -353,11 +353,11 @@ export function NarrationRun({
           <IntegrityCard audit={audit.data} loading={audit.isLoading} />
 
           {(data?.failures.length ?? 0) > 0 && (
-            <div className="rounded-[22px] border border-[#eddcd4] bg-[#fffaf7] p-5">
-              <h3 className="flex items-center gap-2 font-bold text-[#8a4f3a]"><AlertCircle size={15} /> Unrendered segments</h3>
+            <div className="rounded-card border border-clay-200 bg-clay-50 p-6">
+              <h3 className="flex items-center gap-2 text-[15px] font-semibold text-clay-700"><AlertCircle size={15} /> Unrendered segments</h3>
               <ul className="mt-3 space-y-2">
                 {data!.failures.slice(-6).map(failure => (
-                  <li key={`${failure.segmentId}-${failure.at}`} className="border-t border-[#f2e3dc] pt-2 text-[11px] leading-5 text-[#8a6b5f]">
+                  <li key={`${failure.segmentId}-${failure.at}`} className="border-t border-clay-100 pt-2 text-2xs leading-5 text-clay-700">
                     {failure.message}
                   </li>
                 ))}
@@ -365,32 +365,32 @@ export function NarrationRun({
             </div>
           )}
 
-          <div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5">
+          <div className="rounded-card border border-stone-150 bg-paper p-6 shadow-hairline">
             <button
               onClick={() => setShowLog(value => !value)}
               aria-expanded={showLog}
               className="flex w-full items-center justify-between text-left"
             >
-              <span className="flex items-center gap-2 font-bold"><Clock3 size={15} className="text-[#5b8b86]" /> Run log</span>
-              <span className="text-xs font-bold text-[#34736d]">{showLog ? "Hide" : "Show"}</span>
+              <span className="flex items-center gap-2 text-[15px] font-semibold text-ink-900"><Clock3 size={15} className="text-brand-500" /> Run log</span>
+              <span className="text-xs font-semibold text-brand-600">{showLog ? "Hide" : "Show"}</span>
             </button>
             {showLog && (
               (data?.events.length ?? 0) === 0
-                ? <p className="mt-3 text-xs text-[#7e8a8c]">Nothing recorded yet.</p>
+                ? <p className="mt-3 text-xs text-ink-500">Nothing recorded yet.</p>
                 : <ul className="mt-3 space-y-2">
                     {data!.events.slice(-14).reverse().map((event, index) => (
-                      <li key={`${event.at}-${index}`} className="border-t border-[#edf0eb] pt-2">
-                        <span className="mono block text-[9px] uppercase tracking-[.12em] text-[#9aa3a2]">{event.kind}</span>
-                        <span className="block text-[11px] leading-5 text-[#5d6f71]">{event.message}</span>
+                      <li key={`${event.at}-${index}`} className="border-t border-stone-100 pt-2">
+                        <span className="eyebrow block text-3xs text-ink-500">{event.kind}</span>
+                        <span className="block text-2xs leading-5 text-ink-600">{event.message}</span>
                       </li>
                     ))}
                   </ul>
             )}
           </div>
 
-          <div className="rounded-[22px] border border-[#cfe0db] bg-[#f5fbf8] p-5">
-            <h3 className="font-bold text-[#3a5052]">How interruptions are handled</h3>
-            <ul className="mt-3 space-y-2 text-[11px] leading-5 text-[#5f7b78]">
+          <div className="rounded-card border border-brand-100 bg-brand-50/60 p-6">
+            <h3 className="serif text-[22px] leading-tight text-ink-950">How interruptions are handled</h3>
+            <ul className="mt-4 space-y-3 text-2xs leading-5 text-ink-600 [&_strong]:font-semibold [&_strong]:text-ink-900">
               <li><strong>One segment at a time.</strong> Audio is written per segment and verified before it is stored, so a dropped connection cannot leave a half-written file in the book.</li>
               <li><strong>Resume goes back a step.</strong> The segment that was in flight is re-rendered, along with the one before it, so the join is clean and nothing overlaps.</li>
               <li><strong>Stalls are detected, not waited out.</strong> If the provider stops sending audio it is retried with backoff rather than hanging until the request times out.</li>
@@ -405,16 +405,16 @@ export function NarrationRun({
 
 function Header({ status, actions }: { status: NarrationJobStatus | "idle"; actions?: React.ReactNode }) {
   return (
-    <div className="flex flex-col gap-5 border-b border-[#e1e5de] bg-[#fffefa] px-6 py-6 md:flex-row md:items-end md:justify-between md:px-9">
-      <div>
-        <p className="mono text-[10px] tracking-[.15em] text-[#5a918b]">03 · PRODUCE</p>
-        <h2 className="serif mt-2 text-3xl tracking-[-.04em] text-[#25393c]">Generate narration.</h2>
-        <p className="mt-2 max-w-2xl text-sm leading-6 text-[#738084]">
+    <div className="flex flex-col gap-5 border-b border-stone-150 bg-paper px-6 py-7 md:flex-row md:items-end md:justify-between md:px-9">
+      <div className="min-w-0">
+        <p className="eyebrow text-brand-600">03 · PRODUCE</p>
+        <h2 className="serif mt-2 text-[34px] leading-[1.1] tracking-[-.02em] text-ink-950">Generate narration.</h2>
+        <p className="mt-2.5 max-w-2xl text-sm leading-6 text-ink-500">
           Render a long book in resumable passes. Progress is checkpointed after every segment, so you can stop, close the tab, and continue later.
         </p>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-2">
-        <span className={`rounded-full px-3 py-1.5 text-[10px] font-bold ${statusTone[status]}`}>{statusLabel[status].toUpperCase()}</span>
+        <span className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-3xs font-semibold tracking-[.12em] ${statusTone[status]}`}><span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-current opacity-70" />{statusLabel[status].toUpperCase()}</span>
         {actions}
       </div>
     </div>
@@ -423,9 +423,9 @@ function Header({ status, actions }: { status: NarrationJobStatus | "idle"; acti
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl border border-[#e0e5de] bg-[#fffefa] p-4">
-      <span className="mono text-[10px] text-[#819092]">{label.toUpperCase()}</span>
-      <strong className="mt-3 block text-2xl tracking-[-.04em] text-[#304548]">{value}</strong>
+    <div className="rounded-2xl border border-stone-150 bg-paper p-4 shadow-hairline">
+      <span className="eyebrow text-3xs text-ink-500">{label.toUpperCase()}</span>
+      <strong className="mt-3 block text-[26px] font-semibold leading-none tracking-[-.02em] tabular-nums text-ink-900">{value}</strong>
     </div>
   );
 }
@@ -444,14 +444,14 @@ function Banner({
   action?: React.ReactNode;
 }) {
   const styles = {
-    info: "border-[#cfe0db] bg-[#f2f9f6] text-[#3d6b66]",
-    warn: "border-[#ecd9b8] bg-[#fff8ea] text-[#8a6b35]",
-    error: "border-[#eddcd4] bg-[#fffaf7] text-[#8a4f3a]",
+    info: "border-brand-100 bg-brand-50 text-brand-700",
+    warn: "border-gold-200 bg-gold-50 text-gold-700",
+    error: "border-clay-200 bg-clay-50 text-clay-700",
   }[tone];
 
   return (
-    <div className={`rounded-[20px] border p-4 ${styles}`}>
-      <strong className="flex items-center gap-2 text-sm">{icon} {title}</strong>
+    <div className={`rounded-card border p-5 ${styles}`}>
+      <strong className="flex items-center gap-2 text-sm font-semibold">{icon} {title}</strong>
       <p className="mt-2 text-xs leading-5">{body}</p>
       {action}
     </div>
@@ -479,7 +479,7 @@ function IntegrityCard({
   loading: boolean;
 }) {
   if (loading) {
-    return <div className="rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5"><div className="skeleton h-4 w-32" /><div className="skeleton mt-3 h-3 w-full" /></div>;
+    return <div className="rounded-card border border-stone-150 bg-paper p-6"><div className="skeleton h-4 w-32" /><div className="skeleton mt-3 h-3 w-full" /></div>;
   }
   if (!audit) return null;
 
@@ -492,35 +492,35 @@ function IntegrityCard({
   const problems = rows.filter(([, count]) => count > 0);
 
   return (
-    <div className={`rounded-[22px] border p-5 ${audit.complete ? "border-[#c9dfd5] bg-[#f4fbf7]" : "border-[#e0e5de] bg-[#fffefa]"}`}>
-      <h3 className="flex items-center gap-2 font-bold text-[#34484a]">
-        {audit.complete ? <ShieldCheck size={16} className="text-[#3d806f]" /> : <AlertCircle size={16} className="text-[#a87528]" />}
+    <div className={`rounded-card border p-6 ${audit.complete ? "border-brand-200 bg-brand-50" : "border-stone-150 bg-paper shadow-hairline"}`}>
+      <h3 className="flex items-center gap-2 text-[15px] font-semibold text-ink-900">
+        {audit.complete ? <ShieldCheck size={16} className="text-brand-500" /> : <AlertCircle size={16} className="text-gold-600" />}
         Audio integrity
       </h3>
 
       {audit.complete ? (
-        <p className="mt-2 text-xs leading-5 text-[#4a7168]">
+        <p className="mt-2 text-xs leading-5 text-brand-600">
           <CheckCircle2 className="mr-1 inline" size={13} />
           All {audit.totalSegments} segments are rendered from the current text with the current voice.
           {audit.totalDurationMs > 0 && ` ${formatDuration(audit.totalDurationMs)} of audio.`}
         </p>
       ) : (
         <>
-          <p className="mt-2 text-xs leading-5 text-[#748285]">
+          <p className="mt-2 text-xs leading-5 text-ink-500">
             {audit.renderedSegments} of {audit.totalSegments} segments are current.
           </p>
           <ul className="mt-3 space-y-2">
             {problems.map(([label, count, hint]) => (
-              <li key={label} className="border-t border-[#edf0eb] pt-2">
-                <span className="flex items-center justify-between text-xs font-semibold text-[#4e6063]">
+              <li key={label} className="border-t border-stone-100 pt-2">
+                <span className="flex items-center justify-between text-xs font-semibold text-ink-600">
                   {label}
-                  <span className="rounded-full bg-[#f2f4f0] px-2 py-0.5 text-[10px] text-[#7b8584]">{count}</span>
+                  <span className="rounded-full bg-stone-50 px-2 py-0.5 text-3xs font-semibold tabular-nums text-ink-600 ring-1 ring-stone-150">{count}</span>
                 </span>
-                <span className="mt-0.5 block text-[11px] leading-4 text-[#8a9492]">{hint}</span>
+                <span className="mt-0.5 block text-2xs leading-4 text-ink-500">{hint}</span>
               </li>
             ))}
             {problems.length === 0 && (
-              <li className="border-t border-[#edf0eb] pt-2 text-[11px] text-[#8a9492]">Nothing outstanding.</li>
+              <li className="border-t border-stone-100 pt-2 text-2xs text-ink-500">Nothing outstanding.</li>
             )}
           </ul>
         </>
