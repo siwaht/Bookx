@@ -34,6 +34,15 @@ export function supportsPhonemeTags(target?: PronunciationTarget): boolean {
 }
 
 /**
+ * Whether a voice reads IPA written between slashes in plain text. Eleven v4
+ * does, natively, and takes no SSML at all, so for it a phoneme rule becomes
+ * `/ˈkɛstrəl/` instead of a tag (and wins over an alias, being exact).
+ */
+export function supportsIpaInText(target?: PronunciationTarget): boolean {
+  return Boolean(target && target.provider === "ElevenLabs" && /^eleven_v4/.test((target.model ?? "").trim()));
+}
+
+/**
  * Applies rules to `text` in a single pass, so one rule's replacement is never
  * rewritten by another. Longer words win, so a rule for "Kestrel" cannot be
  * half-eaten by a rule for "Kes". The word must stand alone: no letter or digit
@@ -44,10 +53,11 @@ export function supportsPhonemeTags(target?: PronunciationTarget): boolean {
  * otherwise leaves the word as written.
  */
 export function applyPronunciationRules(text: string, rules: PronunciationRule[], target?: PronunciationTarget): string {
-  const phonemes = supportsPhonemeTags(target);
+  const ipaInText = supportsIpaInText(target);
+  const phonemes = !ipaInText && supportsPhonemeTags(target);
   const usable = rules
     .map(rule => ({ word: rule.word.trim(), alias: rule.alias?.trim() || "", phoneme: rule.phoneme?.trim() || "" }))
-    .filter(rule => rule.word && (rule.alias || (rule.phoneme && phonemes)))
+    .filter(rule => rule.word && (rule.alias || (rule.phoneme && (phonemes || ipaInText))))
     .sort((left, right) => right.word.length - left.word.length);
   if (!usable.length) return text;
 
@@ -56,6 +66,10 @@ export function applyPronunciationRules(text: string, rules: PronunciationRule[]
   return text.replace(pattern, (match: string, ...groups: unknown[]) => {
     const rule = usable[groups.findIndex(group => typeof group === "string")];
     if (!rule) return match;
+    // IPA between slashes; slashes inside the transcription would end it early.
+    const ipa = rule.phoneme.replace(/\//g, "").trim();
+    if (ipaInText && ipa) return `/${ipa}/`;
+    if (ipaInText) return rule.alias || match;
     // A function result is inserted as-is, so "$&" or "$1" in an alias stays literal.
     if (rule.alias) return rule.alias;
     return `<phoneme alphabet="ipa" ph="${escapeXml(rule.phoneme)}">${escapeXml(rule.word)}</phoneme>`;

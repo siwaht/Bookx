@@ -171,6 +171,7 @@ async function chapterStatuses(db: Db, project: ProjectRow): Promise<{ chapters:
     await segmentDurations(db, project.id),
     chapters.map(chapter => chapter.id),
     pronHash,
+    { voiceInstructions: project.voiceSettings?.instructions },
   );
   return { chapters, statuses, segments };
 }
@@ -299,13 +300,15 @@ async function buildChapterAudio(input: {
 }): Promise<ChapterAudio> {
   const parts = await chapterParts(input.chapter, input.segments);
   const cues = input.design?.cuesByChapter.get(input.chapter.id) ?? [];
-  if (input.design && (input.passthrough || cues.length)) {
+  const chapterDesign = input.design?.designByChapter.get(input.chapter.id);
+  if (input.design && (input.passthrough || cues.length || chapterDesign?.bed)) {
     const mixed = await assembleAndMixChapter({
       parts,
       cues,
       level: input.design.settings.level,
       defaultGapMs: DEFAULT_SEGMENT_GAP_MS,
       target: input.passthrough ? input.sharedTarget.value : pcmMixTarget(parts[0]!.buffer),
+      design: chapterDesign,
     });
     if (input.passthrough) input.sharedTarget.value = mixed.target;
     return mixed;

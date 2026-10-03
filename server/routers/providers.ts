@@ -9,16 +9,14 @@ import { PROVIDER_ENV_KEYS, availableProviders, cloudflareAccountIdFromUrl, clou
 import { customProviderCapabilities, customProviderHeaders, deleteCustomProvider, listCustomProviders, providerUrlProblem, requireCustomProvider, saveCustomProvider } from "../customProviders";
 import { extractJson, languageModelText } from "../languageModel";
 import { rankCatalogVoices, voiceCatalogFor } from "../voiceCatalog";
-import { CUSTOM_PROVIDER_LIMITS, builtInProviderSchema, customProviderIdSchema, isCustomProviderId, providerIdSchema } from "../../shared/providers";
+import { CUSTOM_PROVIDER_LIMITS, builtInProviderSchema, customProviderIdSchema, isCustomProviderId, providerIdSchema, type BuiltInProviderId } from "../../shared/providers";
+import { forgetModelCatalog, hasLiveCatalog, providerModels, type CatalogModel } from "../modelCatalog";
+import { accountBalances, usageSummary } from "../usage";
+import { modelsInUse } from "../modelsInUse";
 
 export type ProviderCapability = "text-to-speech" | "speech-to-text" | "language-model";
 
-type ProviderModel = {
-  id: string;
-  label: string;
-  capabilities: ProviderCapability[];
-  detail?: string;
-};
+type ProviderModel = CatalogModel;
 
 type ProviderCatalogItem = {
   id: string;
@@ -33,6 +31,11 @@ type ProviderCatalogItem = {
   environmentKey?: boolean;
   /** Set when live model discovery failed, so the UI can explain the short list. */
   discoveryError?: string;
+  /** Whether `models` came from the provider just now (true) or Prosecast's own list. */
+  modelsLive?: boolean;
+  modelsFetchedAt?: string;
+  /** Whether this provider can list its models live once connected. */
+  liveCatalog?: boolean;
   capabilities: ProviderCapability[];
   models: ProviderModel[];
   /** Cloudflare: the account in use, and whether it was saved in the app. */
@@ -119,10 +122,26 @@ async function cloudflareModels(endpoint: CloudflareEndpoint | null): Promise<Pr
   return models;
 }
 
-async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
+async function catalog(ownerId?: number, refresh?: BuiltInProviderId): Promise<ProviderCatalogItem[]> {
   const keys = await providerKeyStates(ownerId);
   const endpoint = await getCloudflareEndpoint(ownerId);
   const cloudflareConfigured = Boolean(endpoint);
+
+  // Live lists for every connected provider that has one, in parallel; each
+  // falls back to the curated list on its own.
+  const listed = Object.fromEntries(await Promise.all(
+    (["ElevenLabs", "Deepgram", "OpenAI", "OpenRouter", "Fish Audio", "Gradium"] as const).map(async provider => [
+      provider,
+      await providerModels({ provider, ownerId, apiKey: keys[provider].apiKey, refresh: refresh === provider }),
+    ] as const),
+  )) as Record<"ElevenLabs" | "Deepgram" | "OpenAI" | "OpenRouter" | "Fish Audio" | "Gradium", Awaited<ReturnType<typeof providerModels>>>;
+  const models = (provider: keyof typeof listed) => ({
+    models: listed[provider].models,
+    modelsLive: listed[provider].live,
+    modelsFetchedAt: listed[provider].fetchedAt,
+    discoveryError: listed[provider].error,
+    liveCatalog: hasLiveCatalog(provider),
+  });
 
   let cloudflare: ProviderModel[] = cloudflareStaticModels;
   let cloudflareError: string | undefined;
@@ -185,24 +204,13 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
     {
       id: "ElevenLabs", label: "ElevenLabs", ...state("ElevenLabs"),
       capabilities: ["text-to-speech", "speech-to-text"],
-      models: [
-        { id: "eleven_multilingual_v2", label: "Multilingual v2", capabilities: ["text-to-speech"], detail: "Stable long-form narration" },
-        { id: "eleven_v3", label: "Eleven v3", capabilities: ["text-to-speech"], detail: "Expressive multi-speaker delivery" },
-        { id: "eleven_flash_v2_5", label: "Flash v2.5", capabilities: ["text-to-speech"], detail: "Fast draft narration" },
-        { id: "scribe_v2", label: "Scribe v2", capabilities: ["speech-to-text"], detail: "Timed transcription" },
-      ],
+      ...models("ElevenLabs"),
     },
     {
       id: "Deepgram", label: "Deepgram", ...state("Deepgram"),
       capabilities: ["text-to-speech", "speech-to-text"],
-      models: [
-        { id: "aura-2-thalia-en", label: "Aura-2 Thalia", capabilities: ["text-to-speech"], detail: "Natural English narration" },
-        { id: "aura-2-andromeda-en", label: "Aura-2 Andromeda", capabilities: ["text-to-speech"], detail: "Warm English narration" },
-        { id: "aura-2-orpheus-en", label: "Aura-2 Orpheus", capabilities: ["text-to-speech"], detail: "Measured English narration" },
-        { id: "nova-3", label: "Nova-3", capabilities: ["speech-to-text"], detail: "Pre-recorded transcription" },
-        // `flux` is intentionally absent: it is realtime/WebSocket only and cannot
-        // transcribe a stored file, so offering it would only fail later.
-      ],
+      // Realtime-only models (Flux) are left out: they cannot transcribe a stored file.
+      ...models("Deepgram"),
     },
     {
       id: "Cloudflare", label: "Cloudflare Workers AI", configured: cloudflareConfigured,
@@ -218,41 +226,22 @@ async function catalog(ownerId?: number): Promise<ProviderCatalogItem[]> {
     {
       id: "OpenAI", label: "OpenAI", ...state("OpenAI"),
       capabilities: ["text-to-speech", "speech-to-text", "language-model"],
-      models: [
-        { id: "gpt-4o-mini-tts", label: "GPT-4o mini TTS", capabilities: ["text-to-speech"], detail: "Narration and voice responses" },
-        { id: "gpt-4o-transcribe", label: "GPT-4o Transcribe", capabilities: ["speech-to-text"], detail: "File transcription" },
-        { id: "gpt-5", label: "GPT-5", capabilities: ["language-model"], detail: "Project organisation and editorial planning" },
-      ],
+      ...models("OpenAI"),
     },
     {
       id: "OpenRouter", label: "OpenRouter", ...state("OpenRouter"),
       capabilities: ["language-model"],
-      models: [
-        { id: "openai/gpt-4o-mini", label: "GPT-4o mini", capabilities: ["language-model"], detail: "Fast, affordable editorial planning" },
-        { id: "openai/gpt-4o", label: "GPT-4o", capabilities: ["language-model"], detail: "Balanced reasoning and analysis" },
-        { id: "anthropic/claude-3.5-sonnet", label: "Claude 3.5 Sonnet", capabilities: ["language-model"], detail: "Thoughtful long-form analysis" },
-        { id: "google/gemini-2.0-flash-001", label: "Gemini 2.0 Flash", capabilities: ["language-model"], detail: "Quick, capable reasoning" },
-        { id: "meta-llama/llama-3.3-70b-instruct", label: "Llama 3.3 70B", capabilities: ["language-model"], detail: "Open-weight reasoning" },
-      ],
+      ...models("OpenRouter"),
     },
     {
       id: "Fish Audio", label: "Fish Audio", ...state("Fish Audio"),
       capabilities: ["text-to-speech", "speech-to-text"],
-      models: [
-        { id: "s2.1-pro", label: "S2.1 Pro", capabilities: ["text-to-speech"], detail: "Expressive multilingual narration" },
-        { id: "s2-pro", label: "S2 Pro", capabilities: ["text-to-speech"], detail: "Previous generation" },
-        { id: "s1", label: "S1", capabilities: ["text-to-speech"], detail: "Earlier model" },
-        { id: "s2.1-pro-free", label: "S2.1 Pro (free tier)", capabilities: ["text-to-speech"], detail: "Fish Audio's free developer tier" },
-        { id: "transcribe-1", label: "Transcribe 1", capabilities: ["speech-to-text"], detail: "File transcription" },
-      ],
+      ...models("Fish Audio"),
     },
     {
       id: "Gradium", label: "Gradium", ...state("Gradium"),
       capabilities: ["text-to-speech"],
-      models: [
-        { id: "default", label: "Gradium TTS", capabilities: ["text-to-speech"], detail: "Natural narration in English, French, German, Spanish and Portuguese" },
-        { id: "gradium-tts-beta", label: "Gradium TTS (beta)", capabilities: ["text-to-speech"], detail: "Newest model; may change" },
-      ],
+      ...models("Gradium"),
     },
     ...customProviders,
   ];
@@ -291,6 +280,20 @@ const castRecommendation = z.object({
 
 export const providersRouter = router({
   catalog: protectedProcedure.query(({ ctx }) => catalog(ctx.user.id)),
+  /** Asks one provider for its current models again, skipping the cache. Free: listing models costs nothing. */
+  refreshModels: protectedProcedure.input(z.object({ provider: builtInProviderSchema })).mutation(async ({ ctx, input }) => {
+    forgetModelCatalog(ctx.user.id, input.provider);
+    const providers = await catalog(ctx.user.id, input.provider);
+    const item = providers.find(provider => provider.id === input.provider);
+    return { provider: input.provider, models: item?.models.length ?? 0, live: item?.modelsLive ?? false, error: item?.discoveryError ?? null };
+  }),
+  /** Which provider and model each capability uses, for a project or the account defaults. */
+  inUse: protectedProcedure.input(z.object({ projectId: z.string().min(1).max(32).optional() })).query(({ ctx, input }) => modelsInUse({ ownerId: ctx.user.id, projectId: input.projectId })),
+  /** What Prosecast used on each provider over the last `days` days. */
+  usage: protectedProcedure.input(z.object({ days: z.number().int().min(1).max(365).default(30) })).query(({ ctx, input }) => usageSummary(ctx.user.id, input.days)),
+  /** What is left in each connected account, where the provider reports it. */
+  balances: protectedProcedure.input(z.object({ refresh: z.boolean().optional(), provider: builtInProviderSchema.optional() }).optional()).query(({ ctx, input }) =>
+    accountBalances({ ownerId: ctx.user.id, isAdmin: ctx.user.role === "admin", refresh: input?.refresh, provider: input?.provider })),
   refreshCloudflareModels: protectedProcedure.mutation(async ({ ctx }) => ({ models: await cloudflareModels(await getCloudflareEndpoint(ctx.user.id)) })),
   modelOptions: protectedProcedure.input(z.object({ capability: z.enum(["text-to-speech", "speech-to-text", "language-model"]) })).query(async ({ ctx, input }) => {
     const providers = await catalog(ctx.user.id);
