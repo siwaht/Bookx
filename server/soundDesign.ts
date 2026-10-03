@@ -15,6 +15,7 @@ import {
   SOUND_RECIPE_VERSION,
   SOUND_TAGS,
   builtinSoundArgs,
+  isSoundTag,
   soundTag,
   type SoundKind,
   type SoundLevel,
@@ -22,7 +23,9 @@ import {
   type SoundSourceSetting,
   type SoundTagDefinition,
 } from "./soundLibrary";
-import { mixTargetFor, mixUnderNarration, type MixTarget } from "./soundMixer";
+import { mixTargetFor, mixUnderNarration, type MixCue, type MixTarget } from "./soundMixer";
+import { DEFAULT_BED_TAG, DUCKING, EFFECT_MAX_MS, chapterMusic, resolveSoundOptions, type ResolvedSoundOptions } from "../shared/soundOptions";
+import { inspectAudio } from "./audioIntegrity";
 import {
   cueStartMs,
   finalizeCuePlan,
@@ -39,6 +42,8 @@ import {
 } from "./soundPlan";
 import { storageGetBuffer, storageGetSignedUrl, storagePut } from "./storage";
 import { PAUSE_PARAGRAPH_MS, hashUnitTexts } from "./textSegmentation";
+import { ELEVENLABS_SOUND_MODEL } from "./soundModels";
+import { billedCharacters, recordUsage } from "./usage";
 
 /**
  * Sound design: planning cues from the text, getting a sound for every cue,
@@ -53,13 +58,19 @@ type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 type ProjectRow = typeof bookxProjects.$inferSelect;
 type SegmentRow = typeof bookxSegments.$inferSelect;
 type CueRow = typeof bookxSoundCues.$inferSelect;
+type ChapterRow = typeof bookxChapters.$inferSelect;
 type AssetRow = typeof bookxStudioAssets.$inferSelect;
 type Llm = NonNullable<Awaited<ReturnType<typeof resolveLanguageModel>>>;
 
 const PLAN_CONCURRENCY = 3;
 
-export const ELEVENLABS_SOUND_MODEL = "eleven_text_to_sound_v2";
+export { ELEVENLABS_SOUND_MODEL };
 const ELEVENLABS_PROMPT_INFLUENCE = 0.6;
+
+/** The tag of a cue that plays one of the creator's own sounds (its `assetId`). */
+export const CUSTOM_SOUND_TAG = "custom";
+/** Uploads are capped so a mistaken album upload cannot fill the bucket. */
+export const MAX_SOUND_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 async function requireDb(): Promise<Db> {
   const db = await getDb();
@@ -286,8 +297,13 @@ class SoundGenerationError extends Error {
   }
 }
 
-async function generateWithElevenLabs(apiKey: string, definition: SoundTagDefinition): Promise<Buffer> {
+export async function generateWithElevenLabs(
+  apiKey: string,
+  definition: Pick<SoundTagDefinition, "prompt" | "durationSeconds"> & { loop?: boolean },
+  usage?: { ownerId: number; projectId: string },
+): Promise<Buffer> {
   let lastError: Error | null = null;
+  const durationSeconds = Math.min(30, Math.max(0.5, definition.durationSeconds));
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       const response = await fetch("https://api.elevenlabs.io/v1/sound-generation?output_format=mp3_44100_128", {
@@ -295,15 +311,28 @@ async function generateWithElevenLabs(apiKey: string, definition: SoundTagDefini
         headers: { "xi-api-key": apiKey, "content-type": "application/json", accept: "audio/mpeg" },
         body: JSON.stringify({
           text: definition.prompt,
-          duration_seconds: Math.min(30, Math.max(0.5, definition.durationSeconds)),
+          duration_seconds: durationSeconds,
           prompt_influence: ELEVENLABS_PROMPT_INFLUENCE,
           model_id: ELEVENLABS_SOUND_MODEL,
+          ...(definition.loop ? { loop: true } : {}),
         }),
         signal: AbortSignal.timeout(90_000),
       });
       if (response.ok) {
         const buffer = Buffer.from(await response.arrayBuffer());
         if (buffer.length < 1_000) throw new SoundGenerationError("ElevenLabs returned an empty sound", false);
+        if (usage) {
+          void recordUsage({
+            ...usage,
+            provider: "ElevenLabs",
+            capability: "sfx",
+            model: ELEVENLABS_SOUND_MODEL,
+            purpose: "sound",
+            characters: definition.prompt.length,
+            audioMs: durationSeconds * 1000,
+            providerCost: billedCharacters(response.headers),
+          });
+        }
         return buffer;
       }
       const detail = (await response.text().catch(() => "")).slice(0, 200);
@@ -393,7 +422,9 @@ async function obtainAsset(db: Db, input: { projectId: string; ownerId: number; 
   }
 
   if (input.source === "elevenlabs" && !input.apiKey) throw new SoundGenerationError("No ElevenLabs API key is connected", true);
-  const buffer = input.source === "elevenlabs" ? await generateWithElevenLabs(input.apiKey!, input.definition) : await synthesizeBuiltin(input.definition);
+  const buffer = input.source === "elevenlabs"
+    ? await generateWithElevenLabs(input.apiKey!, input.definition, { ownerId: input.ownerId, projectId: input.projectId })
+    : await synthesizeBuiltin(input.definition);
   return { asset: await storeAsset(db, { projectId: input.projectId, definition: input.definition, source: input.source, hash, buffer }), fresh: true };
 }
 
@@ -444,7 +475,14 @@ export async function ensureCueAssets(db: Db, input: {
   let elevenLabsUsable = Boolean(apiKey);
 
   const byTag = new Map<string, CueRow[]>();
-  for (const cue of cues) byTag.set(cue.tag, [...(byTag.get(cue.tag) ?? []), cue]);
+  for (const cue of cues) {
+    // A cue playing the creator's own sound already has it; nothing to make.
+    if (cue.tag === CUSTOM_SOUND_TAG) {
+      if (!cue.assetId || !assetById.get(cue.assetId)?.storageKey) report.failed.push("A custom sound is missing. Choose another sound for that cue.");
+      continue;
+    }
+    byTag.set(cue.tag, [...(byTag.get(cue.tag) ?? []), cue]);
+  }
 
   for (const [tag, tagCues] of byTag) {
     const definition = soundTag(tag);
@@ -535,15 +573,32 @@ export type ChapterPart = AssemblyPart & { segmentId: string };
  * Assembles a chapter with room around its cues, then mixes the cues under it.
  * Cues whose anchor line is not in `parts` are ignored.
  */
+/** Music for a chapter's bed, intro and outro, and whether the chapter plays music at all. */
+export type ChapterDesign = {
+  options: ResolvedSoundOptions;
+  musicOn: boolean;
+  bed: { asset: AssetRow; audio: Buffer } | null;
+};
+
+/** Intro and outro music plays this much louder than under the voice, as nothing competes with it. */
+const MUSIC_ALONE_LIFT_DB = 10;
+
 export async function assembleAndMixChapter(input: {
   parts: ChapterPart[];
   cues: CueWithSound[];
   level: SoundLevel;
   defaultGapMs: number;
   target?: MixTarget;
+  /** Music bed, intro/outro and trims; without it the chapter mixes as it always did. */
+  design?: ChapterDesign;
 }): Promise<{ buffer: Buffer; container: "mp3" | "wav"; mimeType: string; durationMs: number; mixedCues: number; target: MixTarget }> {
+  const options = input.design?.options ?? resolveSoundOptions(null);
+  const musicOn = input.design ? input.design.musicOn : true;
+  const bed = musicOn ? input.design?.bed ?? null : null;
   const indexOf = new Map(input.parts.map((part, index) => [part.segmentId, index]));
   const placed = input.cues
+    // Scene swells give way to a continuous bed, and to "no music" for the chapter.
+    .filter(entry => entry.cue.kind === "sfx" || (musicOn && options.musicMode === "swells"))
     .map(entry => ({ entry, index: indexOf.get(entry.cue.segmentId) }))
     .filter((item): item is { entry: CueWithSound; index: number } => item.index !== undefined);
   const layout = layoutChapterCues(
@@ -551,29 +606,65 @@ export async function assembleAndMixChapter(input: {
     placed.map(item => ({ index: item.index, kind: item.entry.cue.kind, placement: item.entry.cue.placement })),
     input.defaultGapMs,
   );
+  const introMs = bed && options.intro.enabled ? options.intro.seconds * 1000 : 0;
+  const outroMs = bed && options.outro.enabled ? options.outro.seconds * 1000 : 0;
   const assembled = assembleAudio(
     input.parts.map((part, index) => ({ buffer: part.buffer, label: part.label, gapAfterMs: layout.gaps[index] })),
-    { gapMs: input.defaultGapMs, leadInMs: layout.leadInMs },
+    { gapMs: input.defaultGapMs, leadInMs: Math.max(layout.leadInMs, introMs) },
   );
+  const tailMs = Math.max(layout.tailMs, outroMs);
+  const effectMaxMs = EFFECT_MAX_MS[options.effectLength];
+
+  const cues: MixCue[] = placed.map(({ entry, index }) => ({
+    audio: entry.audio,
+    startMs: Math.max(0, cueStartMs(assembled.marks[index]!, entry.cue) + (entry.cue.offsetMs ?? 0)),
+    kind: entry.cue.kind,
+    tag: entry.cue.tag,
+    assetDurationMs: entry.asset.durationMs,
+    assetMeanDb: entry.asset.meanVolumeDb,
+    assetPeakDb: entry.asset.peakVolumeDb,
+    trimDb: entry.cue.gainDb + (entry.cue.kind === "sfx" ? options.sfxGainDb : options.musicGainDb),
+    lengthMs: entry.cue.lengthMs,
+    maxMs: entry.cue.kind === "sfx" ? effectMaxMs : undefined,
+  }));
+
+  if (bed) {
+    const track = {
+      audio: bed.audio,
+      kind: "music" as const,
+      tag: bed.asset.tag ?? DEFAULT_BED_TAG,
+      assetDurationMs: bed.asset.durationMs,
+      assetMeanDb: bed.asset.meanVolumeDb,
+      assetPeakDb: bed.asset.peakVolumeDb,
+      loop: true,
+      fadeInMs: options.musicFadeInMs,
+      fadeOutMs: options.musicFadeOutMs,
+    };
+    const voiceEndMs = assembled.durationMs;
+    if (options.musicMode === "bed") {
+      cues.push({ ...track, startMs: 0, lengthMs: voiceEndMs + tailMs, trimDb: options.musicGainDb });
+      // Where the music plays alone it comes up, then settles under the first
+      // line. The lift is the same track from the same start, so it adds in
+      // phase instead of sounding like a second piece. The outro is the bed
+      // running on into the tail and fading out.
+      if (introMs) cues.push({ ...track, startMs: 0, lengthMs: introMs + 1_500, fadeInMs: Math.min(options.musicFadeInMs, introMs), fadeOutMs: 1_500, trimDb: options.musicGainDb + MUSIC_ALONE_LIFT_DB - 6 });
+    } else {
+      if (introMs) cues.push({ ...track, startMs: 0, lengthMs: introMs + 2_500, fadeOutMs: Math.min(options.musicFadeOutMs, 3_000), trimDb: options.musicGainDb + MUSIC_ALONE_LIFT_DB });
+      if (outroMs) cues.push({ ...track, startMs: Math.max(0, voiceEndMs - 1_500), lengthMs: outroMs + 1_500, trimDb: options.musicGainDb + MUSIC_ALONE_LIFT_DB });
+    }
+  }
+
   const target = input.target ?? mixTargetFor(assembled.buffer);
   const mixed = await mixUnderNarration({
     voice: assembled.buffer,
     voiceDurationMs: assembled.durationMs,
     level: input.level,
     target,
-    tailMs: layout.tailMs,
-    cues: placed.map(({ entry, index }) => ({
-      audio: entry.audio,
-      startMs: cueStartMs(assembled.marks[index]!, entry.cue),
-      kind: entry.cue.kind,
-      tag: entry.cue.tag,
-      assetDurationMs: entry.asset.durationMs,
-      assetMeanDb: entry.asset.meanVolumeDb,
-      assetPeakDb: entry.asset.peakVolumeDb,
-      trimDb: entry.cue.gainDb,
-    })),
+    tailMs,
+    cues,
+    duck: DUCKING[options.duck],
   });
-  return { buffer: mixed.buffer, container: mixed.container, mimeType: mixed.mimeType, durationMs: mixed.durationMs, mixedCues: placed.length, target };
+  return { buffer: mixed.buffer, container: mixed.container, mimeType: mixed.mimeType, durationMs: mixed.durationMs, mixedCues: cues.length, target };
 }
 
 /** The project's copies of these sounds. */
@@ -600,8 +691,49 @@ async function loadCueSounds(db: Db, projectId: string, cues: CueRow[]): Promise
 export type ExportSoundDesign = {
   settings: SoundSettings;
   cuesByChapter: Map<string, CueWithSound[]>;
+  /** Bed, intro/outro and trims per chapter. */
+  designByChapter: Map<string, ChapterDesign>;
   cueCount: number;
 };
+
+/** Whether the options call for a music track beyond scene swells. */
+const wantsTrack = (options: ResolvedSoundOptions) => options.musicMode === "bed" || options.intro.enabled || options.outro.enabled;
+
+/**
+ * The music a chapter's bed, intro and outro play: the creator's own track,
+ * else the chosen library music (made once, then reused like any cue sound).
+ * `audioCache` shares downloaded tracks across the chapters of one export.
+ */
+export async function chapterDesign(db: Db, input: {
+  project: ProjectRow;
+  ownerId: number;
+  chapter: { id: string; soundOptions?: ChapterRow["soundOptions"] };
+  audioCache?: Map<string, Buffer>;
+}): Promise<ChapterDesign> {
+  const settings = soundSettings(input.project);
+  const options = resolveSoundOptions(input.project.soundOptions);
+  const music = chapterMusic(options, input.chapter.soundOptions);
+  const musicOn = settings.music && music.on;
+  if (!musicOn || !wantsTrack(options)) return { options, musicOn, bed: null };
+
+  let asset: AssetRow | undefined = music.bedAssetId ? (await projectAssets(db, input.project.id, [music.bedAssetId]))[0] : undefined;
+  if (!asset?.storageKey) {
+    const definition = soundTag(music.bedTag) ?? soundTag(DEFAULT_BED_TAG)!;
+    const apiKey = settings.source === "builtin" ? null : await getProviderApiKey("ElevenLabs", input.ownerId);
+    const source: SoundSource = apiKey ? "elevenlabs" : "builtin";
+    try {
+      asset = (await obtainAsset(db, { projectId: input.project.id, ownerId: input.ownerId, definition, source, apiKey })).asset;
+    } catch (error) {
+      // As with cue sounds, Auto falls back to the built-in music.
+      if (source !== "elevenlabs" || settings.source === "elevenlabs") throw error;
+      asset = (await obtainAsset(db, { projectId: input.project.id, ownerId: input.ownerId, definition, source: "builtin", apiKey: null })).asset;
+    }
+  }
+  const cached = input.audioCache?.get(asset.id);
+  const audio = cached ?? await storageGetBuffer(asset.storageKey!, { timeoutMs: 60_000 });
+  input.audioCache?.set(asset.id, audio);
+  return { options, musicOn, bed: { asset, audio } };
+}
 
 /**
  * Everything an export needs to mix, or null when sound design is off (or on
@@ -611,13 +743,15 @@ export async function prepareExportSoundDesign(db: Db, input: { project: Project
   const settings = soundSettings(input.project);
   const kinds = enabledKinds(settings);
   if (!kinds.length || !input.chapterIds.length) return null;
+  const options = resolveSoundOptions(input.project.soundOptions);
   const load = () => selectInChunks(input.chapterIds, part => db.select().from(bookxSoundCues).where(and(
     eq(bookxSoundCues.projectId, input.project.id),
     eq(bookxSoundCues.enabled, 1),
     inArray(bookxSoundCues.kind, kinds),
     inArray(bookxSoundCues.chapterId, part),
   )));
-  if (!(await load()).length) return null;
+  const track = settings.music && wantsTrack(options);
+  if (!(await load()).length && !track) return null;
 
   const report = await ensureCueAssets(db, { project: input.project, ownerId: input.ownerId, kinds, chapterIds: input.chapterIds });
   if (report.failed.length) {
@@ -626,7 +760,147 @@ export async function prepareExportSoundDesign(db: Db, input: { project: Project
   const withSounds = await loadCueSounds(db, input.project.id, await load());
   const cuesByChapter = new Map<string, CueWithSound[]>();
   for (const entry of withSounds) cuesByChapter.set(entry.cue.chapterId, [...(cuesByChapter.get(entry.cue.chapterId) ?? []), entry]);
-  return { settings, cuesByChapter, cueCount: withSounds.length };
+
+  const designByChapter = new Map<string, ChapterDesign>();
+  const chapters = await selectInChunks(input.chapterIds, part => db.select({ id: bookxChapters.id, soundOptions: bookxChapters.soundOptions }).from(bookxChapters)
+    .where(and(eq(bookxChapters.projectId, input.project.id), inArray(bookxChapters.id, part))));
+  const audioCache = new Map<string, Buffer>();
+  for (const chapter of chapters) {
+    designByChapter.set(chapter.id, await chapterDesign(db, { project: input.project, ownerId: input.ownerId, chapter, audioCache }));
+  }
+  return { settings, cuesByChapter, designByChapter, cueCount: withSounds.length };
+}
+
+// ---------------------------------------------------------------------------
+// The creator's own cues and sounds
+// ---------------------------------------------------------------------------
+
+/** The book's uploaded and generated sounds, newest first. */
+export async function soundAssets(db: Db, projectId: string) {
+  const rows = await db.select().from(bookxStudioAssets).where(eq(bookxStudioAssets.projectId, projectId));
+  return rows
+    .filter(asset => asset.storageKey && (asset.source === "upload" || (asset.source === "elevenlabs" && !asset.tag)))
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .map(asset => ({
+      id: asset.id,
+      title: asset.title,
+      kind: asset.type === "music" ? "music" as const : "sfx" as const,
+      source: asset.source === "upload" ? "upload" as const : "generated" as const,
+      durationMs: asset.durationMs,
+      url: `/manus-storage/${asset.storageKey}`,
+    }));
+}
+
+async function requireSegmentInProject(db: Db, projectId: string, segmentId: string) {
+  const [row] = await db.select({ segment: bookxSegments }).from(bookxSegments)
+    .innerJoin(bookxChapters, eq(bookxSegments.chapterId, bookxChapters.id))
+    .where(and(eq(bookxSegments.id, segmentId), eq(bookxChapters.projectId, projectId)))
+    .limit(1);
+  if (!row) throw new Error("Line not found");
+  return row.segment;
+}
+
+async function requireOwnAsset(db: Db, projectId: string, assetId: string, kind: SoundKind) {
+  const [asset] = await db.select().from(bookxStudioAssets).where(and(eq(bookxStudioAssets.id, assetId), eq(bookxStudioAssets.projectId, projectId))).limit(1);
+  if (!asset?.storageKey) throw new Error("Sound not found");
+  if ((asset.type === "music") !== (kind === "music")) throw new Error(kind === "music" ? "Choose a music track for a music cue" : "Choose a sound effect for an effect cue");
+  return asset;
+}
+
+/** A new cue at a line, playing a library sound or one of the book's own. */
+export async function createSoundCue(db: Db, input: { projectId: string; segmentId: string; kind: SoundKind; tag?: string; assetId?: string; placement: "before" | "after" }) {
+  const segment = await requireSegmentInProject(db, input.projectId, input.segmentId);
+  let tag = input.tag;
+  if (input.assetId) {
+    await requireOwnAsset(db, input.projectId, input.assetId, input.kind);
+    tag = CUSTOM_SOUND_TAG;
+  } else if (!tag || !isSoundTag(tag, input.kind)) {
+    throw new Error("Choose a sound from the library, or one of your own");
+  }
+  const id = nanoid();
+  await db.insert(bookxSoundCues).values({
+    id,
+    projectId: input.projectId,
+    chapterId: segment.chapterId,
+    segmentId: segment.id,
+    kind: input.kind,
+    tag,
+    placement: input.placement,
+    source: "manual",
+    enabled: 1,
+    gainDb: 0,
+    assetId: input.assetId ?? null,
+  });
+  return { id };
+}
+
+/** Moves, nudges, lengthens or re-sounds one cue; the cue becomes the creator's. */
+export async function editSoundCue(db: Db, input: { projectId: string; cueId: string; placement?: "before" | "after"; offsetMs?: number; lengthMs?: number | null; assetId?: string | null; gainDb?: number }) {
+  const cue = await requireCue(db, input.projectId, input.cueId);
+  const values: Partial<CueRow> = { source: "manual", updatedAt: new Date() };
+  if (input.placement) values.placement = input.placement;
+  if (input.offsetMs !== undefined) values.offsetMs = input.offsetMs;
+  if (input.lengthMs !== undefined) values.lengthMs = input.lengthMs;
+  if (input.gainDb !== undefined) values.gainDb = input.gainDb;
+  if (input.assetId) {
+    await requireOwnAsset(db, input.projectId, input.assetId, cue.kind);
+    values.assetId = input.assetId;
+    values.tag = CUSTOM_SOUND_TAG;
+  } else if (input.assetId === null && cue.tag === CUSTOM_SOUND_TAG) {
+    throw new Error("Pick a library sound to replace your own one");
+  }
+  await db.update(bookxSoundCues).set(values).where(eq(bookxSoundCues.id, cue.id));
+  return { success: true };
+}
+
+export async function deleteSoundCue(db: Db, input: { projectId: string; cueId: string }) {
+  const cue = await requireCue(db, input.projectId, input.cueId);
+  await db.delete(bookxSoundCues).where(eq(bookxSoundCues.id, cue.id));
+  return { success: true };
+}
+
+/** Stores a measured copy of an uploaded or generated sound as one of the book's assets. */
+async function storeCustomAsset(db: Db, input: { projectId: string; kind: SoundKind; title: string; buffer: Buffer; source: "upload" | "elevenlabs" }) {
+  if (!(await resolveFfmpeg())) throw new FfmpegUnavailableError();
+  const inspection = inspectAudio(input.buffer);
+  if (inspection.container !== "mp3" && inspection.container !== "wav") throw new Error("Use an MP3 or WAV file");
+  const extension = inspection.container;
+  const measured = await withTempDir(async dir => {
+    const file = path.join(dir, `sound.${extension}`);
+    await writeFile(file, input.buffer);
+    return measureLoudness(file);
+  });
+  if (measured.durationMs < 200 || measured.meanDb <= -80) throw new Error("That sound is silent or too short");
+  const id = nanoid();
+  const stored = await storagePut(`bookx/${input.projectId}/sound/${input.source}-${id}.${extension}`, input.buffer, inspection.mimeType);
+  await db.insert(bookxStudioAssets).values({
+    id,
+    projectId: input.projectId,
+    type: input.kind === "music" ? "music" : "sound-effect",
+    title: input.title,
+    storageKey: stored.key,
+    durationMs: measured.durationMs,
+    source: input.source,
+    meanVolumeDb: Math.round(measured.meanDb),
+    peakVolumeDb: Math.round(measured.peakDb),
+  });
+  return { id, title: input.title, durationMs: measured.durationMs, url: `/manus-storage/${stored.key}` };
+}
+
+export async function uploadCustomSound(db: Db, input: { projectId: string; kind: SoundKind; title: string; filename: string; base64: string }) {
+  const buffer = Buffer.from(input.base64, "base64");
+  if (!buffer.length || buffer.length > MAX_SOUND_UPLOAD_BYTES) throw new Error("Sound files must be between 1 byte and 15 MB");
+  if (!/\.(mp3|wav)$/i.test(input.filename)) throw new Error("Use an MP3 or WAV file");
+  return storeCustomAsset(db, { projectId: input.projectId, kind: input.kind, title: input.title, buffer, source: "upload" });
+}
+
+/** A sound made from a description with ElevenLabs. Paid; only runs when the creator asks. */
+export async function generateCustomSound(db: Db, input: { projectId: string; ownerId: number; kind: SoundKind; title: string; prompt: string; seconds: number; loop?: boolean }) {
+  const apiKey = await getProviderApiKey("ElevenLabs", input.ownerId);
+  if (!apiKey) throw new Error("Connect ElevenLabs in Settings to generate sounds from a description.");
+  const prompt = input.kind === "music" ? `${input.prompt}. Instrumental background music, no vocals` : input.prompt;
+  const buffer = await generateWithElevenLabs(apiKey, { prompt, durationSeconds: input.seconds, loop: input.loop ?? input.kind === "music" }, { ownerId: input.ownerId, projectId: input.projectId });
+  return storeCustomAsset(db, { projectId: input.projectId, kind: input.kind, title: input.title, buffer, source: "elevenlabs" });
 }
 
 /** Whether an export with the current sound settings can succeed, and why not. */
@@ -639,7 +913,8 @@ export async function soundDesignReadiness(db: Db, project: ProjectRow, ownerId:
   if (settings.source === "elevenlabs" && !(await getProviderApiKey("ElevenLabs", ownerId))) {
     return { ready: false, reason: "The sound source is ElevenLabs, but no ElevenLabs key is connected. Add one in Settings, or switch the sound source to Auto." };
   }
-  const unplanned = (await includedChapters(db, project.id)).filter(chapter => chapter.totalSegments > 0 && !chapter.sceneHash);
+  const needsPlan = settings.effects || resolveSoundOptions(project.soundOptions).musicMode === "swells";
+  const unplanned = needsPlan ? (await includedChapters(db, project.id)).filter(chapter => chapter.totalSegments > 0 && !chapter.sceneHash) : [];
   if (unplanned.length) {
     return {
       ready: false,
@@ -679,6 +954,8 @@ export async function soundDesignOverview(db: Db, project: ProjectRow, ownerId: 
     return {
       id: chapter.id,
       title: chapter.title,
+      soundOptions: chapter.soundOptions ?? null,
+      lines: segments.map((segment, index) => ({ id: segment.id, index, text: segment.text.replace(/\s+/g, " ").slice(0, 160) })),
       segments: segments.length,
       rendered: segments.filter(segment => segment.audioStorageKey).length,
       planned: Boolean(chapter.sceneHash),
@@ -688,15 +965,21 @@ export async function soundDesignOverview(db: Db, project: ProjectRow, ownerId: 
         const asset = cue.assetId ? assetById.get(cue.assetId) : undefined;
         // Same window as `previewSoundCue`: the line before, the anchor, the line after.
         const neighbours = [index - 1, index, index + 1];
+        const custom = cue.tag === CUSTOM_SOUND_TAG;
         return {
           id: cue.id,
           kind: cue.kind,
           tag: cue.tag,
-          label: soundTag(cue.tag)?.label ?? cue.tag,
+          label: custom ? asset?.title ?? "Custom sound" : soundTag(cue.tag)?.label ?? cue.tag,
+          custom,
+          assetId: custom ? cue.assetId : null,
           placement: cue.placement,
           source: cue.source,
           enabled: Boolean(cue.enabled),
           gainDb: cue.gainDb,
+          offsetMs: cue.offsetMs ?? 0,
+          lengthMs: cue.lengthMs ?? null,
+          segmentId: cue.segmentId,
           segmentIndex: index,
           anchorText: segments[index]!.text.replace(/\s+/g, " ").slice(0, 220),
           // A preview in context needs the lines around the cue rendered.
@@ -710,6 +993,8 @@ export async function soundDesignOverview(db: Db, project: ProjectRow, ownerId: 
   const all = chapterViews.flatMap(chapter => chapter.cues);
   const kinds = enabledKinds(settings);
   return {
+    options: resolveSoundOptions(project.soundOptions),
+    assets: await soundAssets(db, project.id),
     settings,
     availability: { ffmpeg: Boolean(ffmpeg), elevenLabs: Boolean(elevenLabsKey), languageModel: llm ? `${llm.model}` : null },
     chapters: chapterViews,
@@ -749,7 +1034,7 @@ function rememberPreview(hash: string, value: { key: string; durationMs: number;
 }
 
 const segmentFingerprint = (segments: SegmentRow[]) => segments.map(segment => [segment.id, segment.audioStorageKey, segment.delivery?.pauseMs ?? null]);
-const cueFingerprint = (entry: CueWithSound) => [entry.cue.id, entry.cue.segmentId, entry.cue.tag, entry.cue.placement, entry.cue.gainDb, entry.asset.id];
+const cueFingerprint = (entry: CueWithSound) => [entry.cue.id, entry.cue.segmentId, entry.cue.tag, entry.cue.placement, entry.cue.gainDb, entry.cue.offsetMs, entry.cue.lengthMs, entry.asset.id];
 
 async function requireCue(db: Db, projectId: string, cueId: string): Promise<CueRow> {
   const [cue] = await db.select().from(bookxSoundCues).where(and(eq(bookxSoundCues.id, cueId), eq(bookxSoundCues.projectId, projectId))).limit(1);
@@ -793,7 +1078,8 @@ export async function previewSoundCue(db: Db, input: { project: ProjectRow; owne
     throw new Error("Render the narration around this line first (Generate tab). You can still play the sound on its own.");
   }
   const level = soundSettings(input.project).level;
-  const hash = previewHash(["cue", level, cueFingerprint(withSound!), segmentFingerprint(window)]);
+  const options = resolveSoundOptions(input.project.soundOptions);
+  const hash = previewHash(["cue", level, cueFingerprint(withSound!), segmentFingerprint(window), options.sfxGainDb, options.musicGainDb, options.effectLength, options.duck]);
   const cached = previewCache.get(hash);
   if (cached) return { url: await storageGetSignedUrl(cached.key), durationMs: cached.durationMs, inContext: true };
 
@@ -802,6 +1088,7 @@ export async function previewSoundCue(db: Db, input: { project: ProjectRow; owne
     cues: [withSound!],
     level,
     defaultGapMs: PAUSE_PARAGRAPH_MS,
+    design: { options, musicOn: true, bed: null },
   });
   const stored = await storagePut(`bookx/${input.project.id}/preview/cue-${cue.id}.${mixed.container}`, mixed.buffer, mixed.mimeType);
   rememberPreview(hash, { key: stored.key, durationMs: mixed.durationMs, cues: 1 });
@@ -827,7 +1114,8 @@ export async function previewChapterSound(db: Db, input: { project: ProjectRow; 
     inArray(bookxSoundCues.kind, kinds),
   ));
   const withSounds = await loadCueSounds(db, input.project.id, cues);
-  const hash = previewHash(["chapter", chapter.id, settings.level, withSounds.map(cueFingerprint).sort(), segmentFingerprint(segments)]);
+  const design = await chapterDesign(db, { project: input.project, ownerId: input.ownerId, chapter });
+  const hash = previewHash(["chapter", chapter.id, settings.level, withSounds.map(cueFingerprint).sort(), segmentFingerprint(segments), design.options, design.musicOn, design.bed?.asset.id ?? null]);
   const cached = previewCache.get(hash);
   if (cached) return { url: await storageGetSignedUrl(cached.key), durationMs: cached.durationMs, cues: cached.cues };
 
@@ -836,6 +1124,7 @@ export async function previewChapterSound(db: Db, input: { project: ProjectRow; 
     cues: withSounds,
     level: settings.level,
     defaultGapMs: PAUSE_PARAGRAPH_MS,
+    design,
   });
   const stored = await storagePut(`bookx/${input.project.id}/preview/chapter-${chapter.id}.${mixed.container}`, mixed.buffer, mixed.mimeType);
   rememberPreview(hash, { key: stored.key, durationMs: mixed.durationMs, cues: mixed.mixedCues });

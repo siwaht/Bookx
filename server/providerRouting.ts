@@ -11,6 +11,9 @@ import {
 
 import { isCustomProviderId, type BuiltInProviderId, type ProviderId } from "../shared/providers";
 import { customProviderHeaders, requireCustomProvider } from "./customProviders";
+import { inspectAudio } from "./audioIntegrity";
+import { recordUsage } from "./usage";
+import { projectIdFromKey } from "../shared/storageKeys";
 
 export { BUILT_IN_PROVIDERS, isBuiltInProvider, isCustomProviderId, isProviderId } from "../shared/providers";
 export type { BuiltInProviderId, CustomProviderId, ProviderId } from "../shared/providers";
@@ -61,7 +64,27 @@ export function resolveProvider(requested: ProviderId, capability: RoutingCapabi
   return { provider, fallback: true };
 }
 
-export async function transcribeAudioRoute(input: { provider: ProviderId; model?: string; audioStorageKey: string; language?: string; ownerId?: number }) {
+type TranscribeInput = { provider: ProviderId; model?: string; audioStorageKey: string; language?: string; ownerId?: number; projectId?: string };
+
+/** Transcribes a stored file, and records the audio length against the provider that did it. */
+export async function transcribeAudioRoute(input: TranscribeInput) {
+  let audio: Uint8Array<ArrayBuffer> | null = null;
+  const result = await transcribeAudioRouteInner(input, bytes => { audio = bytes; });
+  const bytes = audio as Uint8Array<ArrayBuffer> | null;
+  const measured = bytes ? inspectAudio(Buffer.from(bytes)).durationMs ?? 0 : 0;
+  void recordUsage({
+    ownerId: input.ownerId,
+    projectId: input.projectId ?? projectIdFromKey(input.audioStorageKey),
+    provider: result.provider,
+    capability: "stt",
+    model: result.fallback ? null : input.model ?? null,
+    purpose: "transcription",
+    audioMs: measured,
+  });
+  return result;
+}
+
+async function transcribeAudioRouteInner(input: TranscribeInput, onAudio: (bytes: Uint8Array<ArrayBuffer>) => void) {
   // Rejected before any storage or provider I/O: a realtime-only model can never
   // transcribe a stored file, so there is no point fetching the audio first.
   if (input.model && isWebsocketOnlyCloudflareModel(input.model)) {
@@ -72,7 +95,34 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
   const language = input.language && input.language !== "Auto-detect" ? input.language.slice(0, 2).toLowerCase() : undefined;
   // Read the bytes server-side rather than fetching a signed URL: in local
   // storage mode that URL is relative to the app and means nothing here.
-  const readAudio = async () => new Uint8Array(await storageGetBuffer(input.audioStorageKey, { timeoutMs: 45_000 }));
+  let cached: Uint8Array<ArrayBuffer> | null = null;
+  const readAudio = async () => {
+    cached ??= new Uint8Array(await storageGetBuffer(input.audioStorageKey, { timeoutMs: 45_000 }));
+    onAudio(cached);
+    return cached;
+  };
+
+  if (resolved.provider === "ElevenLabs") {
+    // Scribe: ElevenLabs' own transcription, which used to fall through to the
+    // managed transcriber even with an ElevenLabs key connected.
+    const body = new FormData();
+    body.set("file", new Blob([await readAudio()], { type: "audio/mpeg" }), "recording.mp3");
+    body.set("model_id", input.model && /^scribe/.test(input.model) ? input.model : "scribe_v2");
+    if (language) body.set("language_code", language);
+    const response = await fetch("https://api.elevenlabs.io/v1/speech-to-text", {
+      method: "POST",
+      headers: { "xi-api-key": await requireProviderApiKey("ElevenLabs", input.ownerId) },
+      body,
+      signal: AbortSignal.timeout(180_000),
+      redirect: "manual",
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      throw new Error(`ElevenLabs transcription failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+    }
+    const payload = await response.json() as { text?: string };
+    return { text: payload.text || "", provider: resolved.provider, fallback: resolved.fallback };
+  }
 
   if (isCustomProviderId(resolved.provider)) {
     const custom = await requireCustomProvider(resolved.provider, input.ownerId, "speech-to-text");

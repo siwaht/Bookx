@@ -15,6 +15,8 @@ import {
   classifyHttpFailure,
 } from "./narrationRetry";
 import { ABSOLUTE_TEXT_LIMIT } from "../shared/narration";
+import { DEFAULT_VOICE_SETTINGS, effectiveVoiceSettings, ttsTraits, type VoiceSettings } from "../shared/direction";
+import { billedCharacters, recordUsage } from "./usage";
 
 /**
  * A single, provider-pinned render of one segment.
@@ -42,6 +44,12 @@ export type PinnedRenderRequest = {
   stallTimeoutMs?: number;
   /** Aborts the attempt when the run is paused or cancelled. */
   signal?: AbortSignal;
+  /** Delivery instructions, for models with an instructions field (inline tags are already in `text`). */
+  instructions?: string;
+  /** The project's voice settings; only the ones the model accepts are sent. */
+  voiceSettings?: VoiceSettings | null;
+  /** What the render is for, in the usage ledger. */
+  purpose?: string;
 };
 
 /**
@@ -53,9 +61,12 @@ export const ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128";
 /** Context sent alongside a segment; the provider only uses it to shape intonation. */
 const CONTINUITY_CHARS = 400;
 
-/** Eleven v3 does not accept request stitching, so context is only sent to the others. */
+/**
+ * Eleven v3 and v4 do not accept request stitching, so context is only sent to
+ * the v2 family. Sending it to them is refused or ignored.
+ */
 export function supportsElevenLabsContinuity(model: string): boolean {
-  return !/^eleven_v3/.test(model);
+  return ttsTraits("ElevenLabs", model).continuity;
 }
 
 /** Deepgram voices are models; a per-character voice id like "aura-2-zeus-en" is used as the model. */
@@ -63,16 +74,47 @@ export function deepgramModelFor(model: string, voiceId?: string | null): string
   return voiceId && /^aura-(?:2-)?[a-z]+-[a-z]{2}$/.test(voiceId) ? voiceId : model;
 }
 
-export function buildElevenLabsBody(request: Pick<PinnedRenderRequest, "text" | "model" | "previousText" | "nextText">): Record<string, unknown> {
+/**
+ * ElevenLabs voice settings for `model`: stability and similarity always (at
+ * Prosecast's long-standing defaults unless the creator changed them), and
+ * style, speed and speaker boost only when the model takes them and the
+ * creator set them. Eleven v4 takes stability and similarity alone.
+ */
+export function elevenLabsVoiceSettings(model: string, settings?: VoiceSettings | null): Record<string, number | boolean> {
+  const traits = ttsTraits("ElevenLabs", model);
+  const effective = effectiveVoiceSettings(settings, traits);
+  const out: Record<string, number | boolean> = {
+    stability: effective.stability ?? DEFAULT_VOICE_SETTINGS.stability,
+    similarity_boost: effective.similarity ?? DEFAULT_VOICE_SETTINGS.similarity,
+  };
+  if (traits.stabilitySteps?.length && typeof out.stability === "number") {
+    out.stability = traits.stabilitySteps.reduce((best, step) => (Math.abs(step - (out.stability as number)) < Math.abs(best - (out.stability as number)) ? step : best), traits.stabilitySteps[0]!);
+  }
+  if (traits.settings.includes("style") && typeof settings?.style === "number") out.style = effective.style!;
+  if (traits.settings.includes("speed") && typeof settings?.speed === "number") out.speed = effective.speed!;
+  if (traits.settings.includes("speakerBoost") && typeof settings?.speakerBoost === "boolean") out.use_speaker_boost = settings.speakerBoost;
+  return out;
+}
+
+export function buildElevenLabsBody(request: Pick<PinnedRenderRequest, "text" | "model" | "previousText" | "nextText" | "voiceSettings">): Record<string, unknown> {
   const body: Record<string, unknown> = {
     text: request.text,
     model_id: request.model,
-    voice_settings: { stability: 0.45, similarity_boost: 0.75 },
+    voice_settings: elevenLabsVoiceSettings(request.model, request.voiceSettings),
   };
   if (supportsElevenLabsContinuity(request.model)) {
     if (request.previousText?.trim()) body.previous_text = request.previousText.trim().slice(-CONTINUITY_CHARS);
     if (request.nextText?.trim()) body.next_text = request.nextText.trim().slice(0, CONTINUITY_CHARS);
   }
+  return body;
+}
+
+/** OpenAI speech body: instructions only for models that take them, speed only for the tts-1 family. */
+export function buildOpenAiSpeechBody(request: Pick<PinnedRenderRequest, "text" | "model" | "voiceId" | "instructions" | "voiceSettings">, provider: "OpenAI" | "Cloudflare" = "OpenAI"): Record<string, unknown> {
+  const traits = ttsTraits(provider, request.model);
+  const body: Record<string, unknown> = { model: request.model, voice: openAiVoice(request.voiceId, request.model), input: request.text, response_format: "mp3" };
+  if (traits.instructions && request.instructions?.trim()) body.instructions = request.instructions.trim().slice(0, 1_000);
+  if (traits.settings.includes("speed") && typeof request.voiceSettings?.speed === "number") body.speed = Math.min(4, Math.max(0.25, request.voiceSettings.speed));
   return body;
 }
 
@@ -239,7 +281,7 @@ export type ProviderCall = {
   errorStatus?: (status: number, body: string) => number;
 };
 
-export type ProviderCallRequest = Pick<PinnedRenderRequest, "provider" | "model" | "voiceId" | "text" | "previousText" | "nextText" | "language" | "ownerId">;
+export type ProviderCallRequest = Pick<PinnedRenderRequest, "provider" | "model" | "voiceId" | "text" | "previousText" | "nextText" | "language" | "ownerId" | "instructions" | "voiceSettings">;
 
 /** Audio bytes from a provider response, whatever shape the provider answered in. */
 export function decodeProviderAudio(call: ProviderCall, raw: Buffer, contentType: string): Buffer {
@@ -308,7 +350,7 @@ export async function buildProviderCall(request: ProviderCallRequest, signal: Ab
         init: {
           method: "POST",
           headers: cloudflareHeaders(endpoint),
-          body: JSON.stringify({ model, input: text, voice: openAiVoice(voiceId, model), response_format: "mp3" }),
+          body: JSON.stringify(buildOpenAiSpeechBody({ model, text, voiceId, instructions: request.instructions, voiceSettings: request.voiceSettings }, "Cloudflare")),
           signal,
         },
         expectsJsonAudio: false,
@@ -336,7 +378,7 @@ export async function buildProviderCall(request: ProviderCallRequest, signal: Ab
       init: {
         method: "POST",
         headers: { "xi-api-key": key, "content-type": "application/json", accept: "audio/mpeg" },
-        body: JSON.stringify(buildElevenLabsBody({ text, model, previousText: request.previousText, nextText: request.nextText })),
+        body: JSON.stringify(buildElevenLabsBody({ text, model, previousText: request.previousText, nextText: request.nextText, voiceSettings: request.voiceSettings })),
         signal,
       },
       expectsJsonAudio: false,
@@ -364,7 +406,7 @@ export async function buildProviderCall(request: ProviderCallRequest, signal: Ab
       init: {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
-        body: JSON.stringify({ model, voice: openAiVoice(voiceId, model), input: text, response_format: "mp3" }),
+        body: JSON.stringify(buildOpenAiSpeechBody({ model, text, voiceId, instructions: request.instructions, voiceSettings: request.voiceSettings })),
         signal,
       },
       expectsJsonAudio: false,
@@ -441,6 +483,19 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
       buffer,
       verdict.inspection.mimeType,
     );
+
+    // Billed whether or not anything else succeeds, so it is recorded now.
+    void recordUsage({
+      ownerId: request.ownerId,
+      projectId: request.projectId,
+      provider: request.provider,
+      capability: "tts",
+      model: request.model,
+      purpose: request.purpose ?? "narration",
+      characters: text.length,
+      audioMs: verdict.inspection.durationMs ?? 0,
+      providerCost: billedCharacters(response.headers),
+    });
 
     return { storageKey: stored.key, audioUrl: stored.url, inspection: verdict.inspection };
   } finally {

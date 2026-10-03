@@ -4,7 +4,8 @@ import { inspectAudio } from "./audioIntegrity";
 import { ProviderConfigurationError } from "./narrationRetry";
 import { resolveProvider, type ProviderId } from "./providerRouting";
 import { DEFAULT_CLOUDFLARE_TTS_MODEL, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint, requireProviderApiKey } from "./providerCredentials";
-import { FISH_AUDIO_DEFAULT_MODEL, GRADIUM_DEFAULT_MODEL, buildProviderCall, decodeProviderAudio, openAiVoice, type ProviderCall } from "./ttsRender";
+import { FISH_AUDIO_DEFAULT_MODEL, GRADIUM_DEFAULT_MODEL, buildElevenLabsBody, buildProviderCall, decodeProviderAudio, openAiVoice, type ProviderCall } from "./ttsRender";
+import { billedCharacters, recordUsage } from "./usage";
 
 export type TtsProvider = ProviderId;
 
@@ -97,6 +98,16 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
   const isWav = inspectAudio(buffer).container === "wav";
   const clipId = nanoid();
   const stored = await storagePut(`bookx/${request.projectId}/narration/${clipId}.${isWav ? "wav" : "mp3"}`, buffer, isWav ? "audio/wav" : "audio/mpeg");
+  void recordUsage({
+    ownerId: request.ownerId,
+    projectId: request.projectId,
+    provider,
+    capability: "tts",
+    model: request.model || null,
+    purpose: "preview",
+    characters: request.text.length,
+    providerCost: billedCharacters(response.headers),
+  });
   return { clipId, storageKey: stored.key, audioUrl: stored.url, provider, fallback: resolved.fallback };
 }
 
@@ -110,7 +121,8 @@ async function providerResponse(provider: TtsProvider, request: NarrationRequest
     ? await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${request.voiceId || "21m00Tcm4TlvDq8ikWAM"}`, {
       method: "POST",
       headers: { "xi-api-key": await requireProviderApiKey("ElevenLabs", request.ownerId), "content-type": "application/json", accept: "audio/mpeg" },
-      body: JSON.stringify({ text: request.text, model_id: request.model || "eleven_multilingual_v2", voice_settings: { stability: 0.45, similarity_boost: 0.75 } }),
+      // The render path's body, so a preview gets the settings the model accepts (v4: stability and similarity only).
+      body: JSON.stringify(buildElevenLabsBody({ text: request.text, model: request.model || "eleven_multilingual_v2" })),
       signal: AbortSignal.timeout(120_000),
     })
     : provider === "Deepgram"

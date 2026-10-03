@@ -357,9 +357,12 @@ export function cueStartMs(anchor: { startMs: number; durationMs: number }, cue:
 }
 
 /** How long a cue plays and how it fades, from its measured length. */
-export function cueEnvelope(tag: string, kind: SoundKind, assetDurationMs: number): { lengthMs: number; fadeInMs: number; fadeOutMs: number } {
+export function cueEnvelope(tag: string, kind: SoundKind, assetDurationMs: number, maxMs?: number): { lengthMs: number; fadeInMs: number; fadeOutMs: number } {
   const timing = CUE_TIMING[kind];
-  const lengthMs = Math.max(200, Math.min(timing.maxMs, assetDurationMs || timing.maxMs));
+  // A longer effect length (chosen in the Audio studio) lifts the ceiling; the
+  // sound itself still sets the length when it is shorter.
+  const ceiling = maxMs && maxMs > 0 ? maxMs : timing.maxMs;
+  const lengthMs = Math.max(200, Math.min(ceiling, assetDurationMs || ceiling));
   const impact = kind === "sfx" && soundTag(tag)?.texture === "impact";
   return {
     lengthMs,

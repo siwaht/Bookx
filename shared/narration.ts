@@ -37,6 +37,10 @@ export const MODEL_TEXT_LIMITS: Record<string, number> = {
   // ElevenLabs
   eleven_multilingual_v2: 2400,
   eleven_v3: 2400,
+  // Eleven v4 accepts 10,000 characters, but paragraph-sized units keep retries
+  // cheap and still give it the context it performs best with.
+  eleven_v4: 2400,
+  eleven_v4_turbo: 2400,
   eleven_turbo_v2_5: 2400,
   // Deepgram direct
   "aura-2-thalia-en": 1800,
@@ -108,6 +112,24 @@ export type ChapterProgress = {
   renderedSegments: number;
   failedSegments: number;
   durationMs: number;
+  /** Characters to voice, and how many of them already have audio. */
+  totalCharacters?: number;
+  renderedCharacters?: number;
+  /** Where the chapter stands in the latest run. */
+  state?: "queued" | "rendering" | "done" | "partial" | "failed" | "idle" | "empty";
+  /** Part of the latest run's scope. */
+  inRun?: boolean;
+};
+
+/** Pace and time left, from how fast the run has actually been rendering. */
+export type NarrationTiming = {
+  remainingMs: number | null;
+  msPerCharacter: number | null;
+  samples: number;
+  activeElapsedMs: number;
+  remainingCharacters: number;
+  /** What is being voiced right now. */
+  current: { chapterId: string; chapterTitle: string; chapterNumber: number; chapterCount: number; segmentNumber: number; segmentCount: number } | null;
 };
 
 export type NarrationProgress = {
@@ -135,7 +157,23 @@ export type NarrationProgress = {
   events: Array<{ at: string; kind: string; message: string }>;
   /** Set when a previous run left work behind and can be picked up again. */
   resumable: boolean;
+  /** Pace, elapsed time and time left for the run. */
+  timing?: NarrationTiming;
+  /** The run regenerates current audio (a "Regenerate chapter"). */
+  regenerating?: boolean;
 };
+
+/** "1h 04m", "12m 05s", "40s". */
+export function formatClock(ms: number | null | undefined): string {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return "—";
+  const totalSeconds = Math.round(ms / 1000);
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  if (hours) return `${hours}h ${String(minutes).padStart(2, "0")}m`;
+  if (minutes) return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+  return `${seconds}s`;
+}
 
 /**
  * Result of auditing a project's rendered audio.

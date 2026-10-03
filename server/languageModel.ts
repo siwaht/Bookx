@@ -3,6 +3,25 @@ import { bookxProviderSettings } from "../drizzle/schema";
 import { getDb } from "./db";
 import { resolveProvider, type ProviderId } from "./providerRouting";
 import { OPENROUTER_API_BASE, availableProviders, cloudflareHeaders, getCloudflareEndpoint, openAiRoute, requireProviderApiKey } from "./providerCredentials";
+import { recordUsage } from "./usage";
+
+/** Token counts in an OpenAI-shaped reply; OpenRouter adds the cost in USD. */
+type TokenUsage = { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+
+function noteTokens(input: LanguageModelRequest, provider: string, usage: TokenUsage | undefined) {
+  void recordUsage({
+    ownerId: input.ownerId,
+    projectId: input.projectId,
+    provider,
+    capability: "llm",
+    model: input.model,
+    purpose: input.purpose ?? "analysis",
+    inputTokens: usage?.prompt_tokens,
+    outputTokens: usage?.completion_tokens,
+    characters: usage ? 0 : input.system.length + input.text.length,
+    providerCost: typeof usage?.cost === "number" ? usage.cost : null,
+  });
+}
 
 /**
  * Language-model calls shared by casting, speaker attribution and scene analysis.
@@ -30,6 +49,9 @@ export type LanguageModelRequest = {
    * the same result.
    */
   reasoningEffort?: "low" | "medium" | "high";
+  /** For the usage ledger: which book, and what the call was for. */
+  projectId?: string;
+  purpose?: string;
 };
 
 /** Whether a model accepts `reasoning_effort` (gpt-oss on Workers AI). */
@@ -91,7 +113,9 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
     const payload = await response.json() as {
       choices?: Array<{ finish_reason?: string; message?: { content?: string; reasoning_content?: string } }>;
       result?: { response?: string; text?: string };
+      usage?: TokenUsage;
     };
+    noteTokens(input, "Cloudflare", payload.usage);
     const choice = payload.choices?.[0];
     const result = choice?.message?.content || payload.result?.response || payload.result?.text;
     if (!result) {
@@ -130,7 +154,8 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
     const detail = await response.text().catch(() => "");
     throw new Error(`OpenAI language model request failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
   }
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: TokenUsage };
+  noteTokens(input, "OpenAI", payload.usage);
   const result = payload.choices?.[0]?.message?.content;
   if (!result) throw new Error("OpenAI returned no model text");
   return result;
@@ -154,6 +179,8 @@ async function openRouterText(input: LanguageModelRequest, maxTokens: number, ti
       messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }],
       temperature: 0.25,
       response_format: { type: "json_object" },
+      // Asks OpenRouter to report the call's cost, for the usage ledger.
+      usage: { include: true },
     }),
     signal: AbortSignal.timeout(Math.min(timeoutMs, 180_000)),
   });
@@ -161,7 +188,8 @@ async function openRouterText(input: LanguageModelRequest, maxTokens: number, ti
     const detail = await response.text().catch(() => "");
     throw new Error(`OpenRouter language model request failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
   }
-  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
+  const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }>; usage?: TokenUsage };
+  noteTokens(input, "OpenRouter", payload.usage);
   const result = payload.choices?.[0]?.message?.content;
   if (!result) throw new Error("OpenRouter returned no model text");
   return result;

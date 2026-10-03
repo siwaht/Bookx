@@ -1,4 +1,6 @@
 import { voiceKey } from "../shared/narration";
+import type { SegmentDirectionSpec } from "../shared/direction";
+import { directionHashFor } from "./direction";
 import { hashSegmentText } from "./textSegmentation";
 
 /**
@@ -52,6 +54,18 @@ export type PlannableSegment = {
   /** A scene break precedes this segment. */
   sceneBreakBefore?: boolean;
   kind?: "narration" | "dialogue";
+  /** Hash of the direction sent with the stored audio ("" or null: none). */
+  directionHash?: string | null;
+  /** The direction this segment should be performed with now. */
+  direction?: SegmentDirectionSpec | null;
+  /** When the stored audio was made, for regenerations. */
+  renderedAt?: Date | null;
+};
+
+/** Things besides text, voice and pronunciation that decide whether audio is current. */
+export type ReuseContext = {
+  /** Standing instructions for models with an instructions field. */
+  voiceInstructions?: string | null;
 };
 
 export type PlanInput = {
@@ -66,8 +80,15 @@ export type PlanInput = {
   rewindSegments?: number;
   /** Re-render everything, ignoring reusable audio. */
   force?: boolean;
+  /**
+   * A regeneration: audio made before this moment is redone even if current.
+   * Unlike `force`, audio already redone since then is kept, so a paused
+   * regeneration resumes instead of starting over.
+   */
+  forceBefore?: Date | null;
   /** Restrict the run to these chapters. */
   chapterIds?: string[];
+  context?: ReuseContext;
 };
 
 export type PlanResult = {
@@ -110,10 +131,10 @@ export const targetVoiceKeyFor = (segment: PlannableSegment, pinned: { provider:
 
 export type ReuseCheck =
   | { reusable: true }
-  | { reusable: false; reason: "missing-audio" | "text-changed" | "voice-changed" | "pronunciation-changed" };
+  | { reusable: false; reason: "missing-audio" | "text-changed" | "voice-changed" | "pronunciation-changed" | "direction-changed" };
 
 /** Whether a segment's stored audio can stand as-is for this run. */
-export function checkReusable(segment: PlannableSegment, pinned: { provider: string; model: string }, pronunciationHash?: string | null): ReuseCheck {
+export function checkReusable(segment: PlannableSegment, pinned: { provider: string; model: string }, pronunciationHash?: string | null, context?: ReuseContext): ReuseCheck {
   if (!segment.audioStorageKey) return { reusable: false, reason: "missing-audio" };
   if (!segment.textHash || segment.textHash !== hashSegmentText(segment.text)) {
     return { reusable: false, reason: "text-changed" };
@@ -125,6 +146,13 @@ export function checkReusable(segment: PlannableSegment, pinned: { provider: str
   // applied, which is what an empty rule set hashes to.
   if (pronunciationHash !== undefined && (segment.pronunciationHash ?? "") !== (pronunciationHash ?? "")) {
     return { reusable: false, reason: "pronunciation-changed" };
+  }
+  // Only checked when the caller knows the segment's direction. Audio from
+  // before direction existed stores nothing, which equals "no direction", so
+  // it stays current until the creator actually directs the line.
+  if (segment.direction !== undefined) {
+    const wanted = directionHashFor(segment.direction, pinned.provider, pinned.model, context?.voiceInstructions);
+    if ((segment.directionHash ?? "") !== wanted) return { reusable: false, reason: "direction-changed" };
   }
   return { reusable: true };
 }
@@ -165,12 +193,24 @@ export function planNarrationRun(input: PlanInput): PlanResult {
   const pending: PlannableSegment[] = [];
   const reusable: PlannableSegment[] = [];
 
+  const forceBefore = input.forceBefore ? new Date(input.forceBefore).getTime() : null;
+  let regenerating = 0;
+
   ordered.forEach((segment, index) => {
-    const check = checkReusable(segment, input.pinned, input.pronunciationHash);
+    const check = checkReusable(segment, input.pinned, input.pronunciationHash, input.context);
 
     // Inside the rewind window (the cursor itself plus the units immediately
     // before it) we distrust stored audio even when it verifies.
     const insideRewindWindow = cursorIndex >= 0 && index >= resumeIndex && index <= cursorIndex;
+
+    // A regeneration redoes audio made before it was asked for, and keeps what
+    // it has already redone.
+    const predatesRegeneration = forceBefore !== null && (!segment.renderedAt || new Date(segment.renderedAt).getTime() < forceBefore);
+    if (check.reusable && predatesRegeneration) {
+      regenerating++;
+      pending.push(segment);
+      return;
+    }
 
     if (check.reusable && insideRewindWindow) {
       rewound.push(segment.id);
@@ -184,11 +224,12 @@ export function planNarrationRun(input: PlanInput): PlanResult {
     pending.push(segment);
   });
 
-  const note = cursorIndex >= 0
+  const note = (cursorIndex >= 0
     ? `Resuming at segment ${resumeIndex + 1} of ${ordered.length}` +
       (rewound.length ? `, re-rendering ${rewound.length} segment(s) before the interruption` : "") +
       `; reusing ${reusable.length}`
-    : `Rendering ${pending.length} of ${ordered.length} segments; reusing ${reusable.length}`;
+    : `Rendering ${pending.length} of ${ordered.length} segments; reusing ${reusable.length}`) +
+    (regenerating ? `; regenerating ${regenerating} by request` : "");
 
   return { ordered, pending, reusable, rewound, resumeIndex, totalSegments: ordered.length, note };
 }
@@ -204,6 +245,7 @@ export function auditSegments(
   pinned: { provider: string; model: string },
   durations: Map<string, number | null> = new Map(),
   pronunciationHash?: string | null,
+  context?: ReuseContext,
 ) {
   const ordered = orderSegments(segments);
   const missingSegments: string[] = [];
@@ -214,7 +256,7 @@ export function auditSegments(
   let totalDurationMs = 0;
 
   for (const segment of ordered) {
-    const check = checkReusable(segment, pinned, pronunciationHash);
+    const check = checkReusable(segment, pinned, pronunciationHash, context);
     if (check.reusable) {
       renderedSegments++;
       const duration = durations.get(segment.id);
@@ -225,7 +267,7 @@ export function auditSegments(
       continue;
     }
     if (check.reason === "missing-audio") missingSegments.push(segment.id);
-    else if (check.reason === "text-changed" || check.reason === "pronunciation-changed") staleSegments.push(segment.id);
+    else if (check.reason === "text-changed" || check.reason === "pronunciation-changed" || check.reason === "direction-changed") staleSegments.push(segment.id);
     else mismatchedVoiceSegments.push(segment.id);
   }
 
@@ -278,6 +320,7 @@ export function chapterAudioStates(
   durations: Map<string, number | null> = new Map(),
   chapterIds: string[] = [],
   pronunciationHash?: string | null,
+  context?: ReuseContext,
 ): Map<string, ChapterAudioStatus> {
   const statuses = new Map<string, ChapterAudioStatus>();
   const blank = (chapterId: string): ChapterAudioStatus => ({
@@ -294,13 +337,13 @@ export function chapterAudioStates(
       const duration = durations.get(segment.id);
       if (duration && duration > 0) status.durationMs += duration;
     }
-    const check = checkReusable(segment, pinned, pronunciationHash);
+    const check = checkReusable(segment, pinned, pronunciationHash, context);
     if (check.reusable) {
       if (durations.get(segment.id) === null) status.unverified++;
       continue;
     }
     if (check.reason === "missing-audio") status.missing++;
-    else if (check.reason === "text-changed" || check.reason === "pronunciation-changed") status.stale++;
+    else if (check.reason === "text-changed" || check.reason === "pronunciation-changed" || check.reason === "direction-changed") status.stale++;
     else status.mismatchedVoice++;
   }
 

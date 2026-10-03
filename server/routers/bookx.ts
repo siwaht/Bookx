@@ -22,7 +22,7 @@ import { analysisProgress, requestAnalysisCancel } from "../analysisJobs";
 import { assignProjectVoices, startCastAnalysis } from "../castAnalysis";
 import { previewChapterSound, previewSoundCue, soundDesignOverview, soundSettings, startScenePlan, startSoundPreparation } from "../soundDesign";
 import { isSoundTag } from "../soundLibrary";
-import { projectSetupSchema } from "../../shared/bookx";
+import { projectSetupSchema, projectUpdateSchema } from "../../shared/bookx";
 import { providerIdSchema, type ProviderId } from "../../shared/providers";
 import { forEachChunk, getDb, insertMany, projectChapterIds, runBatched } from "../db";
 import { chapterBodySchema, splitOversizedChapters } from "../chapterLimits";
@@ -42,7 +42,8 @@ import {
   retryFailedSegments,
   startNarrationRun,
 } from "../narrationWorker";
-import { isTerminalJobStatus, type AudioAudit, type ChapterProgress, type NarrationProgress } from "../../shared/narration";
+import { isTerminalJobStatus, type AudioAudit, type ChapterProgress, type NarrationProgress, type NarrationTiming } from "../../shared/narration";
+import { narrationEta } from "../narrationEta";
 import { EXPORT_PRESET_IDS, exportOutputSchema } from "../../shared/exportOptions";
 import {
   deleteProjectExport,
@@ -166,7 +167,7 @@ export const bookxRouter = router({
     return { storageKey: stored.key, url: stored.url, filename: input.filename };
   }),
 
-  updateProject: protectedProcedure.input(projectId.merge(projectSetupSchema.partial())).mutation(async ({ ctx, input }) => {
+  updateProject: protectedProcedure.input(projectId.merge(projectUpdateSchema)).mutation(async ({ ctx, input }) => {
     const { projectId: projectIdValue, ...updates } = input;
     const { db } = await requireProject(ctx.user.id, projectIdValue);
     await db.update(bookxProjects).set({ ...updates, manuscriptName: updates.manuscriptName === "" ? null : updates.manuscriptName, updatedAt: new Date() }).where(eq(bookxProjects.id, projectIdValue));
@@ -465,32 +466,82 @@ export const bookxRouter = router({
       ? await db.select().from(bookxSegments).where(inArray(bookxSegments.chapterId, projectChapterIds(db, input.projectId, { includedOnly: true })))
       : [];
 
-    const chapterProgress: ChapterProgress[] = chapters.map((chapter) => {
-      const own = segments.filter((segment) => segment.chapterId === chapter.id);
-      return {
-        chapterId: chapter.id,
-        title: chapter.title,
-        orderIndex: chapter.orderIndex,
-        totalSegments: own.length,
-        renderedSegments: own.filter((segment) => segment.audioStorageKey).length,
-        failedSegments: own.filter((segment) => !segment.audioStorageKey && segment.lastError).length,
-        durationMs: own.reduce((total, segment) => total + (segment.audioDurationMs || 0), 0),
-      };
-    });
-
     const [job] = await db.select().from(bookxGenerationJobs)
       .where(eq(bookxGenerationJobs.projectId, input.projectId))
       .orderBy(desc(bookxGenerationJobs.createdAt))
       .limit(1);
 
-    const detail = (job?.detail || {}) as { chapterIds?: string[]; failures?: NarrationProgress["failures"]; events?: NarrationProgress["events"]; pinnedVoice?: NarrationProgress["pinnedVoice"] };
+    const detail = (job?.detail || {}) as { chapterIds?: string[]; failures?: NarrationProgress["failures"]; events?: NarrationProgress["events"]; pinnedVoice?: NarrationProgress["pinnedVoice"]; forceBefore?: string };
     // A run over some chapters is measured against those chapters only. Counting
     // the whole book's audio against the run's total showed "300 / 40" and an
     // instant 100% for a one-chapter run in a half-narrated book.
     const runChapters = detail.chapterIds?.length ? new Set(detail.chapterIds) : null;
+    const live = job && !isTerminalJobStatus(job.status);
+    // A regeneration counts a line as done only once it has been redone.
+    const forceBefore = live && detail.forceBefore ? new Date(detail.forceBefore).getTime() : null;
+    const isDone = (segment: (typeof segments)[number]) =>
+      Boolean(segment.audioStorageKey) && (forceBefore === null || (segment.renderedAt != null && new Date(segment.renderedAt).getTime() >= forceBefore));
+    const cursor = job?.cursorSegmentId ? segments.find((segment) => segment.id === job.cursorSegmentId) : undefined;
+
+    const chapterProgress: ChapterProgress[] = chapters.map((chapter) => {
+      const own = segments.filter((segment) => segment.chapterId === chapter.id);
+      const inRun = Boolean(job) && (!runChapters || runChapters.has(chapter.id));
+      const done = own.filter((segment) => (inRun ? isDone(segment) : Boolean(segment.audioStorageKey)));
+      const failed = own.filter((segment) => !segment.audioStorageKey && segment.lastError).length;
+      const state: ChapterProgress["state"] = !own.length
+        ? "empty"
+        : done.length === own.length
+          ? "done"
+          : live && inRun && cursor?.chapterId === chapter.id
+            ? "rendering"
+            : failed
+              ? "failed"
+              : live && inRun
+                ? "queued"
+                : done.length
+                  ? "partial"
+                  : "idle";
+      return {
+        chapterId: chapter.id,
+        title: chapter.title,
+        orderIndex: chapter.orderIndex,
+        totalSegments: own.length,
+        renderedSegments: done.length,
+        failedSegments: failed,
+        durationMs: own.reduce((total, segment) => total + (segment.audioDurationMs || 0), 0),
+        totalCharacters: own.reduce((total, segment) => total + segment.text.length, 0),
+        renderedCharacters: done.reduce((total, segment) => total + segment.text.length, 0),
+        state,
+        inRun,
+      };
+    });
+
     const scopedProgress = runChapters ? chapterProgress.filter((chapter) => runChapters.has(chapter.chapterId)) : chapterProgress;
     const renderedSegments = scopedProgress.reduce((total, chapter) => total + chapter.renderedSegments, 0);
     const totalSegments = job?.totalSegments || scopedProgress.reduce((total, chapter) => total + chapter.totalSegments, 0);
+
+    // Pace from when each line finished; only lines in the run's scope count.
+    const scopedSegments = runChapters ? segments.filter((segment) => runChapters.has(segment.chapterId)) : segments;
+    const eta = narrationEta({
+      segments: scopedSegments.map((segment) => ({ rendered: isDone(segment), renderedAt: segment.renderedAt, characters: segment.text.length })),
+      startedAt: job?.startedAt ?? null,
+      now: Date.now(),
+      active: job?.status === "running",
+    });
+    let current: NarrationTiming["current"] = null;
+    if (live && cursor) {
+      const chapterIndex = scopedProgress.findIndex((chapter) => chapter.chapterId === cursor.chapterId);
+      const ownSegments = segments.filter((segment) => segment.chapterId === cursor.chapterId).sort((left, right) => left.orderIndex - right.orderIndex);
+      current = {
+        chapterId: cursor.chapterId,
+        chapterTitle: chapters.find((chapter) => chapter.id === cursor.chapterId)?.title ?? "",
+        chapterNumber: chapterIndex + 1,
+        chapterCount: scopedProgress.length,
+        segmentNumber: ownSegments.findIndex((segment) => segment.id === cursor.id) + 1,
+        segmentCount: ownSegments.length,
+      };
+    }
+    const timing: NarrationTiming = { ...eta, current };
 
     if (!job) {
       return {
@@ -500,6 +551,7 @@ export const bookxRouter = router({
         renderedBytes: 0, cursorIndex: 0, cursorSegmentId: null, pinnedVoice: null, stopping: false,
         secondsSinceHeartbeat: null, startedAt: null, finishedAt: null, chapters: chapterProgress,
         failures: [], events: [], resumable: renderedSegments < totalSegments && totalSegments > 0,
+        timing: { ...timing, remainingMs: null },
       };
     }
 
@@ -528,6 +580,8 @@ export const bookxRouter = router({
       failures: detail.failures || [],
       events: detail.events || [],
       resumable: !isTerminalJobStatus(job.status) || (job.status === "failed" && completed < totalSegments),
+      timing: live ? timing : { ...timing, remainingMs: null },
+      regenerating: Boolean(live && detail.forceBefore),
     };
   }),
 
