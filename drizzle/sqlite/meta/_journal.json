@@ -36,6 +36,13 @@
       "when": 1790513680392,
       "tag": "0004_pronunciation_hash",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1791058192694,
+      "tag": "0005_audio_studio_upgrades",
+      "breakpoints": true
     }
   ]
 }

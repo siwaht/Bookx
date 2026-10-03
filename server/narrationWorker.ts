@@ -30,6 +30,8 @@ import { attributeSpeakersHeuristically, type CastMember } from "./speakerAttrib
 import { renderSegmentAudio } from "./ttsRender";
 import { textLimitForModel } from "../shared/narration";
 import { applyPronunciationRules, pronunciationHash, type PronunciationRule } from "./pronunciation";
+import { chapterDirectionSpecs, directionFor, directionHashFor } from "./direction";
+import type { SegmentDirectionSpec, VoiceSettings } from "../shared/direction";
 
 /**
  * The durable narration worker.
@@ -270,6 +272,8 @@ export async function ensureChapterSegments(input: {
         // Carried with the audio: without it every kept line looked rendered
         // under different pronunciation rules and was narrated (and paid for) again.
         pronunciationHash: carried?.pronunciationHash ?? null,
+        // Likewise the direction it was performed with.
+        directionHash: carried?.directionHash ?? null,
         voiceProvider: carried?.voiceProvider ?? null,
         voiceModel: carried?.voiceModel ?? null,
         voiceId: carried?.voiceId ?? null,
@@ -367,6 +371,13 @@ export async function loadPlannableSegments(projectId: string, chapterIds?: stri
     .where(inArray(bookxSegments.chapterId, projectChapterIds(db, projectId, { includedOnly: true }))))
     .filter(row => inScope.has(row.chapterId));
 
+  // Direction depends on a line's place in its chapter (which scene it is in).
+  const directionById = new Map<string, SegmentDirectionSpec>();
+  for (const chapter of scoped) {
+    const own = rows.filter(row => row.chapterId === chapter.id).sort((left, right) => left.orderIndex - right.orderIndex || left.id.localeCompare(right.id));
+    chapterDirectionSpecs(chapter.direction, own).forEach((spec, index) => directionById.set(own[index]!.id, spec));
+  }
+
   return rows.map(row => ({
     id: row.id,
     chapterId: row.chapterId,
@@ -383,6 +394,9 @@ export async function loadPlannableSegments(projectId: string, chapterIds?: stri
     pauseMs: row.delivery?.pauseMs ?? null,
     sceneBreakBefore: Boolean(row.delivery?.sceneBreakBefore),
     kind: row.delivery?.kind ?? "narration",
+    directionHash: row.directionHash,
+    direction: directionById.get(row.id) ?? null,
+    renderedAt: row.renderedAt,
   }));
 }
 
@@ -402,6 +416,8 @@ export type StartRunInput = {
   chapterIds?: string[];
   /** Re-render segments that already have valid audio. */
   force?: boolean;
+  /** Regenerate: redo audio made before this moment, resumably (stored on the job). */
+  forceBefore?: Date;
   /** How many valid segments before the interruption point to redo on resume. */
   rewindSegments?: number;
   maxAttempts?: number;
@@ -463,7 +479,7 @@ export async function startNarrationRun(input: StartRunInput): Promise<{ jobId: 
 
   let existing: (typeof live)[number] | undefined = live[live.length - 1];
   const sameRun = existing
-    ? sameChapterScope((existing.detail as GenerationJobDetail | null)?.chapterIds, input.chapterIds) && !input.force
+    ? sameChapterScope((existing.detail as GenerationJobDetail | null)?.chapterIds, input.chapterIds) && !input.force && !input.forceBefore
     : false;
 
   if (existing && (activeRuns.has(existing.id) || leaseHeld(existing))) {
@@ -522,7 +538,12 @@ export async function startNarrationRun(input: StartRunInput): Promise<{ jobId: 
     detail: {
       chapterIds: input.chapterIds,
       pinnedVoice: { provider, model },
-      events: [{ at: new Date().toISOString(), kind: "queued", message: `Queued with ${provider} · ${model}` }],
+      ...(input.forceBefore ? { forceBefore: input.forceBefore.toISOString() } : {}),
+      events: [{
+        at: new Date().toISOString(),
+        kind: "queued",
+        message: input.forceBefore ? `Regeneration queued with ${provider} · ${model}` : `Queued with ${provider} · ${model}`,
+      }],
     } satisfies GenerationJobDetail,
   });
 
@@ -717,9 +738,15 @@ async function renderWithRetries(input: {
   stallTimeoutMs: number;
   controller: AbortController;
   onEvent: (kind: string, message: string) => Promise<void>;
-}): Promise<{ ok: true; bytes: number; durationMs: number } | { ok: false; classification: FailureClassification; fatal: boolean }> {
+  voiceSettings?: VoiceSettings | null;
+}): Promise<{ ok: true; bytes: number; durationMs: number; characters: number } | { ok: false; classification: FailureClassification; fatal: boolean }> {
   const { db, segment } = input;
   let lastClassification: FailureClassification = { kind: "unknown", retryable: false, message: "Not attempted" };
+  // Tags go in front of the words for tag-aware models; instructions travel
+  // separately; every other model gets the words alone.
+  const direction = directionFor(segment.direction, input.provider, input.model, input.voiceSettings?.instructions);
+  const directionHash = directionHashFor(segment.direction, input.provider, input.model, input.voiceSettings?.instructions);
+  const spoken = `${direction.prefix}${applyPronunciationRules(segment.text, input.pronunciationRules, { provider: input.provider, model: input.model })}`;
 
   for (let attempt = 1; attempt <= input.maxAttempts; attempt++) {
     if (input.controller.signal.aborted) {
@@ -733,7 +760,9 @@ async function renderWithRetries(input: {
         provider: input.provider,
         model: input.model,
         voiceId: segment.targetVoiceId,
-        text: applyPronunciationRules(segment.text, input.pronunciationRules, { provider: input.provider, model: input.model }),
+        text: spoken,
+        instructions: direction.instructions || undefined,
+        voiceSettings: input.voiceSettings,
         previousText: input.previousText,
         nextText: input.nextText,
         language: input.language,
@@ -752,6 +781,7 @@ async function renderWithRetries(input: {
           audioStorageKey: result.storageKey,
           textHash: hashSegmentText(segment.text),
           pronunciationHash: input.pronunciationHash,
+          directionHash: directionHash || null,
           voiceProvider: input.provider,
           voiceModel: input.model,
           voiceId: segment.targetVoiceId ?? null,
@@ -779,7 +809,7 @@ async function renderWithRetries(input: {
       if (attempt > 1) {
         await input.onEvent("recovered", `Segment recovered on attempt ${attempt}`);
       }
-      return { ok: true, bytes: result.inspection.bytes, durationMs: result.inspection.durationMs ?? 0 };
+      return { ok: true, bytes: result.inspection.bytes, durationMs: result.inspection.durationMs ?? 0, characters: spoken.length };
     } catch (error) {
       // `renderSegmentAudio` attaches a classification for HTTP failures.
       // A pause or cancel aborts the in-flight request, which surfaces here as a
@@ -899,6 +929,7 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
     const segments = await loadPlannableSegments(job.projectId, chapterIds);
     const pronunciationRules = await loadPronunciationRules(db, job.projectId);
     const pronHash = pronunciationHash(pronunciationRules);
+    const forceBefore = (job.detail as GenerationJobDetail | null)?.forceBefore;
     const plan = planNarrationRun({
       segments,
       pinned: { provider, model },
@@ -906,7 +937,9 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
       cursorSegmentId: job.cursorSegmentId,
       rewindSegments: job.rewindSegments,
       force: options.force,
+      forceBefore: forceBefore ? new Date(forceBefore) : null,
       chapterIds,
+      context: { voiceInstructions: project.voiceSettings?.instructions },
     });
 
     if (!plan.totalSegments) {
@@ -1010,6 +1043,7 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         stallTimeoutMs,
         controller,
         onEvent: recordEvent,
+        voiceSettings: project.voiceSettings,
       });
 
       let result = await render();
@@ -1181,20 +1215,29 @@ export async function renderSegmentNow(input: {
   model: string;
   voiceId?: string | null;
   language?: string | null;
+  purpose?: string;
 }): Promise<{ storageKey: string; audioUrl: string; durationMs: number | null }> {
   const db = await requireDb();
   const [segment] = await db.select().from(bookxSegments).where(eq(bookxSegments.id, input.segmentId)).limit(1);
   if (!segment) throw new Error("Segment not found");
   const rules = await loadPronunciationRules(db, input.projectId);
+  const [project] = await db.select({ voiceSettings: bookxProjects.voiceSettings }).from(bookxProjects).where(eq(bookxProjects.id, input.projectId)).limit(1);
+  // The line's direction, worked out exactly as a run works it out.
+  const plannable = (await loadPlannableSegments(input.projectId, [segment.chapterId])).find(candidate => candidate.id === segment.id);
+  const instructions = project?.voiceSettings?.instructions;
+  const direction = directionFor(plannable?.direction, input.provider, input.model, instructions);
   const result = await renderSegmentAudio({
     projectId: input.projectId,
     segmentId: segment.id,
     provider: input.provider,
     model: input.model,
     voiceId: input.voiceId ?? undefined,
-    text: applyPronunciationRules(segment.text, rules, { provider: input.provider, model: input.model }),
+    text: `${direction.prefix}${applyPronunciationRules(segment.text, rules, { provider: input.provider, model: input.model })}`,
+    instructions: direction.instructions || undefined,
+    voiceSettings: project?.voiceSettings,
     language: input.language,
     ownerId: input.ownerId,
+    purpose: input.purpose ?? "retake",
   });
   const saved = await db
     .update(bookxSegments)
@@ -1202,6 +1245,7 @@ export async function renderSegmentNow(input: {
       audioStorageKey: result.storageKey,
       textHash: hashSegmentText(segment.text),
       pronunciationHash: pronunciationHash(rules),
+      directionHash: directionHashFor(plannable?.direction, input.provider, input.model, instructions) || null,
       voiceProvider: input.provider,
       voiceModel: input.model,
       voiceId: input.voiceId ?? null,
@@ -1459,5 +1503,109 @@ export async function auditProjectAudio(input: { projectId: string; ownerId: num
     }
   }
 
-  return auditSegments(segments, { provider: project.voiceProvider, model: project.voiceModel }, durations, pronHash);
+  return auditSegments(segments, { provider: project.voiceProvider, model: project.voiceModel }, durations, pronHash, { voiceInstructions: project.voiceSettings?.instructions });
+}
+
+// ---------------------------------------------------------------------------
+// Regenerating and re-taking
+// ---------------------------------------------------------------------------
+
+async function ownedProject(db: Db, projectId: string, ownerId: number) {
+  const [project] = await db
+    .select()
+    .from(bookxProjects)
+    .where(and(eq(bookxProjects.id, projectId), eq(bookxProjects.ownerId, ownerId)))
+    .limit(1);
+  if (!project) throw new Error("Project not found");
+  return project;
+}
+
+/**
+ * Re-voices one line with the voice a run would give it (its character's, or
+ * the narrator's), its direction, and the project's model.
+ */
+export async function retakeSegment(input: { projectId: string; ownerId: number; segmentId: string }) {
+  const db = await requireDb();
+  const project = await ownedProject(db, input.projectId, input.ownerId);
+  const [row] = await db
+    .select({ chapterId: bookxSegments.chapterId })
+    .from(bookxSegments)
+    .innerJoin(bookxChapters, eq(bookxSegments.chapterId, bookxChapters.id))
+    .where(and(eq(bookxSegments.id, input.segmentId), eq(bookxChapters.projectId, input.projectId)))
+    .limit(1);
+  if (!row) throw new Error("Segment not found");
+  const plannable = (await loadPlannableSegments(input.projectId, [row.chapterId])).find(segment => segment.id === input.segmentId);
+  if (!plannable) throw new Error("This line is in a chapter that is not part of the book. Include the chapter first.");
+  const provider = project.voiceProvider as ProviderId;
+  if (!(await availableProviders(input.ownerId, "text-to-speech")).includes(provider)) {
+    throw new Error(`${provider} is not configured. Connect it in Settings to re-take this line.`);
+  }
+  return renderSegmentNow({
+    projectId: input.projectId,
+    ownerId: input.ownerId,
+    segmentId: input.segmentId,
+    provider,
+    model: project.voiceModel,
+    voiceId: plannable.targetVoiceId,
+    language: project.language,
+    purpose: "retake",
+  });
+}
+
+/**
+ * Re-renders whole chapters even where their audio is current. Starts at once
+ * unless a run is rendering right now, in which case the caller is asked to
+ * pause it first rather than having two runs race over the same book.
+ */
+export async function regenerateChapters(input: { projectId: string; ownerId: number; chapterIds: string[] }) {
+  const db = await requireDb();
+  await ownedProject(db, input.projectId, input.ownerId);
+  const included = new Set((await includedChapters(db, input.projectId)).map(chapter => chapter.id));
+  const chapterIds = [...new Set(input.chapterIds)].filter(id => included.has(id));
+  if (!chapterIds.length) throw new Error("Choose a chapter that is part of the book.");
+  const live = await db
+    .select({ id: bookxGenerationJobs.id, leaseOwner: bookxGenerationJobs.leaseOwner, leaseExpiresAt: bookxGenerationJobs.leaseExpiresAt })
+    .from(bookxGenerationJobs)
+    .where(and(eq(bookxGenerationJobs.projectId, input.projectId), inArray(bookxGenerationJobs.status, ["queued", "running"])));
+  if (live.some(job => activeRuns.has(job.id) || leaseHeld(job))) {
+    throw new Error("Narration is running. Pause it first: the regeneration starts straight away, and Continue narration picks up the rest afterwards.");
+  }
+  return startNarrationRun({ projectId: input.projectId, ownerId: input.ownerId, chapterIds, forceBefore: new Date() });
+}
+
+/**
+ * What a run (or a regeneration) would send: how many lines and characters,
+ * including the direction tags that are billed as text.
+ */
+export async function estimateNarration(input: { projectId: string; ownerId: number; chapterIds?: string[]; regenerate?: boolean }) {
+  const db = await requireDb();
+  const project = await ownedProject(db, input.projectId, input.ownerId);
+  const provider = project.voiceProvider;
+  const model = project.voiceModel;
+  const segments = await loadPlannableSegments(input.projectId, input.chapterIds);
+  const rules = await loadPronunciationRules(db, input.projectId);
+  const plan = planNarrationRun({
+    segments,
+    pinned: { provider, model },
+    pronunciationHash: pronunciationHash(rules),
+    forceBefore: input.regenerate ? new Date() : null,
+    chapterIds: input.chapterIds,
+    context: { voiceInstructions: project.voiceSettings?.instructions },
+  });
+  let characters = 0;
+  let directionCharacters = 0;
+  for (const segment of plan.pending) {
+    const direction = directionFor(segment.direction, provider, model, project.voiceSettings?.instructions);
+    const text = applyPronunciationRules(segment.text, rules, { provider, model });
+    characters += direction.prefix.length + text.length;
+    directionCharacters += direction.prefix.length;
+  }
+  return {
+    provider,
+    model,
+    segments: plan.pending.length,
+    totalSegments: plan.totalSegments,
+    characters,
+    directionCharacters,
+  };
 }

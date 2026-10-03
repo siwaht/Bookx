@@ -1,5 +1,7 @@
-import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import type { ExportOutput } from "../shared/exportOptions";
+import type { ChapterDirection, VoiceSettings } from "../shared/direction";
+import type { ChapterSoundOptions, SoundOptions } from "../shared/soundOptions";
 
 /**
  * Bookx's database, in SQLite form for Cloudflare D1.
@@ -58,6 +60,10 @@ export const bookxProjects = sqliteTable("bookxProjects", {
   soundLevel: text("soundLevel").notNull().default("extra-subtle"),
   /** "auto" (ElevenLabs when connected, else built-in), "elevenlabs" or "builtin". */
   soundSource: text("soundSource").notNull().default("auto"),
+  /** Music bed, intro/outro, volumes and ducking; null means the original swells-only behaviour. */
+  soundOptions: text("soundOptions", { mode: "json" }).$type<SoundOptions>(),
+  /** Stability, similarity and the other knobs the chosen voice model accepts; null means its defaults. */
+  voiceSettings: text("voiceSettings", { mode: "json" }).$type<VoiceSettings>(),
 
   createdAt: createdAt(),
   updatedAt: updatedAt(),
@@ -86,6 +92,10 @@ export const bookxChapters = sqliteTable("bookxChapters", {
   /** The chapter file of the most recent export. */
   audioStorageKey: text("audioStorageKey"),
   audioDurationMs: integer("audioDurationMs"),
+  /** Scene setting and mood for the chapter and each of its scenes, voiced by models that take direction. */
+  direction: text("direction", { mode: "json" }).$type<ChapterDirection>(),
+  /** Per-chapter music override (off, or a different track). */
+  soundOptions: text("soundOptions", { mode: "json" }).$type<ChapterSoundOptions>(),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, table => [index("bookxChapters_project_idx").on(table.projectId, table.orderIndex)]);
@@ -127,6 +137,8 @@ export const bookxSegments = sqliteTable("bookxSegments", {
   textHash: text("textHash"),
   /** Hash of the pronunciation rules applied when `audioStorageKey` was made. */
   pronunciationHash: text("pronunciationHash"),
+  /** Hash of the performance direction (audio tags or instructions) sent with the text; null means none. */
+  directionHash: text("directionHash"),
   voiceProvider: text("voiceProvider"),
   voiceModel: text("voiceModel"),
   voiceId: text("voiceId"),
@@ -196,6 +208,12 @@ export type GenerationJobDetail = {
    * taking its process down with it is not restarted (and paid for) forever.
    */
   recovery?: { count: number; completedSegments: number };
+  /**
+   * A regeneration: audio rendered before this moment is redone even when it
+   * is still current. Stored (rather than a one-off "force") so a paused
+   * regeneration resumes where it stopped instead of redoing finished lines.
+   */
+  forceBefore?: string;
 };
 
 export const bookxGenerationJobs = sqliteTable("bookxGenerationJobs", {
@@ -378,6 +396,10 @@ export const bookxSoundCues = sqliteTable("bookxSoundCues", {
   /** Creator trim relative to the project's sound level, in dB. */
   gainDb: integer("gainDb").notNull().default(0),
   assetId: text("assetId"),
+  /** Creator nudge of the start time, in ms (negative plays earlier). */
+  offsetMs: integer("offsetMs").notNull().default(0),
+  /** Creator override of how long the cue plays, in ms; null uses the sound's own envelope. */
+  lengthMs: integer("lengthMs"),
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, table => [
@@ -428,6 +450,31 @@ export const bookxTimelineClips = sqliteTable("bookxTimelineClips", {
   createdAt: createdAt(),
   updatedAt: updatedAt(),
 }, table => [index("bookxTimelineClips_project_idx").on(table.projectId)]);
+
+/**
+ * One provider call Prosecast made on a user's behalf: characters sent to a
+ * voice, seconds transcribed, tokens used by a language model. Written after
+ * the call succeeds, so the ledger never counts work that was not done.
+ */
+export const bookxUsageEvents = sqliteTable("bookxUsageEvents", {
+  id: text("id").primaryKey(),
+  ownerId: integer("ownerId").notNull(),
+  projectId: text("projectId"),
+  provider: text("provider").notNull(),
+  /** "tts", "stt", "llm", "sfx" or "music". */
+  capability: text("capability").notNull(),
+  model: text("model"),
+  /** What the call was for: "narration", "preview", "cast-analysis", "direction", "transcription", "sound". */
+  purpose: text("purpose"),
+  characters: integer("characters").notNull().default(0),
+  inputTokens: integer("inputTokens").notNull().default(0),
+  outputTokens: integer("outputTokens").notNull().default(0),
+  /** Audio processed (STT) or produced (sounds), in ms. */
+  audioMs: integer("audioMs").notNull().default(0),
+  /** Cost the provider reported for the call, in its own unit (ElevenLabs credits, OpenRouter USD). */
+  providerCost: real("providerCost"),
+  createdAt: createdAt(),
+}, table => [index("bookxUsageEvents_owner_idx").on(table.ownerId, table.provider, table.createdAt)]);
 
 /**
  * The app's own settings, keyed by a fixed single row (id = 1). Holds the

@@ -108,6 +108,9 @@ export type GraphCue = {
   gainDb: number;
 };
 
+/** Gain in dB, clamped to what the mixer will ever apply. */
+export const clampGainDb = (value: number): number => (Number.isFinite(value) ? Math.round(Math.max(-70, Math.min(12, value)) * 10) / 10 : -70);
+
 const seconds = (ms: number) => (Math.max(0, ms) / 1000).toFixed(3);
 
 /**
@@ -122,6 +125,8 @@ export function buildMixGraph(input: {
   voiceDurationMs: number;
   tailMs: number;
   duckThreshold: number;
+  /** Sidechain ratio: how hard the voice pushes the bed down (4 unless the creator chose otherwise). */
+  duckRatio?: number;
 }): string {
   const format = `aformat=sample_fmts=fltp:sample_rates=${input.sampleRate}:channel_layouts=${input.channels === 1 ? "mono" : "stereo"}`;
   const voice = [`[0:a]${format}`, ...(input.tailMs > 0 ? [`apad=pad_dur=${seconds(input.tailMs)}`] : [])].join(",");
@@ -147,7 +152,8 @@ export function buildMixGraph(input: {
   // Pad and trim the bed to the voice's length so the sidechain and the final
   // sum consume both streams in lockstep (nothing is buffered for minutes).
   chains.push(`${sum},apad=whole_dur=${total},atrim=duration=${total}[bed]`);
-  chains.push(`[bed][key]sidechaincompress=threshold=${input.duckThreshold}:ratio=4:attack=20:release=350:makeup=1[ducked]`);
+  const ratio = Math.min(20, Math.max(1, Math.round(input.duckRatio ?? 4)));
+  chains.push(`[bed][key]sidechaincompress=threshold=${input.duckThreshold}:ratio=${ratio}:attack=20:release=350:makeup=1[ducked]`);
   chains.push("[voice][ducked]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.99:level=0[out]");
   return chains.join(";");
 }
@@ -162,6 +168,14 @@ export type MixCue = {
   assetPeakDb: number | null;
   /** The creator's trim for this cue, in dB. */
   trimDb: number;
+  /** Repeat the sound for as long as `lengthMs` (a music bed, an intro). */
+  loop?: boolean;
+  /** How long it plays, overriding the sound's own envelope. */
+  lengthMs?: number | null;
+  fadeInMs?: number;
+  fadeOutMs?: number;
+  /** Longest an effect may ring on, when the creator chose a longer length. */
+  maxMs?: number;
 };
 
 export type MixResult = {
@@ -187,6 +201,7 @@ export async function mixUnderNarration(input: {
   level: SoundLevel;
   target: MixTarget;
   tailMs?: number;
+  duck?: { ratio: number; thresholdScale: number };
 }): Promise<MixResult> {
   return withTempDir(async dir => {
     const voiceIsWav = input.voice.subarray(0, 4).toString("latin1") === "RIFF";
@@ -200,18 +215,25 @@ export async function mixUnderNarration(input: {
     for (const [index, cue] of input.cues.entries()) {
       const cuePath = path.join(dir, `cue-${index}.${cue.audio.subarray(0, 4).toString("latin1") === "RIFF" ? "wav" : "mp3"}`);
       await writeFile(cuePath, cue.audio);
+      // A looped input repeats forever; the graph trims it to the cue's length.
+      if (cue.loop) args.push("-stream_loop", "-1");
       args.push("-i", cuePath);
-      const envelope = cueEnvelope(cue.tag, cue.kind, cue.assetDurationMs);
-      const gainDb = cueGainDb({
+      const envelope = cueEnvelope(cue.tag, cue.kind, cue.loop ? Number.MAX_SAFE_INTEGER : cue.assetDurationMs, cue.maxMs);
+      const lengthMs = cue.lengthMs && cue.lengthMs > 0
+        ? Math.round(cue.loop ? cue.lengthMs : Math.min(cue.lengthMs, Math.max(200, cue.assetDurationMs || cue.lengthMs)))
+        : envelope.lengthMs;
+      const fadeInMs = Math.min(cue.fadeInMs ?? envelope.fadeInMs, Math.floor(lengthMs / 2));
+      const fadeOutMs = Math.min(cue.fadeOutMs ?? envelope.fadeOutMs, Math.floor(lengthMs / 2));
+      const gainDb = clampGainDb(cueGainDb({
         narrationMeanDb: narrationMeanDb ?? -20,
         kind: cue.kind,
         level: input.level,
         assetMeanDb: cue.assetMeanDb,
         assetPeakDb: cue.assetPeakDb,
         trimDb: cue.trimDb,
-      });
+      }));
       gainsDb.push(gainDb);
-      graphCues.push({ input: index + 1, startMs: cue.startMs, ...envelope, gainDb });
+      graphCues.push({ input: index + 1, startMs: Math.max(0, cue.startMs), lengthMs, fadeInMs, fadeOutMs, gainDb });
     }
 
     const graph = buildMixGraph({
@@ -220,7 +242,8 @@ export async function mixUnderNarration(input: {
       channels: targetChannels(input.target) as 1 | 2,
       voiceDurationMs: input.voiceDurationMs,
       tailMs: Math.max(0, Math.round(input.tailMs ?? 0)),
-      duckThreshold: duckThreshold(narrationMeanDb ?? -20),
+      duckThreshold: Math.max(0.001, Math.min(0.5, duckThreshold(narrationMeanDb ?? -20) * (input.duck?.thresholdScale ?? 1))),
+      duckRatio: input.duck?.ratio,
     });
     const outputPath = path.join(dir, input.target.container === "wav" ? "mix.pcm" : "mix.mp3");
     // Roughly 15 minutes of processing budget per hour of audio, never under 2.

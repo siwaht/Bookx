@@ -2,6 +2,8 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, AudioLines, Headphones, LoaderCircle, Music2, Play, RefreshCw, Sparkles, X } from "lucide-react";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
+import { AddCueForm, ChapterMusicSelect, CueExtras, MusicSettingsPanel, SoundLibraryPanel, SoundsSummary } from "./studio/SoundStudioExtras";
+import { StepTiming } from "./studio/StepTiming";
 
 /**
  * Audio studio: background sounds and music for an audiobook.
@@ -261,6 +263,8 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
             />
           )}
 
+          <SoundsSummary chapters={data.chapters} effectsOn={settings.effects} musicOn={settings.music} />
+
           <div className="rounded-card border border-stone-150 bg-paper p-6 shadow-hairline">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -320,6 +324,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
                             {chapter.rendered < chapter.segments ? ` · ${chapter.segments - chapter.rendered} lines not narrated yet` : ""}
                           </span>
                         </span>
+                        <ChapterMusicSelect projectId={projectId} chapter={chapter} data={data} />
                         <button
                           onClick={event => { event.preventDefault(); playChapter(chapter.id); }}
                           disabled={!canPreviewChapter || pendingPreview !== null}
@@ -391,6 +396,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
                                   />
                                 </div>
                               </div>
+                              <CueExtras projectId={projectId} cue={cue} data={data} />
                               {preview && (preview.key === soundKey || preview.key === contextKey) && (
                                 <audio key={preview.nonce} autoPlay controls src={preview.url} className="mt-2 h-8 w-full" aria-label={`${cue.label} preview`} />
                               )}
@@ -398,15 +404,29 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
                           );
                         })}
                       </ul>
+                      <AddCueForm projectId={projectId} chapter={chapter} data={data} />
                     </details>
                   );
                 })}
               </div>
             )}
+            {data.chapters.some(chapter => !chapter.cues.length && chapter.lines.length > 0) && (
+              <details className="mt-3 rounded-2xl border border-dashed border-[#d4ded7] bg-[#fbfcf9]">
+                <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-[#34736d]">Add a sound to a chapter without any</summary>
+                {data.chapters.filter(chapter => !chapter.cues.length && chapter.lines.length > 0).map(chapter => (
+                  <div key={chapter.id} className="border-t border-[#e8ece6] px-1 pt-2">
+                    <span className="px-3 text-xs font-semibold text-[#4b5d60]">{chapter.title}</span>
+                    <AddCueForm projectId={projectId} chapter={chapter} data={data} />
+                  </div>
+                ))}
+              </details>
+            )}
           </div>
         </section>
 
         <aside className="space-y-4">
+          <MusicSettingsPanel projectId={projectId} data={data} />
+          <SoundLibraryPanel projectId={projectId} data={data} />
           <div className="rounded-card border border-stone-150 bg-paper p-6 shadow-hairline">
             <span className="eyebrow text-brand-600">LEVEL</span>
             <div role="radiogroup" aria-label="Sound level" className="mt-3 space-y-2">
@@ -522,7 +542,7 @@ function Notice({ tone, children }: { tone: "warning" | "info"; children: ReactN
   );
 }
 
-type RunState = { jobId: string | null; status: JobStatus; percent: number; message: string | null; errors: string[] };
+type RunState = { jobId: string | null; status: JobStatus; percent: number; message: string | null; errors: string[]; totalSteps?: number; completedSteps?: number; startedAt?: string | null };
 
 function RunBanner({ label, run, onCancel }: { label: string; run?: RunState; onCancel?: () => void }) {
   if (!run || run.status === "idle") return null;
@@ -536,6 +556,7 @@ function RunBanner({ label, run, onCancel }: { label: string; run?: RunState; on
             {running ? label : run.status === "completed" ? `${label}: done` : run.status === "cancelled" ? `${label}: stopped` : `${label}: did not finish`}
           </strong>
           <span className="block text-xs text-ink-500">{run.message}</span>
+          {running && <StepTiming run={run} />}
         </div>
         {running && onCancel && (
           <button onClick={onCancel} aria-label={`Stop: ${label}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-ink-500 hover:bg-brand-50"><X aria-hidden="true" size={14} /></button>
