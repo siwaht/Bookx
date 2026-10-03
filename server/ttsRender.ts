@@ -10,6 +10,7 @@ import {
   AudioIntegrityError,
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_STALL_TIMEOUT_MS,
+  ProviderConfigurationError,
   StalledStreamError,
   classifyHttpFailure,
 } from "./narrationRetry";
@@ -90,15 +91,23 @@ const openAiVoiceForStarter: Record<string, string> = {
 };
 
 const OPENAI_VOICES = new Set(["alloy", "echo", "fable", "onyx", "nova", "shimmer", "ash", "sage", "coral"]);
+/** Only the gpt-4o speech models have these; tts-1 and tts-1-hd do not. */
+const GPT4O_ONLY_VOICES = new Set(["ballad", "verse", "marin", "cedar"]);
 
-/** Maps a Prosecast voice id onto a voice the OpenAI speech API accepts. */
-function openAiVoice(voiceId?: string | null): string {
+/**
+ * Maps a Prosecast voice id onto a voice the OpenAI speech API accepts. Used
+ * for previews too, so a preview sounds like the finished chapter.
+ */
+export function openAiVoice(voiceId?: string | null, model?: string | null): string {
   const raw = (voiceId || "").trim();
   if (!raw) return "alloy";
   const mapped = openAiVoiceForStarter[raw];
   if (mapped) return mapped;
   const lower = raw.toLowerCase();
   if (OPENAI_VOICES.has(lower)) return lower;
+  // Ballad and Verse are in the voice library; dropping them to alloy merged
+  // characters cast with them into the narrator's voice.
+  if (GPT4O_ONLY_VOICES.has(lower) && !/^tts-1/i.test((model || "").trim())) return lower;
   // An Aura-2 speaker or an arbitrary catalog id is meaningless here; a known
   // voice keeps the render consistent instead of failing the whole book.
   if ((AURA_2_SPEAKERS as readonly string[]).includes(lower)) return "alloy";
@@ -291,7 +300,7 @@ export async function buildProviderCall(request: ProviderCallRequest, signal: Ab
 
   if (provider === "Cloudflare") {
     const endpoint = await getCloudflareEndpoint(request.ownerId);
-    if (!endpoint) throw new Error("Cloudflare text-to-speech is not configured. Save an endpoint URL and API key in Settings.");
+    if (!endpoint) throw new ProviderConfigurationError("Cloudflare text-to-speech is not configured. Save an endpoint URL and API key in Settings.");
 
     if (endpoint.mode === "openai-compatible") {
       return {
@@ -299,7 +308,7 @@ export async function buildProviderCall(request: ProviderCallRequest, signal: Ab
         init: {
           method: "POST",
           headers: cloudflareHeaders(endpoint),
-          body: JSON.stringify({ model, input: text, voice: openAiVoice(voiceId), response_format: "mp3" }),
+          body: JSON.stringify({ model, input: text, voice: openAiVoice(voiceId, model), response_format: "mp3" }),
           signal,
         },
         expectsJsonAudio: false,
@@ -355,7 +364,7 @@ export async function buildProviderCall(request: ProviderCallRequest, signal: Ab
       init: {
         method: "POST",
         headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
-        body: JSON.stringify({ model, voice: openAiVoice(voiceId), input: text, response_format: "mp3" }),
+        body: JSON.stringify({ model, voice: openAiVoice(voiceId, model), input: text, response_format: "mp3" }),
         signal,
       },
       expectsJsonAudio: false,
@@ -401,7 +410,9 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
 
   try {
     const call = await buildProviderCall({ ...request, text }, controller.signal);
-    const response = await fetch(call.url, call.init);
+    // Custom and compatible addresses are user-supplied: a redirect could point
+    // the server at its own storage bridge, so one is an error, never followed.
+    const response = await fetch(call.url, { ...call.init, redirect: "manual" });
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");

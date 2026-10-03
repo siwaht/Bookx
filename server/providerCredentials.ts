@@ -1,8 +1,9 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { bookxProviderSettings } from "../drizzle/schema";
 import { BUILT_IN_PROVIDERS, type BuiltInProviderId, type ProviderId } from "../shared/providers";
-import { customProviderCapabilities, listCustomProviders } from "./customProviders";
+import { customProviderCapabilities, listCustomProviders, providerUrlProblem } from "./customProviders";
 import { getDb } from "./db";
+import { ProviderConfigurationError } from "./narrationRetry";
 import { configuredProviders, type RoutingCapability } from "./providerRouting";
 
 export type CloudflareEndpointMode = "native" | "openai-compatible";
@@ -139,21 +140,25 @@ export async function getCloudflareEndpoint(ownerId?: number): Promise<Cloudflar
   const db = await getDb();
   let savedToken: string | undefined;
   let models: Pick<CloudflareEndpoint, "ttsModel" | "sttModel" | "llmModel"> = {};
-  if (db) {
-    const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.provider, "Cloudflare"));
-    const row = (ownerId != null ? rows.find((candidate) => candidate.ownerId === ownerId) : undefined) || rows[0];
-    savedToken = row?.apiKey?.trim() || undefined;
+  // Only the caller's own row. Falling back to another user's row used their
+  // token and endpoint for someone who had saved nothing.
+  const row = db && ownerId != null ? await ownProviderRow(db, "Cloudflare", ownerId) : undefined;
+  if (row) {
+    savedToken = row.apiKey?.trim() || undefined;
     models = {
-      ttsModel: row?.defaultTtsModel || undefined,
-      sttModel: row?.defaultSttModel || undefined,
-      llmModel: row?.defaultLlmModel || undefined,
+      ttsModel: row.defaultTtsModel || undefined,
+      sttModel: row.defaultSttModel || undefined,
+      llmModel: row.defaultLlmModel || undefined,
     };
-    if (row?.apiBaseUrl) {
-      const normalized = normalizeCloudflareUrl(row.apiBaseUrl);
-      if (normalized) {
-        const apiKey = savedToken || process.env.CLOUDFLARE_API_TOKEN?.trim();
-        if (apiKey) return { apiBaseUrl: normalized.apiBaseUrl, mode: normalized.mode, apiKey, ...models };
+    const normalized = row.apiBaseUrl && !providerUrlProblem(row.apiBaseUrl) ? normalizeCloudflareUrl(row.apiBaseUrl) : null;
+    if (normalized) {
+      // The deployment's token only ever goes to Cloudflare itself. Any other
+      // address the user typed in has to come with the user's own token.
+      if (!deploymentTokenMayReach(normalized.apiBaseUrl)) {
+        return savedToken ? { apiBaseUrl: normalized.apiBaseUrl, mode: normalized.mode, apiKey: savedToken, ...models } : null;
       }
+      const apiKey = savedToken || process.env.CLOUDFLARE_API_TOKEN?.trim();
+      if (apiKey) return { apiBaseUrl: normalized.apiBaseUrl, mode: normalized.mode, apiKey, ...models };
     }
   }
   // Previously a token saved without an account URL was ignored here, so
@@ -162,18 +167,58 @@ export async function getCloudflareEndpoint(ownerId?: number): Promise<Cloudflar
   return fromEnv ? { ...fromEnv, ...models } : null;
 }
 
+type ProviderSettingsRow = typeof bookxProviderSettings.$inferSelect;
+type Database = NonNullable<Awaited<ReturnType<typeof getDb>>>;
+
+/** The caller's own saved settings for a provider. Another user's are never used. */
+async function ownProviderRow(db: Database, provider: string, ownerId: number): Promise<ProviderSettingsRow | undefined> {
+  const [row] = await db
+    .select()
+    .from(bookxProviderSettings)
+    .where(and(eq(bookxProviderSettings.ownerId, ownerId), eq(bookxProviderSettings.provider, provider)))
+    .limit(1);
+  return row;
+}
+
 /**
- * Loads the stored custom base URL for an OpenAI-compatible route (the
- * "Custom LLM Route" preference). Returns a normalized base ending in `/v1`
- * when possible, or `null` to use the official OpenAI API.
+ * Whether the deployment's own Cloudflare token may be sent to an address:
+ * Cloudflare's API, or an AI Gateway on the deployment's own account. Any other
+ * address a user saves has to come with that user's own token, or the
+ * deployment's token would go wherever the user pointed it.
+ */
+function deploymentTokenMayReach(apiBaseUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(apiBaseUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  if (url.hostname === "api.cloudflare.com") return true;
+  const account = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
+  return url.hostname === "gateway.ai.cloudflare.com" && Boolean(account) && url.pathname.split("/")[2] === account;
+}
+
+/** Whether a saved Cloudflare address only works with the user's own token. */
+export function cloudflareUrlNeedsOwnToken(raw?: string | null): boolean {
+  const normalized = raw ? normalizeCloudflareUrl(raw) : null;
+  return Boolean(normalized && !deploymentTokenMayReach(normalized.apiBaseUrl));
+}
+
+export const OPENAI_API_BASE = "https://api.openai.com/v1";
+export const OPENROUTER_API_BASE = "https://openrouter.ai/api/v1";
+
+/**
+ * Loads the caller's custom base URL for the OpenAI route (the "Custom LLM
+ * Route" preference). Returns a normalized base ending in `/v1` when possible,
+ * or `null` to use the official OpenAI API. An address that fails the provider
+ * URL checks (Bookx's own hosts, private networks when hosted) is ignored.
  */
 export async function getOpenAiCompatibleBaseUrl(ownerId?: number): Promise<string | null> {
   const db = await getDb();
-  if (!db) return null;
-  const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.provider, "OpenAI"));
-  const row = (ownerId != null ? rows.find((candidate) => candidate.ownerId === ownerId) : undefined) || rows[0];
-  const raw = row?.apiBaseUrl?.trim();
-  if (!raw) return null;
+  if (!db || ownerId == null) return null;
+  const raw = (await ownProviderRow(db, "OpenAI", ownerId))?.apiBaseUrl?.trim();
+  if (!raw || providerUrlProblem(raw)) return null;
   try {
     const parsed = new URL(raw);
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
@@ -258,18 +303,32 @@ export async function providerKeyStates(ownerId?: number): Promise<Record<BuiltI
     }),
   ) as Record<BuiltInProviderId, ProviderKeyState>;
 
+  // Without an owner there is nobody's saved key to use: the environment only.
   const db = await getDb();
-  if (!db) return states;
+  if (!db || ownerId == null) return states;
 
-  const rows = await db.select().from(bookxProviderSettings);
+  const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ownerId));
   for (const provider of ALL_PROVIDERS) {
-    const owned = rows.filter(row => row.provider === provider);
-    const row = (ownerId != null ? owned.find(candidate => candidate.ownerId === ownerId) : undefined) || owned[0];
-    const stored = row?.apiKey?.trim();
+    const stored = rows.find(row => row.provider === provider)?.apiKey?.trim();
     if (stored) states[provider] = { apiKey: stored, source: "app" };
   }
 
   return states;
+}
+
+/**
+ * Where OpenAI requests go, and with which key. A custom address only ever
+ * gets the key the user saved: the deployment's OPENAI_API_KEY is for
+ * api.openai.com alone.
+ */
+export async function openAiRoute(ownerId?: number): Promise<{ baseUrl: string; apiKey: string }> {
+  const custom = await getOpenAiCompatibleBaseUrl(ownerId);
+  if (!custom) return { baseUrl: OPENAI_API_BASE, apiKey: await requireProviderApiKey("OpenAI", ownerId) };
+  const own = (await providerKeyStates(ownerId)).OpenAI;
+  if (own.source !== "app" || !own.apiKey) {
+    throw new ProviderConfigurationError("A custom OpenAI address needs its own API key. Save the key for that address in Settings, or clear the address to use api.openai.com.");
+  }
+  return { baseUrl: custom, apiKey: own.apiKey };
 }
 
 export async function getProviderApiKey(provider: BuiltInProviderId, ownerId?: number): Promise<string | null> {
@@ -280,7 +339,7 @@ export async function getProviderApiKey(provider: BuiltInProviderId, ownerId?: n
 export async function requireProviderApiKey(provider: BuiltInProviderId, ownerId?: number): Promise<string> {
   const key = await getProviderApiKey(provider, ownerId);
   if (!key) {
-    throw new Error(
+    throw new ProviderConfigurationError(
       `${provider} is not connected. Add its API key on the Settings screen, or set ${PROVIDER_ENV_KEYS[provider]} in the environment.`,
     );
   }

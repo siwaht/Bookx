@@ -56,7 +56,10 @@ export async function claimAnalysisJob(projectId: string, kind: AnalysisKind, me
     .orderBy(desc(bookxAnalysisJobs.createdAt));
 
   for (const job of live) {
-    if (!isStale(job) && (localRuns.has(job.id) || job.status === "queued")) return { jobId: job.id, reused: true };
+    // A run alive in this process is never stale, however long its current
+    // model call takes (up to three minutes); failing it here started a second
+    // run beside it, which duplicated every character it found.
+    if (localRuns.has(job.id) || (!isStale(job) && job.status === "queued")) return { jobId: job.id, reused: true };
     await db
       .update(bookxAnalysisJobs)
       .set({ status: "failed", message: "Interrupted. Run it again; finished work is kept.", finishedAt: new Date(), updatedAt: new Date() })
@@ -206,14 +209,27 @@ export async function recoverInterruptedAnalyses(): Promise<number> {
   return stuck.length;
 }
 
-/** Runs `worker` over `items` with at most `limit` in flight. */
+/**
+ * Runs `worker` over `items` with at most `limit` in flight.
+ *
+ * After a failure no new item starts, and the error is only thrown once every
+ * lane has finished its current item. Rejecting at the first failure let the
+ * other lanes keep calling the model and writing after the run was marked
+ * failed and released, alongside any run started next.
+ */
 export async function runWithConcurrency<T>(items: T[], limit: number, worker: (item: T, index: number) => Promise<void>): Promise<void> {
   let next = 0;
+  const outcome: { failed: boolean; error?: unknown } = { failed: false };
   const lanes = Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
-    while (next < items.length) {
+    while (!outcome.failed && next < items.length) {
       const index = next++;
-      await worker(items[index]!, index);
+      try {
+        await worker(items[index]!, index);
+      } catch (error) {
+        if (!outcome.failed) Object.assign(outcome, { failed: true, error });
+      }
     }
   });
   await Promise.all(lanes);
+  if (outcome.failed) throw outcome.error;
 }

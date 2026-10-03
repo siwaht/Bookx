@@ -18,6 +18,7 @@ import {
   DEFAULT_MAX_ATTEMPTS,
   DEFAULT_REQUEST_TIMEOUT_MS,
   DEFAULT_STALL_TIMEOUT_MS,
+  FATAL_FAILURE_KINDS,
   backoffDelayMs,
   classifyThrownFailure,
   type FailureClassification,
@@ -238,6 +239,9 @@ export async function ensureChapterSegments(input: {
         delivery,
         audioStorageKey: carried?.audioStorageKey ?? null,
         textHash: carried?.audioStorageKey ? hashSegmentText(unit.text) : null,
+        // Carried with the audio: without it every kept line looked rendered
+        // under different pronunciation rules and was narrated (and paid for) again.
+        pronunciationHash: carried?.pronunciationHash ?? null,
         voiceProvider: carried?.voiceProvider ?? null,
         voiceModel: carried?.voiceModel ?? null,
         voiceId: carried?.voiceId ?? null,
@@ -377,6 +381,17 @@ export type StartRunInput = {
   stallTimeoutMs?: number;
 };
 
+/** Whether two runs cover the same chapters (no list means the whole book). */
+function sameChapterScope(left?: string[] | null, right?: string[] | null): boolean {
+  const key = (ids?: string[] | null) => [...new Set(ids ?? [])].sort().join("\n");
+  return key(left) === key(right);
+}
+
+/** Whether some worker holds an unexpired lease on a job. */
+function leaseHeld(job: { leaseOwner: string | null; leaseExpiresAt: Date | null }): boolean {
+  return Boolean(job.leaseOwner && job.leaseExpiresAt && new Date(job.leaseExpiresAt).getTime() > Date.now());
+}
+
 /**
  * Creates or reuses a job for a project and starts it.
  *
@@ -403,9 +418,10 @@ export async function startNarrationRun(input: StartRunInput): Promise<{ jobId: 
   }
 
   const model = project.voiceModel;
-  await ensureChapterSegments({ projectId: input.projectId, chapterIds: input.chapterIds, model });
 
-  // Reuse a live job for this project instead of creating a rival one.
+  // Reuse a live job for this project instead of creating a rival one. Looked up
+  // before the chapters are split, so a book being rendered is never re-split
+  // underneath its own run.
   const live = await db
     .select()
     .from(bookxGenerationJobs)
@@ -417,7 +433,37 @@ export async function startNarrationRun(input: StartRunInput): Promise<{ jobId: 
     )
     .orderBy(bookxGenerationJobs.createdAt);
 
-  const existing = live[live.length - 1];
+  let existing: (typeof live)[number] | undefined = live[live.length - 1];
+  const sameRun = existing
+    ? sameChapterScope((existing.detail as GenerationJobDetail | null)?.chapterIds, input.chapterIds) && !input.force
+    : false;
+
+  if (existing && (activeRuns.has(existing.id) || leaseHeld(existing))) {
+    // It is rendering right now. Starting the same run again just keeps it
+    // going (and withdraws a pause it has not reached yet); anything else
+    // would silently render a different selection than the one asked for.
+    if (!sameRun) {
+      throw new Error("This book is already being narrated. Pause or cancel the current run before starting a different one.");
+    }
+    await db
+      .update(bookxGenerationJobs)
+      .set({ pauseRequested: 0, cancelRequested: 0, updatedAt: new Date() })
+      .where(eq(bookxGenerationJobs.id, existing.id));
+    return { jobId: existing.id, resumed: true };
+  }
+
+  await ensureChapterSegments({ projectId: input.projectId, chapterIds: input.chapterIds, model });
+
+  if (existing && !sameRun) {
+    // A paused or queued run for other chapters (or without force): it used to
+    // be resumed as it was, so "narrate chapter B" rendered chapter A. Replace it.
+    await db
+      .update(bookxGenerationJobs)
+      .set({ status: "cancelled", pauseRequested: 0, cancelRequested: 0, finishedAt: new Date(), updatedAt: new Date() })
+      .where(eq(bookxGenerationJobs.id, existing.id));
+    existing = undefined;
+  }
+
   if (existing) {
     await db
       .update(bookxGenerationJobs)
@@ -458,24 +504,35 @@ export async function startNarrationRun(input: StartRunInput): Promise<{ jobId: 
   return { jobId, resumed: false };
 }
 
-/** Asks a run to stop at the next segment boundary, keeping everything rendered. */
-export async function requestPause(jobId: string): Promise<void> {
+/**
+ * Asks a run to stop at the next segment boundary, keeping everything rendered.
+ *
+ * The job must belong to `projectId`: the caller has proven they own the
+ * project, not the job, so a job id from another project changes nothing.
+ */
+export async function requestPause(jobId: string, projectId: string): Promise<boolean> {
   const db = await requireDb();
-  await db
+  const updated = await db
     .update(bookxGenerationJobs)
     .set({ pauseRequested: 1, updatedAt: new Date() })
-    .where(eq(bookxGenerationJobs.id, jobId));
+    .where(and(eq(bookxGenerationJobs.id, jobId), eq(bookxGenerationJobs.projectId, projectId)))
+    .returning({ id: bookxGenerationJobs.id });
+  if (!updated.length) return false;
   // Abort the in-flight request too, so a pause during a slow call is immediate.
   activeRuns.get(jobId)?.abort();
+  return true;
 }
 
-export async function requestCancel(jobId: string): Promise<void> {
+export async function requestCancel(jobId: string, projectId: string): Promise<boolean> {
   const db = await requireDb();
-  await db
+  const updated = await db
     .update(bookxGenerationJobs)
     .set({ cancelRequested: 1, updatedAt: new Date() })
-    .where(eq(bookxGenerationJobs.id, jobId));
+    .where(and(eq(bookxGenerationJobs.id, jobId), eq(bookxGenerationJobs.projectId, projectId)))
+    .returning({ id: bookxGenerationJobs.id });
+  if (!updated.length) return false;
   activeRuns.get(jobId)?.abort();
+  return true;
 }
 
 /**
@@ -536,7 +593,8 @@ async function rollUpChapter(db: Db, chapterId: string): Promise<void> {
     .where(eq(bookxChapters.id, chapterId));
 }
 
-type StopReason = "paused" | "cancelled" | null;
+/** Why a run stops early. "lease-lost": another worker owns the job now, so leave its state alone. */
+type StopReason = "paused" | "cancelled" | "lease-lost" | null;
 
 /** Reads the control flags. One small query per segment; segments take seconds. */
 async function readStopRequest(db: Db, jobId: string): Promise<StopReason> {
@@ -551,10 +609,12 @@ async function readStopRequest(db: Db, jobId: string): Promise<StopReason> {
     .limit(1);
 
   if (!row) return "cancelled";
+  // Another worker took the lease; stand down rather than render in parallel,
+  // and without touching a job that is no longer ours: clearing its flags here
+  // would swallow a pause or cancel meant for the new owner.
+  if (row.leaseOwner && row.leaseOwner !== WORKER_ID) return "lease-lost";
   if (row.cancelRequested) return "cancelled";
   if (row.pauseRequested) return "paused";
-  // Another worker took the lease; stand down rather than render in parallel.
-  if (row.leaseOwner && row.leaseOwner !== WORKER_ID) return "paused";
   return null;
 }
 
@@ -603,7 +663,7 @@ async function renderWithRetries(input: {
         provider: input.provider,
         model: input.model,
         voiceId: segment.targetVoiceId,
-        text: applyPronunciationRules(segment.text, input.pronunciationRules),
+        text: applyPronunciationRules(segment.text, input.pronunciationRules, { provider: input.provider, model: input.model }),
         previousText: input.previousText,
         nextText: input.nextText,
         language: input.language,
@@ -616,7 +676,7 @@ async function renderWithRetries(input: {
       // Only now is the segment considered done. Recording the text hash and the
       // voice alongside the key is what lets a later run prove this audio is still
       // the right audio.
-      await db
+      const saved = await db
         .update(bookxSegments)
         .set({
           audioStorageKey: result.storageKey,
@@ -633,7 +693,18 @@ async function renderWithRetries(input: {
           renderedAt: new Date(),
           updatedAt: new Date(),
         })
-        .where(eq(bookxSegments.id, segment.id));
+        .where(and(eq(bookxSegments.id, segment.id), eq(bookxSegments.text, segment.text)))
+        .returning({ id: bookxSegments.id });
+      if (!saved.length) {
+        // The chapter was edited or re-split while this rendered, so the line is
+        // gone (or says something else). Counting it as rendered would report
+        // audio the book does not have.
+        return {
+          ok: false,
+          classification: { kind: "unknown", retryable: false, message: "This line changed while it was being narrated. Run narration again to voice the new text." },
+          fatal: false,
+        };
+      }
 
       if (attempt > 1) {
         await input.onEvent("recovered", `Segment recovered on attempt ${attempt}`);
@@ -657,8 +728,8 @@ async function renderWithRetries(input: {
         .set({ renderAttempts: attempt, lastError: classification.message.slice(0, 500), updatedAt: new Date() })
         .where(eq(bookxSegments.id, segment.id));
 
-      // A credential or configuration failure will repeat for every segment.
-      if (classification.kind === "auth") {
+      // A credential, quota or configuration failure will repeat for every segment.
+      if (FATAL_FAILURE_KINDS.has(classification.kind)) {
         return { ok: false, classification, fatal: true };
       }
       if (!classification.retryable || attempt === input.maxAttempts) {
@@ -670,11 +741,34 @@ async function renderWithRetries(input: {
         classification.kind,
         `${classification.message} — retrying in ${Math.round(delay / 1000)}s (attempt ${attempt + 1} of ${input.maxAttempts})`,
       );
-      await new Promise(resolve => setTimeout(resolve, delay));
+      // A pause or cancel ends the wait at once instead of after up to a minute.
+      await abortableDelay(delay, input.controller.signal);
     }
   }
 
   return { ok: false, classification: lastClassification, fatal: false };
+}
+
+/** Waits `ms`, or less if `signal` aborts first. */
+function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise(resolve => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/** Extends the lease while a run is alive, so one slow request cannot let it lapse. */
+async function renewLease(db: Db, jobId: string): Promise<void> {
+  await db
+    .update(bookxGenerationJobs)
+    .set({ leaseExpiresAt: nowPlus(LEASE_MS) })
+    .where(and(eq(bookxGenerationJobs.id, jobId), eq(bookxGenerationJobs.leaseOwner, WORKER_ID)));
 }
 
 /**
@@ -690,8 +784,15 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
   if (activeRuns.has(jobId)) return; // Already running in this process.
   if (!(await claimJob(db, jobId))) return; // Another worker owns it.
 
-  const controller = new AbortController();
+  // Replaced when a pause or cancel is withdrawn before the loop sees it: an
+  // aborted controller would otherwise make every later segment "stop" at once.
+  let controller = new AbortController();
   activeRuns.set(jobId, controller);
+  // A request can take longer than the lease (120 s against 90 s), so the lease
+  // is renewed on a timer rather than only between segments.
+  const leaseTimer = setInterval(() => void renewLease(db, jobId).catch(() => undefined), Math.floor(LEASE_MS / 3));
+  const touchedChapters = new Set<string>();
+  let rolledUp = false;
 
   const maxAttempts = options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS;
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
@@ -765,25 +866,30 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
     let renderedBytes = 0;
     let renderedDurationMs = 0;
     let currentChapter: string | null = null;
-    const touchedChapters = new Set<string>();
     const orderedPosition = new Map(plan.ordered.map((candidate, index) => [candidate.id, index]));
+
+    const stopRun = async (stop: Exclude<StopReason, null>) => {
+      // Someone else's job now: leave its status and flags for its new owner.
+      if (stop === "lease-lost") return;
+      await db
+        .update(bookxGenerationJobs)
+        .set({
+          status: stop,
+          pauseRequested: 0,
+          cancelRequested: 0,
+          finishedAt: stop === "cancelled" ? new Date() : null,
+          updatedAt: new Date(),
+        })
+        .where(eq(bookxGenerationJobs.id, jobId));
+      await recordEvent(stop, stop === "paused"
+        ? `Paused after ${completed} of ${plan.totalSegments} segments. Everything rendered so far is kept.`
+        : `Cancelled after ${completed} of ${plan.totalSegments} segments.`);
+    };
 
     for (const [position, segment] of plan.pending.entries()) {
       const stop = await readStopRequest(db, jobId);
       if (stop) {
-        await db
-          .update(bookxGenerationJobs)
-          .set({
-            status: stop,
-            pauseRequested: 0,
-            cancelRequested: 0,
-            finishedAt: stop === "cancelled" ? new Date() : null,
-            updatedAt: new Date(),
-          })
-          .where(eq(bookxGenerationJobs.id, jobId));
-        await recordEvent(stop, stop === "paused"
-          ? `Paused after ${completed} of ${plan.totalSegments} segments. Everything rendered so far is kept.`
-          : `Cancelled after ${completed} of ${plan.totalSegments} segments.`);
+        await stopRun(stop);
         return;
       }
 
@@ -808,6 +914,8 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
       await db
         .update(bookxGenerationJobs)
         .set({
+          // A Resume or Start while this loop was running re-queued the row.
+          status: "running",
           cursorSegmentId: segment.id,
           cursorIndex: orderedIndex >= 0 ? orderedIndex : position,
           leaseExpiresAt: nowPlus(LEASE_MS),
@@ -816,7 +924,7 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         })
         .where(eq(bookxGenerationJobs.id, jobId));
 
-      const result = await renderWithRetries({
+      const render = () => renderWithRetries({
         db,
         jobId,
         projectId: job.projectId,
@@ -835,13 +943,26 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         onEvent: recordEvent,
       });
 
+      let result = await render();
+      // A pause or cancel aborts the request in flight. If it still stands, stop
+      // here. If it was withdrawn first (a quick Resume clears it), carry on with
+      // a fresh controller and voice this segment again. Skipping it instead used
+      // to let the rest of the book "finish" without a single line rendered.
+      while (!result.ok && controller.signal.aborted) {
+        const stopNow = await readStopRequest(db, jobId);
+        if (stopNow) {
+          await stopRun(stopNow);
+          return;
+        }
+        controller = new AbortController();
+        activeRuns.set(jobId, controller);
+        result = await render();
+      }
+
       if (result.ok) {
         completed++;
         renderedBytes += result.bytes;
         renderedDurationMs += result.durationMs;
-      } else if (controller.signal.aborted) {
-        // Stopped by a pause/cancel mid-request; the loop head handles the state.
-        continue;
       } else {
         failed++;
         const [row] = await db
@@ -900,8 +1021,12 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
     }
 
     for (const chapterId of touchedChapters) await rollUpChapter(db, chapterId);
+    rolledUp = true;
 
-    const finalStatus = failed > 0 ? "failed" : "completed";
+    // Complete only when every planned segment has audio, not merely when none
+    // was counted as failed.
+    const unrendered = Math.max(0, plan.totalSegments - completed);
+    const finalStatus = failed === 0 && unrendered === 0 ? "completed" : "failed";
     await db
       .update(bookxGenerationJobs)
       .set({
@@ -916,8 +1041,8 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
 
     await recordEvent(
       finalStatus,
-      failed > 0
-        ? `Finished with ${failed} segment(s) still unrendered. Retry them without redoing the rest.`
+      finalStatus === "failed"
+        ? `Finished with ${Math.max(failed, unrendered)} segment(s) still unrendered. Retry them without redoing the rest.`
         : `All ${completed} segments rendered.`,
     );
 
@@ -937,9 +1062,67 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
       .catch(() => {});
     await recordEvent("error", message).catch(() => {});
   } finally {
+    clearInterval(leaseTimer);
+    // A pause, cancel or fatal stop used to skip this, leaving the chapter
+    // counts behind what was actually rendered.
+    if (!rolledUp) {
+      for (const chapterId of touchedChapters) await rollUpChapter(db, chapterId).catch(() => {});
+    }
     activeRuns.delete(jobId);
     await releaseLease(db, jobId).catch(() => {});
   }
+}
+
+/**
+ * Renders one segment now, outside a run, and records it exactly as a run
+ * does: text hash, pronunciation, voice and audio details together. A clip
+ * stored with only its key kept the previous audio's details, so the planner,
+ * audit and export trusted audio they knew nothing about.
+ */
+export async function renderSegmentNow(input: {
+  projectId: string;
+  ownerId: number;
+  segmentId: string;
+  provider: ProviderId;
+  model: string;
+  voiceId?: string | null;
+  language?: string | null;
+}): Promise<{ storageKey: string; audioUrl: string; durationMs: number | null }> {
+  const db = await requireDb();
+  const [segment] = await db.select().from(bookxSegments).where(eq(bookxSegments.id, input.segmentId)).limit(1);
+  if (!segment) throw new Error("Segment not found");
+  const rules = await loadPronunciationRules(db, input.projectId);
+  const result = await renderSegmentAudio({
+    projectId: input.projectId,
+    segmentId: segment.id,
+    provider: input.provider,
+    model: input.model,
+    voiceId: input.voiceId ?? undefined,
+    text: applyPronunciationRules(segment.text, rules, { provider: input.provider, model: input.model }),
+    language: input.language,
+    ownerId: input.ownerId,
+  });
+  const saved = await db
+    .update(bookxSegments)
+    .set({
+      audioStorageKey: result.storageKey,
+      textHash: hashSegmentText(segment.text),
+      pronunciationHash: pronunciationHash(rules),
+      voiceProvider: input.provider,
+      voiceModel: input.model,
+      voiceId: input.voiceId ?? null,
+      audioMimeType: result.inspection.mimeType,
+      audioBytes: result.inspection.bytes,
+      audioDurationMs: result.inspection.durationMs ?? null,
+      lastError: null,
+      renderedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(and(eq(bookxSegments.id, segment.id), eq(bookxSegments.text, segment.text)))
+    .returning({ id: bookxSegments.id });
+  if (!saved.length) throw new Error("This line changed while it was being narrated. Try again.");
+  await rollUpChapter(db, segment.chapterId);
+  return { storageKey: result.storageKey, audioUrl: result.audioUrl, durationMs: result.inspection.durationMs ?? null };
 }
 
 /**

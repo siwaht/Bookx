@@ -16,8 +16,22 @@ export type FailureKind =
   | "stalled"
   | "integrity"
   | "auth"
+  /** The account is out of credit or quota: every remaining segment would fail the same way. */
+  | "quota"
+  /** The provider is not set up (no key, removed, no endpoint): nothing will render until it is. */
+  | "config"
   | "bad-request"
   | "unknown";
+
+/** Failures that will repeat for every segment, so a run stops at the first one. */
+export const FATAL_FAILURE_KINDS: ReadonlySet<FailureKind> = new Set(["auth", "quota", "config"]);
+
+/** Thrown when a provider is not configured; stops a run instead of failing each segment. */
+export class ProviderConfigurationError extends Error {
+  override name = "ProviderConfigurationError";
+}
+
+const QUOTA_BODY = /insufficient_quota|quota_exceeded|exceeded your current quota|quota (has been )?exceeded|out of credits|insufficient (credits|balance|funds)/i;
 
 export type FailureClassification = {
   kind: FailureKind;
@@ -59,6 +73,11 @@ export function parseRetryAfter(value: string | null | undefined, now = Date.now
 export function classifyHttpFailure(status: number, retryAfter?: string | null, body?: string): FailureClassification {
   const detail = body ? `: ${body.slice(0, 200)}` : "";
 
+  // Out of money or quota looks like a rate limit to some providers (OpenAI
+  // sends 429 insufficient_quota) but waiting will not fix it.
+  if (status === 402 || (status === 429 && body && QUOTA_BODY.test(body))) {
+    return { kind: "quota", retryable: false, message: `The provider account is out of credit or quota (HTTP ${status})${detail}` };
+  }
   if (status === 429) {
     return {
       kind: "rate-limit",
@@ -88,6 +107,9 @@ export function classifyHttpFailure(status: number, retryAfter?: string | null, 
 }
 
 export function classifyThrownFailure(error: unknown): FailureClassification {
+  if (error instanceof ProviderConfigurationError) {
+    return { kind: "config", retryable: false, message: error.message };
+  }
   if (error instanceof StalledStreamError) {
     return { kind: "stalled", retryable: true, message: error.message };
   }

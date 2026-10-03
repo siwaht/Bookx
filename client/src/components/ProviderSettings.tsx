@@ -562,8 +562,10 @@ function CloudflareCard({
   const summary = keySummary(provider);
   const savedHere = provider.keySource === "app" || provider.accountSource === "app";
 
+  // Follows the saved account both ways: after "Remove saved" the removed ID
+  // used to stay in the field and re-enable Save.
   useEffect(() => {
-    if (provider.accountSource === "app" && provider.accountId) setAccountId(provider.accountId);
+    setAccountId(provider.accountSource === "app" ? provider.accountId ?? "" : "");
   }, [provider.accountSource, provider.accountId]);
 
   return (

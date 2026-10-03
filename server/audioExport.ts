@@ -782,6 +782,33 @@ export async function requestProjectExport(input: {
   return { id, status: "queued", chapters: readiness.chapterIds.length };
 }
 
+/** How long a queued or assembling export may sit untouched before it is presumed dead. */
+const ABANDONED_EXPORT_MS = 2 * 60_000;
+
+/**
+ * Fails a project's exports that are listed as queued or assembling but that
+ * no process is working on. One app instance runs at a time, so such a row was
+ * left by a process that stopped. Before, it stayed "assembling" until the next
+ * restart, which kept the Export screen polling with Create disabled and no way
+ * to delete it. The age check covers the moment between a row's insert and its
+ * assembly starting.
+ */
+export async function failAbandonedExports(projectId: string): Promise<void> {
+  const db = await requireDb();
+  const live = await db
+    .select({ id: bookxExports.id, updatedAt: bookxExports.updatedAt })
+    .from(bookxExports)
+    .where(and(eq(bookxExports.projectId, projectId), inArray(bookxExports.status, ["queued", "assembling"])));
+  const cutoff = Date.now() - ABANDONED_EXPORT_MS;
+  for (const row of live) {
+    if (assembling.has(row.id) || new Date(row.updatedAt).getTime() > cutoff) continue;
+    await db
+      .update(bookxExports)
+      .set({ status: "failed", error: "Assembly stopped before it finished. Create the package again.", updatedAt: new Date() })
+      .where(and(eq(bookxExports.id, row.id), inArray(bookxExports.status, ["queued", "assembling"])));
+  }
+}
+
 /** On boot: an export that was assembling when the process stopped cannot finish. */
 export async function recoverInterruptedExports(): Promise<number> {
   const db = await getDb();

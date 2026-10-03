@@ -40,6 +40,16 @@ export function ManuscriptEditor({
   const [readingFile, setReadingFile] = useState(false);
   const saveTimer = useRef<number | undefined>(undefined);
   const fileInput = useRef<HTMLInputElement>(null);
+  // The edit waiting to be saved. A ref, so a save fired later (by the timer,
+  // a blur, a chapter switch or unmount) always sends the latest keystrokes.
+  const pending = useRef<{ projectId: string; chapterId: string; title: string; body: string } | null>(null);
+  // The server's copy of the chapter in the editor, as last loaded or saved.
+  // The draft is reloaded only when the server's copy differs from this, so
+  // our own saves never bounce stale text back into the editor.
+  const synced = useRef<{ chapterId: string; title: string; body: string } | null>(null);
+  // The latest draft, for callbacks that run after the render that made them.
+  const draftRef = useRef({ title: "", body: "" });
+  draftRef.current = { title: draftTitle, body: draftBody };
 
   const chapters = useMemo(
     () => [...(workspace.data?.chapters ?? [])].sort((left, right) => left.orderIndex - right.orderIndex),
@@ -57,17 +67,6 @@ export function ManuscriptEditor({
   );
   const speakerName = useMemo(() => new Map((workspace.data?.characters ?? []).map(character => [character.id, character.name])), [workspace.data?.characters]);
 
-  // Load the selected chapter into the editor. Skipped while there are unsaved
-  // keystrokes so a background refetch cannot overwrite what is being typed.
-  useEffect(() => {
-    if (!activeChapter || dirty) return;
-    setSelectedChapterId(activeChapter.id);
-    setDraftBody(activeChapter.body ?? "");
-    setDraftTitle(activeChapter.title);
-  }, [activeChapter?.id, activeChapter?.body, activeChapter?.title, dirty]);
-
-  useEffect(() => () => window.clearTimeout(saveTimer.current), []);
-
   const invalidate = () => {
     utils.bookx.getWorkspace.invalidate({ projectId });
     utils.bookx.narrationStatus.invalidate({ projectId });
@@ -75,17 +74,88 @@ export function ManuscriptEditor({
   };
 
   const updateChapter = trpc.bookx.updateChapter.useMutation({
-    onSuccess: () => { setDirty(false); invalidate(); },
-    onError: error => toast.error(error.message || "Prosecast could not save the chapter."),
+    onSuccess: (_result, saved) => {
+      // Put the saved text in the cache straight away. Clearing "dirty" while
+      // the cache still held the old text used to load that old text back into
+      // the editor, so the next keystrokes were saved on top of it.
+      if (synced.current?.chapterId === saved.chapterId) {
+        synced.current = { chapterId: saved.chapterId, title: saved.title ?? synced.current.title, body: saved.body ?? synced.current.body };
+      }
+      utils.bookx.getWorkspace.setData({ projectId }, old => old && {
+        ...old,
+        chapters: old.chapters.map(chapter => chapter.id === saved.chapterId ? { ...chapter, title: saved.title ?? chapter.title, body: saved.body ?? chapter.body } : chapter),
+      });
+      // Saved only if nothing was typed since; newer keystrokes are still waiting.
+      if (!pending.current) setDirty(false);
+      invalidate();
+    },
+    onError: (error, failed) => {
+      // Keep the edit queued, so the next blur or switch tries again.
+      if (!pending.current && synced.current?.chapterId === failed.chapterId) {
+        pending.current = { projectId: failed.projectId, chapterId: failed.chapterId, title: draftRef.current.title, body: draftRef.current.body };
+      }
+      toast.error(error.message || "Prosecast could not save the chapter.");
+    },
   });
   const createChapter = trpc.bookx.createChapter.useMutation({
-    onSuccess: result => { setSelectedChapterId(result.id); setDirty(false); invalidate(); },
+    onSuccess: async result => {
+      // Selected once it is in the list: until then the editor fell back to
+      // chapter 1 and stayed there.
+      await utils.bookx.getWorkspace.invalidate({ projectId });
+      setSelectedChapterId(result.id);
+      invalidate();
+    },
     onError: error => toast.error(error.message || "Prosecast could not add the chapter."),
   });
   const deleteChapter = trpc.bookx.deleteChapter.useMutation({
-    onSuccess: () => { setSelectedChapterId(null); setDirty(false); invalidate(); },
+    onSuccess: () => {
+      window.clearTimeout(saveTimer.current);
+      pending.current = null;
+      setSelectedChapterId(null);
+      setDirty(false);
+      invalidate();
+    },
     onError: error => toast.error(error.message || "Prosecast could not delete the chapter."),
   });
+
+  // Load the chapter into the editor when it changes, or when the server's copy
+  // changed and nothing local is waiting to be saved.
+  useEffect(() => {
+    if (!activeChapter) return;
+    const server = { chapterId: activeChapter.id, title: activeChapter.title, body: activeChapter.body ?? "" };
+    const known = synced.current;
+    if (known?.chapterId === server.chapterId) {
+      if (dirty || updateChapter.isPending) return;
+      if (known.title === server.title && known.body === server.body) return;
+    }
+    synced.current = server;
+    setDraftTitle(server.title);
+    setDraftBody(server.body);
+    setDirty(false);
+  }, [activeChapter?.id, activeChapter?.body, activeChapter?.title, dirty, updateChapter.isPending]);
+
+  // Leaving the screen (or the page) within the autosave delay used to drop
+  // the last edit. Flush it on unmount, and warn before the tab closes.
+  useEffect(() => () => {
+    window.clearTimeout(saveTimer.current);
+    const next = pending.current;
+    pending.current = null;
+    if (next) {
+      void utils.client.bookx.updateChapter
+        .mutate({ projectId: next.projectId, chapterId: next.chapterId, title: next.title.trim() || "Untitled chapter", body: next.body })
+        .catch(() => undefined);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
   const setIncluded = trpc.bookx.setChaptersIncluded.useMutation({
     onSuccess: invalidate,
     onError: error => toast.error(error.message || "Prosecast could not update the chapter selection."),
@@ -103,6 +173,8 @@ export function ManuscriptEditor({
       setPendingImport(null);
       setSelectedChapterId(null);
       setDirty(false);
+      // The imported text replaces whatever was loaded.
+      synced.current = null;
       invalidate();
       utils.bookx.listProjects.invalidate();
       const leftOut = result.excluded ? ` ${result.excluded} front- or back-matter section${result.excluded === 1 ? " was" : "s were"} left out; you can switch them back on.` : "";
@@ -124,19 +196,23 @@ export function ManuscriptEditor({
     onError: error => toast.error(error.message || "Prosecast could not split the manuscript."),
   });
 
-  const queueSave = (title: string, body: string) => {
-    if (!activeChapter) return;
-    setDirty(true);
+  /** Sends the waiting edit, if there is one. Safe to call twice (blur, then a click). */
+  const saveNow = () => {
     window.clearTimeout(saveTimer.current);
-    saveTimer.current = window.setTimeout(() => {
-      updateChapter.mutate({ projectId, chapterId: activeChapter.id, title: title.trim() || "Untitled chapter", body });
-    }, AUTOSAVE_DELAY_MS);
+    const next = pending.current;
+    if (!next) return;
+    pending.current = null;
+    // The title is trimmed for the server only; the input keeps what was typed,
+    // so a pause after "The " no longer turns "The Storm" into "TheStorm".
+    updateChapter.mutate({ projectId: next.projectId, chapterId: next.chapterId, title: next.title.trim() || "Untitled chapter", body: next.body });
   };
 
-  const saveNow = () => {
-    if (!activeChapter || !dirty) return;
+  const queueSave = (title: string, body: string) => {
+    if (!activeChapter) return;
+    pending.current = { projectId, chapterId: activeChapter.id, title, body };
+    setDirty(true);
     window.clearTimeout(saveTimer.current);
-    updateChapter.mutate({ projectId, chapterId: activeChapter.id, title: draftTitle.trim() || "Untitled chapter", body: draftBody });
+    saveTimer.current = window.setTimeout(saveNow, AUTOSAVE_DELAY_MS);
   };
 
   const chooseFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -147,7 +223,10 @@ export function ManuscriptEditor({
     try {
       const upload = await readManuscriptFile(file);
       saveNow();
-      if (chapters.length) setPendingImport(upload);
+      // Replace without asking only when the chapter list has loaded and is
+      // truly empty. While it was loading, or after it failed to load, it looked
+      // empty, so an import silently replaced the whole book and its narration.
+      if (!workspace.isSuccess || chapters.length) setPendingImport(upload);
       else importManuscript.mutate({ projectId, filename: upload.name, base64: upload.base64, mode: "replace" });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Prosecast could not read that file.");
@@ -200,15 +279,16 @@ export function ManuscriptEditor({
             <span className="text-xs text-[#849092]" role="status">
               {updateChapter.isPending ? "Saving…" : dirty ? "Unsaved changes" : chapters.length ? "Saved" : ""}
             </span>
-            <button onClick={() => fileInput.current?.click()} disabled={importing} className="btn-soft disabled:opacity-50">
+            <button onClick={() => fileInput.current?.click()} disabled={importing || !workspace.isSuccess} className="btn-soft disabled:opacity-50">
               {importing ? <LoaderCircle className="mr-1 inline animate-spin" aria-hidden="true" size={14} /> : <FileUp className="mr-1 inline" aria-hidden="true" size={14} />}
               {importing ? "Importing…" : "Import manuscript"}
             </button>
             <button
               onClick={() => resegment.mutate({ projectId })}
-              disabled={resegment.isPending || !includedChapters.length}
+              // Splits the saved text, so unsaved edits would be left out.
+              disabled={resegment.isPending || !includedChapters.length || dirty || updateChapter.isPending}
               className="btn-soft disabled:opacity-50"
-              title="Split every included chapter into narration segments sized for your voice model"
+              title={dirty || updateChapter.isPending ? "Saving your edits first" : "Split every included chapter into narration segments sized for your voice model"}
             >
               {resegment.isPending ? <LoaderCircle className="mr-1 inline animate-spin" aria-hidden="true" size={14} /> : <Split className="mr-1 inline" aria-hidden="true" size={14} />}
               Split into segments
@@ -224,7 +304,11 @@ export function ManuscriptEditor({
         <div role="alertdialog" aria-labelledby="import-choice-title" className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eadfc7] bg-[#fff9ec] px-6 py-4 md:px-9">
           <div className="min-w-0">
             <strong id="import-choice-title" className="block text-sm text-[#5b4a2b]">Import “{pendingImport.name}”</strong>
-            <span className="text-xs text-[#8a7446]">This project already has {chapters.length} chapter{chapters.length === 1 ? "" : "s"}. Replacing removes them and their narration.</span>
+            <span className="text-xs text-[#8a7446]">
+              {chapters.length
+                ? `This project already has ${chapters.length} chapter${chapters.length === 1 ? "" : "s"}. Replacing removes them and their narration.`
+                : "Replacing removes any chapters this project already has, and their narration."}
+            </span>
           </div>
           <div className="flex flex-wrap gap-2">
             <button disabled={importing} onClick={() => importManuscript.mutate({ projectId, filename: pendingImport.name, base64: pendingImport.base64, mode: "replace" })} className="btn-primary disabled:opacity-50">Replace chapters</button>
@@ -234,15 +318,25 @@ export function ManuscriptEditor({
         </div>
       )}
 
-      {!workspace.isLoading && chapters.length === 0 ? (
-        <EmptyManuscript importing={importing} onImport={() => fileInput.current?.click()} onAdd={() => createChapter.mutate({ projectId, title: "Chapter 1", body: "" })} />
+      {workspace.isError ? (
+        <div className="flex flex-1 items-center justify-center p-9">
+          <div role="alert" className="max-w-md rounded-[22px] border border-dashed border-[#e3c9c0] bg-[#fdf6f3] p-7 text-center">
+            <h3 className="font-bold text-[#6b3f33]">The manuscript did not load</h3>
+            <p className="mt-2 text-sm leading-6 text-[#8a6359]">{workspace.error.message || "Prosecast could not reach the server."}</p>
+            <button onClick={() => void workspace.refetch()} disabled={workspace.isFetching} className="btn-soft mt-4 disabled:opacity-50">
+              {workspace.isFetching ? "Trying again…" : "Try again"}
+            </button>
+          </div>
+        </div>
+      ) : workspace.isSuccess && chapters.length === 0 ? (
+        <EmptyManuscript importing={importing} adding={createChapter.isPending} onImport={() => fileInput.current?.click()} onAdd={() => createChapter.mutate({ projectId, title: "Chapter 1", body: "" })} />
       ) : (
         <div className="grid min-h-0 flex-1 lg:grid-cols-[270px_minmax(0,1fr)_320px]">
           <aside className="border-b border-[#e1e5de] bg-[#fafbf7] p-4 lg:border-b-0 lg:border-r lg:overflow-auto">
             <div className="mb-2 flex items-center justify-between">
               <span className="mono text-[10px] tracking-[.12em] text-[#899494]">CHAPTERS</span>
               <button
-                onClick={() => createChapter.mutate({ projectId, title: `Chapter ${chapters.length + 1}`, body: "" })}
+                onClick={() => { saveNow(); createChapter.mutate({ projectId, title: `Chapter ${chapters.length + 1}`, body: "" }); }}
                 disabled={createChapter.isPending}
                 aria-label="Add chapter"
                 className="rounded-lg bg-[#e5f0ec] p-1.5 text-[#36746e] transition hover:bg-[#d9ebe4] disabled:opacity-50"
@@ -278,7 +372,7 @@ export function ManuscriptEditor({
                       aria-label={`Include ${chapter.title} in the audiobook`}
                     />
                     <button
-                      onClick={() => { saveNow(); setDirty(false); setSelectedChapterId(chapter.id); }}
+                      onClick={() => { saveNow(); setSelectedChapterId(chapter.id); }}
                       aria-current={active}
                       className="min-w-0 flex-1 text-left"
                     >
@@ -431,7 +525,7 @@ export function ManuscriptEditor({
   );
 }
 
-function EmptyManuscript({ importing, onImport, onAdd }: { importing: boolean; onImport: () => void; onAdd: () => void }) {
+function EmptyManuscript({ importing, adding, onImport, onAdd }: { importing: boolean; adding: boolean; onImport: () => void; onAdd: () => void }) {
   return (
     <div className="flex flex-1 items-center justify-center p-9">
       <div className="w-full max-w-xl rounded-[26px] border border-dashed border-[#9fbfb7] bg-[#f4f9f6] p-8 text-center">
@@ -445,7 +539,7 @@ function EmptyManuscript({ importing, onImport, onAdd }: { importing: boolean; o
             {importing ? <LoaderCircle className="animate-spin" aria-hidden="true" size={16} /> : <FileUp aria-hidden="true" size={16} />}
             {importing ? "Importing…" : "Import manuscript"}
           </button>
-          <button onClick={onAdd} className="btn-soft btn-lg">Write a chapter instead</button>
+          <button onClick={onAdd} disabled={adding || importing} className="btn-soft btn-lg disabled:opacity-50">Write a chapter instead</button>
         </div>
       </div>
     </div>

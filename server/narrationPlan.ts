@@ -121,7 +121,9 @@ export function checkReusable(segment: PlannableSegment, pinned: { provider: str
   if (storedVoiceKey(segment) !== targetVoiceKeyFor(segment, pinned)) {
     return { reusable: false, reason: "voice-changed" };
   }
-  if (pronunciationHash !== undefined && segment.pronunciationHash !== pronunciationHash) {
+  // No stored hash (audio from before rules were tracked) means no rules were
+  // applied, which is what an empty rule set hashes to.
+  if (pronunciationHash !== undefined && (segment.pronunciationHash ?? "") !== (pronunciationHash ?? "")) {
     return { reusable: false, reason: "pronunciation-changed" };
   }
   return { reusable: true };

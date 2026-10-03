@@ -29,6 +29,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Nothing reaches production unless the app and the Worker type-check.
+      - name: Type-check
+        run: pnpm run check
+
       - name: Deploy to Cloudflare
         run: npx wrangler deploy
         env:

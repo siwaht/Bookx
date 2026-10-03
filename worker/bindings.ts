@@ -194,7 +194,8 @@ export async function handleR2(request: Request, bucket: R2Bucket): Promise<Resp
     switch (route) {
       case "GET /object":
       case "HEAD /object":
-        return objectResponse(bucket, key, request);
+        // Awaited so a failure lands in the catch below as a JSON error.
+        return await objectResponse(bucket, key, request);
       case "PUT /object": {
         const stored = await bucket.put(key, await sizedBody(request), { httpMetadata: { contentType } });
         return json({ key, bytes: stored?.size ?? 0 });

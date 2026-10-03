@@ -10,8 +10,10 @@
 FROM node:24.13.0-bookworm-slim AS ffmpeg
 WORKDIR /ffmpeg
 # The static Linux build pinned by ffmpeg-static 5.3.0 (ffmpeg 7.0.2).
+# No pipe after the version check: `| head` hid its exit status, so a binary
+# that cannot run (wrong architecture, truncated download) still built.
 RUN npm install --no-save --no-audit --no-fund ffmpeg-static@5.3.0 \
- && ./node_modules/ffmpeg-static/ffmpeg -hide_banner -version | head -n 1
+ && ./node_modules/ffmpeg-static/ffmpeg -hide_banner -version > /dev/null
 
 FROM node:24.13.0-bookworm-slim
 ENV NODE_ENV=production \

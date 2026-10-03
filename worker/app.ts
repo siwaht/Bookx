@@ -30,6 +30,9 @@ export const PROVIDER_SECRETS = [
   "DEEPGRAM_API_KEY",
   "FISH_AUDIO_API_KEY",
   "GRADIUM_API_KEY",
+  // The server reads it like the others; leaving it out meant a secret set
+  // with `wrangler secret put OPENROUTER_API_KEY` never reached the app.
+  "OPENROUTER_API_KEY",
   "CLOUDFLARE_ACCOUNT_ID",
   "CLOUDFLARE_API_TOKEN",
   "CLOUDFLARE_GATEWAY_ID",
@@ -213,7 +216,13 @@ async function serveExportZip(request: Request, env: BookxBindings, url: URL, id
   if (!row) return text("Export not found", 404);
   if (row.status !== "ready") return text("This export is not ready yet", 400);
 
-  const plan = exportZipPlan({ projectTitle: project.title, detail: row.detail ? (JSON.parse(row.detail) as ExportDetail) : null, updatedAt: row.updatedAt });
+  let detail: ExportDetail | null = null;
+  try {
+    detail = row.detail ? (JSON.parse(row.detail) as ExportDetail) : null;
+  } catch {
+    return text("This package's file list is unreadable. Export it again.", 500);
+  }
+  const plan = exportZipPlan({ projectTitle: project.title, detail, updatedAt: row.updatedAt });
   if (!plan.entries.length) return text("This package has no chapter files", 404);
   const zip = zipResponse(
     plan.entries.map(entry => ({
@@ -307,9 +316,17 @@ export function createBookxHandler<E extends BookxBindings>(upstream: AppUpstrea
       }
       if (isCrossSite(request, url)) return text("Cross-site request refused", 403);
 
-      if (isStorage) return serveStorage(request, env, url, identity);
-      const zip = url.pathname.match(/^\/api\/exports\/([A-Za-z0-9_-]+)\/zip$/);
-      if (zip) return serveExportZip(request, env, url, identity, zip[1]!);
+      const zip = isStorage ? null : url.pathname.match(/^\/api\/exports\/([A-Za-z0-9_-]+)\/zip$/);
+      if (isStorage || zip) {
+        // A D1 or R2 hiccup here used to escape as Cloudflare's own error page
+        // (1101), which an audio player or download manager cannot retry.
+        try {
+          return isStorage ? await serveStorage(request, env, url, identity) : await serveExportZip(request, env, url, identity, zip![1]!);
+        } catch (error) {
+          console.error("[Bookx] Storage request failed:", error);
+          return text("Storage is unavailable, try again", 503, { "retry-after": "5" });
+        }
+      }
       // App-level sign-in routes; Access is the only way in here.
       if (url.pathname.startsWith("/api/auth/")) return text("Not found", 404);
 

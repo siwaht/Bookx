@@ -5,7 +5,7 @@ import { protectedProcedure, router } from "../_core/trpc";
 import { bookxProviderSettings } from "../../drizzle/schema";
 import { getDb } from "../db";
 import { providerCapabilities, resolveProvider, type ProviderId, type RoutingCapability } from "../providerRouting";
-import { PROVIDER_ENV_KEYS, availableProviders, cloudflareAccountIdFromUrl, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, isWebsocketOnlyCloudflareModel, keyHint, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
+import { PROVIDER_ENV_KEYS, availableProviders, cloudflareAccountIdFromUrl, cloudflareHeaders, cloudflareUrlNeedsOwnToken, getCloudflareEndpoint, isWebsocketOnlyCloudflareModel, keyHint, openAiRoute, providerKeyStates, redactProviderApiKey, requireProviderApiKey, type CloudflareEndpoint } from "../providerCredentials";
 import { customProviderCapabilities, customProviderHeaders, deleteCustomProvider, listCustomProviders, providerUrlProblem, requireCustomProvider, saveCustomProvider } from "../customProviders";
 import { extractJson, languageModelText } from "../languageModel";
 import { rankCatalogVoices, voiceCatalogFor } from "../voiceCatalog";
@@ -94,7 +94,7 @@ async function cloudflareModels(endpoint: CloudflareEndpoint | null): Promise<Pr
       models.push({ id, label: id, detail: taskName || model.description, capabilities: caps });
     }
   } else {
-    const response = await fetch(`${endpoint.apiBaseUrl}/models`, { headers: { Authorization: `Bearer ${endpoint.apiKey}` }, signal: AbortSignal.timeout(12_000) });
+    const response = await fetch(`${endpoint.apiBaseUrl}/models`, { headers: { Authorization: `Bearer ${endpoint.apiKey}` }, signal: AbortSignal.timeout(12_000), redirect: "manual" });
     if (!response.ok) throw new Error(`Cloudflare model discovery returned HTTP ${response.status}`);
     const payload = await response.json() as { data?: Array<{ id?: string }> };
     for (const entry of payload.data || []) {
@@ -354,7 +354,9 @@ export const providersRouter = router({
     const [existing] = await db.select().from(bookxProviderSettings).where(and(eq(bookxProviderSettings.ownerId, ctx.user.id), eq(bookxProviderSettings.provider, input.provider))).limit(1);
     if (!existing) return { removed: false };
     const values: Record<string, unknown> = { apiKey: null, updatedAt: new Date() };
-    if (input.provider === "Cloudflare" && cloudflareAccountIdFromUrl(existing.apiBaseUrl)) values.apiBaseUrl = null;
+    // An address that only works with the user's own token goes with it too, so
+    // the deployment's token is never sent there in its place.
+    if (input.provider === "Cloudflare" && (cloudflareAccountIdFromUrl(existing.apiBaseUrl) || cloudflareUrlNeedsOwnToken(existing.apiBaseUrl))) values.apiBaseUrl = null;
     values.secretConfigured = process.env[PROVIDER_ENV_KEYS[input.provider]]?.trim() ? 1 : 0;
     await db.update(bookxProviderSettings).set(values).where(eq(bookxProviderSettings.id, existing.id));
     return { removed: true };
@@ -378,7 +380,7 @@ export const providersRouter = router({
         const custom = await requireCustomProvider(input.provider, ctx.user.id);
         const capabilities = customProviderCapabilities(custom);
         if (!capabilities.length) return { provider: input.provider, status: "not-configured" as const, capabilities };
-        const response = await fetch(`${custom.baseUrl}/models`, { headers: customProviderHeaders(custom, false), signal: AbortSignal.timeout(15_000) });
+        const response = await fetch(`${custom.baseUrl}/models`, { headers: customProviderHeaders(custom, false), signal: AbortSignal.timeout(15_000), redirect: "manual" });
         if (response.ok || response.status === 404 || response.status === 405) {
           return { provider: input.provider, status: "connected" as const, capabilities };
         }
@@ -408,8 +410,8 @@ export const providersRouter = router({
         await failIfNotOk(await fetch("https://api.elevenlabs.io/v1/voices", { headers: { "xi-api-key": await requireProviderApiKey("ElevenLabs", ctx.user.id) }, signal: AbortSignal.timeout(15_000) }));
       }
       if (input.provider === "OpenAI") {
-        const base = (await getOpenAiCompatibleBaseUrl(ctx.user.id)) || "https://api.openai.com/v1";
-        await failIfNotOk(await fetch(`${base}/models`, { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenAI", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));
+        const route = await openAiRoute(ctx.user.id);
+        await failIfNotOk(await fetch(`${route.baseUrl}/models`, { headers: { Authorization: `Bearer ${route.apiKey}` }, signal: AbortSignal.timeout(15_000), redirect: "manual" }));
       }
       if (input.provider === "OpenRouter") {
         await failIfNotOk(await fetch("https://openrouter.ai/api/v1/models", { headers: { Authorization: `Bearer ${await requireProviderApiKey("OpenRouter", ctx.user.id)}` }, signal: AbortSignal.timeout(15_000) }));

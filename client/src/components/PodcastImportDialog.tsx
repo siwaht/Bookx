@@ -6,6 +6,21 @@ export type PodcastImport = {
   file?: { name: string; mimeType: string; base64: string };
 };
 
+/** The server's name for each accepted kind of audio. */
+const AUDIO_BY_EXTENSION: Record<string, string> = { mp3: "audio/mpeg", wav: "audio/wav", m4a: "audio/mp4", flac: "audio/flac", aac: "audio/aac" };
+const AUDIO_BY_TYPE: Record<string, string> = {
+  "audio/mpeg": "audio/mpeg", "audio/mp3": "audio/mpeg", "audio/x-mp3": "audio/mpeg", "audio/mpeg3": "audio/mpeg",
+  "audio/wav": "audio/wav", "audio/x-wav": "audio/wav", "audio/wave": "audio/wav", "audio/vnd.wave": "audio/wav",
+  "audio/mp4": "audio/mp4", "audio/x-m4a": "audio/mp4", "audio/m4a": "audio/mp4",
+  "audio/flac": "audio/flac", "audio/x-flac": "audio/flac",
+  "audio/aac": "audio/aac", "audio/x-aac": "audio/aac", "audio/aacp": "audio/aac", "audio/vnd.dlna.adts": "audio/aac",
+};
+
+function audioTypeFor(file: File): string | null {
+  const extension = file.name.toLowerCase().match(/\.([a-z0-9]+)$/)?.[1] ?? "";
+  return AUDIO_BY_EXTENSION[extension] ?? AUDIO_BY_TYPE[file.type.toLowerCase()] ?? null;
+}
+
 function readFileAsBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -34,14 +49,19 @@ export function PodcastImportDialog({ onClose, onFinish }: { onClose: () => void
 
   const selectFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0];
+    // Cleared so choosing the same file again (after an error) still fires.
+    event.target.value = "";
     if (!selected) return;
     if (selected.size > 25 * 1024 * 1024) { setError("Choose an audio source smaller than 25 MB."); return; }
-    const accepted = ["audio/mpeg", "audio/wav", "audio/x-wav", "audio/mp4", "audio/x-m4a", "audio/flac", "audio/aac"];
-    if (!accepted.includes(selected.type)) { setError("Choose an MP3, WAV, M4A, FLAC, or AAC file."); return; }
+    // Browsers report these differently (an empty type, audio/x-flac,
+    // audio/mp3, audio/wave, audio/vnd.dlna.adts on Windows), so valid files
+    // were refused. The extension decides first, then any known type.
+    const mimeType = audioTypeFor(selected);
+    if (!mimeType) { setError("Choose an MP3, WAV, M4A, FLAC, or AAC file."); return; }
     setReading(true);
     setError(undefined);
     try {
-      setFile({ name: selected.name, mimeType: selected.type, base64: await readFileAsBase64(selected) });
+      setFile({ name: selected.name, mimeType, base64: await readFileAsBase64(selected) });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Prosecast could not read that audio file.");
     } finally {

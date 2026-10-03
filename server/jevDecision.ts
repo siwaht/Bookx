@@ -136,6 +136,7 @@ export function buildJevRequest(input: {
         input: { state: input.state, questions: input.questions },
       }),
       signal: AbortSignal.timeout(JEV_TIMEOUT_MS),
+      redirect: "manual",
     },
   };
 }

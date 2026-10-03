@@ -80,7 +80,7 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
     body.set("file", new Blob([await readAudio()], { type: "audio/mpeg" }), "recording.mp3");
     body.set("model", custom.sttModel!);
     if (language) body.set("language", language);
-    const response = await fetch(`${custom.baseUrl}/audio/transcriptions`, { method: "POST", headers: customProviderHeaders(custom, false), body, signal: AbortSignal.timeout(120_000) });
+    const response = await fetch(`${custom.baseUrl}/audio/transcriptions`, { method: "POST", headers: customProviderHeaders(custom, false), body, signal: AbortSignal.timeout(120_000), redirect: "manual" });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       throw new Error(`${custom.label} transcription failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
@@ -146,6 +146,7 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
         headers: { Authorization: `Bearer ${endpoint.apiKey}` },
         body,
         signal: AbortSignal.timeout(45_000),
+        redirect: "manual",
       });
       if (!response.ok) throw new Error(`Cloudflare transcription failed with HTTP ${response.status}`);
       const payload = await response.json() as { text?: string };
@@ -174,6 +175,7 @@ export async function transcribeAudioRoute(input: { provider: ProviderId; model?
       headers,
       body,
       signal: AbortSignal.timeout(120_000),
+      redirect: "manual",
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");

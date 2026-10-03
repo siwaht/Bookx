@@ -3,6 +3,7 @@ import { nanoid } from "nanoid";
 import { bookxProviderSettings } from "../drizzle/schema";
 import { CUSTOM_PROVIDER_LIMITS, isCustomProviderId, type CustomProviderId } from "../shared/providers";
 import { getDb } from "./db";
+import { ProviderConfigurationError } from "./narrationRetry";
 import type { RoutingCapability } from "./providerRouting";
 
 /**
@@ -145,14 +146,14 @@ export async function getCustomProvider(id: string, ownerId?: number): Promise<C
 /** Same, but with an error that says what to fix. */
 export async function requireCustomProvider(id: string, ownerId: number | undefined, capability?: RoutingCapability): Promise<CustomProvider> {
   const provider = await getCustomProvider(id, ownerId);
-  if (!provider) throw new Error("This provider was removed. Choose another voice provider in the project's settings.");
+  if (!provider) throw new ProviderConfigurationError("This provider was removed. Choose another voice provider in the project's settings.");
   const problem = providerUrlProblem(provider.baseUrl);
-  if (problem) throw new Error(`${provider.label}: ${problem}`);
+  if (problem) throw new ProviderConfigurationError(`${provider.label}: ${problem}`);
   if (capability === "text-to-speech" && !customProviderCapabilities(provider).includes(capability)) {
-    throw new Error(`${provider.label} needs a voice model and at least one voice. Add them in Settings.`);
+    throw new ProviderConfigurationError(`${provider.label} needs a voice model and at least one voice. Add them in Settings.`);
   }
   if (capability === "speech-to-text" && !provider.sttModel) {
-    throw new Error(`${provider.label} has no transcription model. Add one in Settings.`);
+    throw new ProviderConfigurationError(`${provider.label} has no transcription model. Add one in Settings.`);
   }
   return provider;
 }

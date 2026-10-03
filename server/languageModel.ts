@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { bookxProviderSettings } from "../drizzle/schema";
 import { getDb } from "./db";
 import { resolveProvider, type ProviderId } from "./providerRouting";
-import { availableProviders, cloudflareHeaders, getCloudflareEndpoint, getOpenAiCompatibleBaseUrl, requireProviderApiKey } from "./providerCredentials";
+import { OPENROUTER_API_BASE, availableProviders, cloudflareHeaders, getCloudflareEndpoint, openAiRoute, requireProviderApiKey } from "./providerCredentials";
 
 /**
  * Language-model calls shared by casting, speaker attribution and scene analysis.
@@ -37,6 +37,11 @@ export function acceptsReasoningEffort(model: string): boolean {
   return /gpt-oss/i.test(model);
 }
 
+/** OpenAI reasoning models only accept their default temperature. */
+export function fixedTemperature(model: string): boolean {
+  return /^(gpt-5|o\d)/i.test(model.trim().replace(/^openai\//i, ""));
+}
+
 /** Pulls the JSON object out of a model reply, tolerating code fences and prose around it. */
 export function extractJson(value: string, what = "structured answer"): unknown {
   const fenced = value.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1];
@@ -62,6 +67,7 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
     const url = endpoint.mode === "native" ? `${endpoint.apiBaseUrl}/v1/chat/completions` : `${endpoint.apiBaseUrl}/chat/completions`;
     const response = await fetch(url, {
       method: "POST",
+      redirect: "manual",
       headers: cloudflareHeaders(endpoint),
       // Reasoning models (GLM, Kimi) emit a long `reasoning_content` that is billed
       // against the same completion budget as the answer. Measured against the
@@ -104,15 +110,26 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
     return openRouterText(input, maxTokens, timeoutMs);
   }
 
-  const openAiKey = await requireProviderApiKey("OpenAI", input.ownerId);
-  const base = (await getOpenAiCompatibleBaseUrl(input.ownerId)) || "https://api.openai.com/v1";
-  const response = await fetch(`${base}/chat/completions`, {
+  const route = await openAiRoute(input.ownerId);
+  const response = await fetch(`${route.baseUrl}/chat/completions`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${openAiKey}`, "content-type": "application/json" },
-    body: JSON.stringify({ model: input.model, messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }], temperature: 0.25, response_format: { type: "json_object" } }),
+    headers: { Authorization: `Bearer ${route.apiKey}`, "content-type": "application/json" },
+    body: JSON.stringify({
+      model: input.model,
+      messages: [{ role: "system", content: input.system }, { role: "user", content: input.text }],
+      // Reasoning models (gpt-5, o-series) reject any temperature but the
+      // default, and gpt-5 is the default OpenAI model here.
+      ...(fixedTemperature(input.model) ? {} : { temperature: 0.25 }),
+      response_format: { type: "json_object" },
+    }),
     signal: AbortSignal.timeout(Math.min(timeoutMs, 120_000)),
+    // The address may be one the user typed in; never follow it elsewhere.
+    redirect: "manual",
   });
-  if (!response.ok) throw new Error(`OpenAI language model request failed with HTTP ${response.status}`);
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`OpenAI language model request failed with HTTP ${response.status}${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+  }
   const payload = await response.json() as { choices?: Array<{ message?: { content?: string } }> };
   const result = payload.choices?.[0]?.message?.content;
   if (!result) throw new Error("OpenAI returned no model text");
@@ -125,9 +142,10 @@ export async function languageModelText(input: LanguageModelRequest): Promise<st
  * a self-hosted gateway pointed at via the OpenAI base URL preference.
  */
 async function openRouterText(input: LanguageModelRequest, maxTokens: number, timeoutMs: number): Promise<string> {
+  // Always OpenRouter itself. This used to borrow the OpenAI route's custom
+  // address, which sent the OpenRouter key to whatever host that was.
   const key = await requireProviderApiKey("OpenRouter", input.ownerId);
-  const base = (await getOpenAiCompatibleBaseUrl(input.ownerId)) || "https://openrouter.ai/api/v1";
-  const response = await fetch(`${base}/chat/completions`, {
+  const response = await fetch(`${OPENROUTER_API_BASE}/chat/completions`, {
     method: "POST",
     headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({

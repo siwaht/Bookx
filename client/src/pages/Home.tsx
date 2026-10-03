@@ -808,6 +808,8 @@ export default function Home() {
     const persisted = workspaceQuery.data?.characters.find((value) => value.name === character.name);
     const provider = narrationProvider(activeProject.voiceProvider, providers);
     if (!activeProjectIsSaved || !persisted || !provider) { playBrowserSample(character.voice); notify(`${character.name} browser preview is playing.`); return; }
+    // Each click is a paid provider request; one at a time.
+    if (previewCharacterVoice.isPending) { notify("A voice preview is already being made."); return; }
     previewCharacterVoice.mutate({ projectId: activeProject.id, characterId: persisted.id, provider, voiceId: character.voiceId, model: activeProject.voiceModel }, {
       onSuccess: (result) => { setPreviewUrls((current) => ({ ...current, [character.name]: result.audioUrl })); toast.success(`${character.name} preview is ready.`); },
       onError: () => toast.error("Prosecast could not generate that preview.", { description: "You can choose another voice or provider." }),
@@ -824,6 +826,7 @@ export default function Home() {
   const previewLibraryVoice = (voice: VoiceChoice) => {
     const provider = narrationProvider(activeProject.voiceProvider, providers);
     if (!activeProjectIsSaved || !provider) { playBrowserSample(voice.name); notify(`${voice.name} browser preview is playing.`); return; }
+    if (previewVoice.isPending) { notify("A voice preview is already being made."); return; }
     previewVoice.mutate({ projectId: activeProject.id, provider, voiceId: voice.id, model: activeProject.voiceModel, text: `This is a Prosecast sample for ${voice.name}. A clear voice helps listeners follow every moment.` }, {
       onSuccess: (result) => { setLibraryPreviewUrls((current) => ({ ...current, [voice.id]: result.audioUrl })); toast.success(`${voice.name} provider preview is ready.`); },
       onError: () => toast.error("Prosecast could not generate that provider preview.", { description: "Try another voice or provider." }),

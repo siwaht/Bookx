@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   CheckCircle2,
@@ -127,6 +127,20 @@ export function NarrationRun({
     () => jobStatus === "running" && (data?.secondsSinceHeartbeat ?? 0) > STALL_WARNING_SECONDS,
     [jobStatus, data?.secondsSinceHeartbeat],
   );
+
+  // Only the run status polls, so when a run stopped the integrity card, the
+  // Write screen's segment badges and export readiness still showed the numbers
+  // from before it. Refresh them once, as the run ends or pauses.
+  const previousStatus = useRef(jobStatus);
+  useEffect(() => {
+    const was = previousStatus.current;
+    previousStatus.current = jobStatus;
+    if (ACTIVE_STATUSES.includes(was) && !ACTIVE_STATUSES.includes(jobStatus)) {
+      void utils.bookx.auditNarration.invalidate({ projectId });
+      void utils.bookx.getWorkspace.invalidate({ projectId });
+      void utils.bookx.exportReadiness.invalidate({ projectId });
+    }
+  }, [jobStatus, projectId, utils]);
 
   const chapters = data?.chapters ?? [];
   const chapterIds = useMemo(

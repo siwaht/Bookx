@@ -80,6 +80,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
       void utils.bookx.analysisStatus.invalidate({ projectId, kind: "scenes" });
       void utils.bookx.analysisStatus.invalidate({ projectId, kind: "sounds" });
     },
+    onError: error => toast.error(error.message || "Prosecast could not stop that run."),
   });
 
   const updateSettings = trpc.bookx.updateSoundSettings.useMutation({
@@ -102,6 +103,20 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     onError: (error, _next, context) => {
       if (context?.previous) utils.bookx.soundDesign.setData({ projectId }, context.previous);
       toast.error(error.message || "Prosecast could not save the sound settings.");
+    },
+    // Turning a toggle on is the whole workflow: plan what is unplanned, or make
+    // the sounds the newly enabled cues are missing. This lives here rather than
+    // in a callback passed to mutate(), which React Query drops when another
+    // settings change starts first, and it reads current data, not a snapshot.
+    onSuccess: (_result, next) => {
+      const kind = next.effects ? "sfx" : next.music ? "music" : null;
+      if (!kind) return;
+      const fresh = utils.bookx.soundDesign.getData({ projectId });
+      const scenes = utils.bookx.analysisStatus.getData({ projectId, kind: "scenes" });
+      const sounds = utils.bookx.analysisStatus.getData({ projectId, kind: "sounds" });
+      if (!fresh || isRunning(scenes?.status) || isRunning(sounds?.status)) return;
+      if (fresh.totals.unplannedChapters > 0) startPlan.mutate({ projectId });
+      else if (fresh.chapters.some(chapter => chapter.cues.some(cue => cue.kind === kind && cue.enabled && !cue.sound))) prepare.mutate({ projectId });
     },
     onSettled: refresh,
   });
@@ -136,7 +151,10 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     onSettled: refresh,
   });
 
-  const [preview, setPreview] = useState<{ key: string; url: string } | null>(null);
+  // `nonce` remounts the player for every preview. The server reuses one storage
+  // key per cue or chapter, so the URL alone never changes: a replay stayed
+  // silent and a re-mix after a level change played the old audio.
+  const [preview, setPreview] = useState<{ key: string; url: string; nonce: number } | null>(null);
   const [pendingPreview, setPendingPreview] = useState<string | null>(null);
   const previewCue = trpc.bookx.previewSoundCue.useMutation();
   const previewChapter = trpc.bookx.previewChapterSound.useMutation();
@@ -145,7 +163,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     const key = `${cueId}:${inContext ? "context" : "sound"}`;
     setPendingPreview(key);
     previewCue.mutate({ projectId, cueId, inContext }, {
-      onSuccess: result => setPreview({ key, url: result.url }),
+      onSuccess: result => setPreview({ key, url: result.url, nonce: Date.now() }),
       onError: error => toast.error(error.message || "Prosecast could not play that sound."),
       onSettled: () => {
         setPendingPreview(null);
@@ -157,7 +175,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
     const key = `chapter:${chapterId}`;
     setPendingPreview(key);
     previewChapter.mutate({ projectId, chapterId }, {
-      onSuccess: result => setPreview({ key, url: result.url }),
+      onSuccess: result => setPreview({ key, url: result.url, nonce: Date.now() }),
       onError: error => toast.error(error.message || "Prosecast could not mix that chapter."),
       onSettled: () => {
         setPendingPreview(null);
@@ -194,19 +212,9 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
   const { settings, totals, availability } = data;
   const busy = planRunning || soundsRunning || startPlan.isPending || prepare.isPending;
   const anyOn = settings.effects || settings.music;
-  const cuesOfKind = (kind: "sfx" | "music") => data.chapters.flatMap(chapter => chapter.cues).filter(cue => cue.kind === kind && cue.enabled);
 
   const toggle = (which: "effects" | "music", value: boolean) => {
-    const kind = which === "effects" ? "sfx" : "music";
-    updateSettings.mutate(which === "effects" ? { projectId, effects: value } : { projectId, music: value }, {
-      onSuccess: () => {
-        if (!value || busy) return;
-        // Turning a toggle on is the whole workflow: plan what is unplanned,
-        // or make the sounds the newly enabled cues are missing.
-        if (totals.unplannedChapters > 0) startPlan.mutate({ projectId });
-        else if (cuesOfKind(kind).some(cue => !cue.sound)) prepare.mutate({ projectId });
-      },
-    });
+    updateSettings.mutate(which === "effects" ? { projectId, effects: value } : { projectId, music: value });
   };
 
   const chaptersWithCues = data.chapters.filter(chapter => chapter.cues.length);
@@ -243,13 +251,13 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
           <RunBanner
             label={planRunning ? "Reading the scenes" : "Sound plan"}
             run={planStatus.data}
-            onCancel={planStatus.data?.jobId ? () => cancel.mutate({ projectId, jobId: planStatus.data!.jobId! }) : undefined}
+            onCancel={planStatus.data?.jobId && !cancel.isPending ? () => cancel.mutate({ projectId, jobId: planStatus.data!.jobId! }) : undefined}
           />
           {(soundsRunning || soundsStatus.data?.status === "failed") && (
             <RunBanner
               label={soundsRunning ? "Preparing the sounds" : "Sounds"}
               run={soundsStatus.data}
-              onCancel={soundsStatus.data?.jobId ? () => cancel.mutate({ projectId, jobId: soundsStatus.data!.jobId! }) : undefined}
+              onCancel={soundsStatus.data?.jobId && !cancel.isPending ? () => cancel.mutate({ projectId, jobId: soundsStatus.data!.jobId! }) : undefined}
             />
           )}
 
@@ -321,7 +329,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
                           {pendingPreview === chapterKey ? <LoaderCircle aria-hidden="true" className="mr-1 inline animate-spin" size={13} /> : <Headphones aria-hidden="true" className="mr-1 inline" size={13} />} Chapter mix
                         </button>
                       </summary>
-                      {preview?.key === chapterKey && <audio autoPlay controls src={preview.url} className="mx-4 mb-3 h-8 w-[calc(100%-2rem)]" aria-label={`${chapter.title} mixed with its sounds`} />}
+                      {preview?.key === chapterKey && <audio key={preview.nonce} autoPlay controls src={preview.url} className="mx-4 mb-3 h-8 w-[calc(100%-2rem)]" aria-label={`${chapter.title} mixed with its sounds`} />}
                       <ul className="border-t border-[#e8ece6]">
                         {chapter.cues.map(cue => {
                           const kindOn = cue.kind === "sfx" ? settings.effects : settings.music;
@@ -384,7 +392,7 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
                                 </div>
                               </div>
                               {preview && (preview.key === soundKey || preview.key === contextKey) && (
-                                <audio autoPlay controls src={preview.url} className="mt-2 h-8 w-full" aria-label={`${cue.label} preview`} />
+                                <audio key={preview.nonce} autoPlay controls src={preview.url} className="mt-2 h-8 w-full" aria-label={`${cue.label} preview`} />
                               )}
                             </li>
                           );

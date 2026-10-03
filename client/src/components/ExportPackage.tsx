@@ -89,9 +89,10 @@ export function ExportPackage({ projectId, canExport, disabledReason }: { projec
   }, [chapters, selected]);
 
   const request = trpc.bookx.requestExport.useMutation({
-    onSuccess: result => {
+    onSuccess: (result, submitted) => {
       void utils.bookx.listExports.invalidate({ projectId });
-      toast.success(`Assembling ${result.chapters} chapter${result.chapters === 1 ? "" : "s"}.`, { description: describeOutput(output) });
+      // Describe what was submitted, not whatever the form shows by now.
+      toast.success(`Assembling ${result.chapters} chapter${result.chapters === 1 ? "" : "s"}.`, { description: describeOutput(submitted.output ?? output) });
     },
     onError: error => toast.error(error.message || "Prosecast could not start the export."),
   });

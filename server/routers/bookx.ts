@@ -35,6 +35,7 @@ import {
   auditProjectAudio,
   ensureChapterSegments,
   includedChapters,
+  renderSegmentNow,
   requestCancel,
   requestPause,
   resumeNarrationRun,
@@ -46,6 +47,7 @@ import { EXPORT_PRESET_IDS, exportOutputSchema } from "../../shared/exportOption
 import {
   deleteProjectExport,
   exportOverview,
+  failAbandonedExports,
   getExportDownloadUrl,
   readinessFrom,
   requestProjectExport,
@@ -481,9 +483,14 @@ export const bookxRouter = router({
       .orderBy(desc(bookxGenerationJobs.createdAt))
       .limit(1);
 
-    const renderedSegments = chapterProgress.reduce((total, chapter) => total + chapter.renderedSegments, 0);
-    const totalSegments = job?.totalSegments || segments.length;
-    const detail = (job?.detail || {}) as { failures?: NarrationProgress["failures"]; events?: NarrationProgress["events"]; pinnedVoice?: NarrationProgress["pinnedVoice"] };
+    const detail = (job?.detail || {}) as { chapterIds?: string[]; failures?: NarrationProgress["failures"]; events?: NarrationProgress["events"]; pinnedVoice?: NarrationProgress["pinnedVoice"] };
+    // A run over some chapters is measured against those chapters only. Counting
+    // the whole book's audio against the run's total showed "300 / 40" and an
+    // instant 100% for a one-chapter run in a half-narrated book.
+    const runChapters = detail.chapterIds?.length ? new Set(detail.chapterIds) : null;
+    const scopedProgress = runChapters ? chapterProgress.filter((chapter) => runChapters.has(chapter.chapterId)) : chapterProgress;
+    const renderedSegments = scopedProgress.reduce((total, chapter) => total + chapter.renderedSegments, 0);
+    const totalSegments = job?.totalSegments || scopedProgress.reduce((total, chapter) => total + chapter.totalSegments, 0);
 
     if (!job) {
       return {
@@ -527,7 +534,7 @@ export const bookxRouter = router({
   /** Stops at the next segment boundary; everything already rendered is kept. */
   pauseNarration: protectedProcedure.input(z.object({ projectId: z.string(), jobId: z.string() })).mutation(async ({ ctx, input }) => {
     await requireProject(ctx.user.id, input.projectId);
-    await requestPause(input.jobId);
+    if (!(await requestPause(input.jobId, input.projectId))) throw new Error("Narration run not found");
     return { success: true };
   }),
 
@@ -539,7 +546,7 @@ export const bookxRouter = router({
 
   cancelNarration: protectedProcedure.input(z.object({ projectId: z.string(), jobId: z.string() })).mutation(async ({ ctx, input }) => {
     await requireProject(ctx.user.id, input.projectId);
-    await requestCancel(input.jobId);
+    if (!(await requestCancel(input.jobId, input.projectId))) throw new Error("Narration run not found");
     return { success: true };
   }),
 
@@ -715,12 +722,18 @@ export const bookxRouter = router({
       : [];
     const plan = resolveNarrationPlan({ provider: input.provider, explicitVoiceId: input.voiceId, characterVoiceId: character?.voiceId, requestedModel: input.model, projectModel: project.voiceModel });
     const voiceId = plan.voiceId;
-    if (input.segmentId) await requireSegment(db, input.projectId, input.segmentId);
+    const segment = input.segmentId ? await requireSegment(db, input.projectId, input.segmentId) : null;
+    // Audio attached to a segment must say that segment's text.
+    if (segment && segment.text.trim() !== input.text.trim()) throw new Error("The text does not match this segment. Save the segment's new text first.");
     const jobId = nanoid();
     await db.insert(bookxGenerationJobs).values({ id: jobId, projectId: input.projectId, scope: "segment", status: "running", totalSegments: 1, completedSegments: 0 });
     try {
-      const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text: input.text, voiceId, model: plan.model, ownerId: ctx.user.id });
-      if (input.segmentId) await db.update(bookxSegments).set({ audioStorageKey: generated.storageKey, updatedAt: new Date() }).where(eq(bookxSegments.id, input.segmentId));
+      // A segment's audio comes from the pinned render path (no silent fallback
+      // to another voice, pronunciation rules applied) and is stored with all its
+      // details; a free-standing clip is a preview and may fall back.
+      const generated = segment
+        ? { ...(await renderSegmentNow({ projectId: input.projectId, ownerId: ctx.user.id, segmentId: segment.id, provider: plan.provider, model: plan.model, voiceId, language: project.language })), clipId: segment.id, provider: plan.provider, fallback: false }
+        : await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text: input.text, voiceId, model: plan.model, ownerId: ctx.user.id });
       await db.update(bookxGenerationJobs).set({ status: "completed", completedSegments: 1, updatedAt: new Date() }).where(eq(bookxGenerationJobs.id, jobId));
       return { jobId, characterId: input.characterId, voiceId, ...generated };
     } catch (error) {
@@ -786,6 +799,7 @@ export const bookxRouter = router({
 
   listExports: protectedProcedure.input(projectId).query(async ({ ctx, input }) => {
     const { db } = await requireProject(ctx.user.id, input.projectId);
+    await failAbandonedExports(input.projectId);
     return db.select().from(bookxExports).where(eq(bookxExports.projectId, input.projectId)).orderBy(desc(bookxExports.createdAt));
   }),
 
