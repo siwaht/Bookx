@@ -103,11 +103,11 @@ export function DirectionEditor({ projectId, chapterId, open, onOpenChange }: { 
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden sm:max-w-3xl rounded-[22px] border-[#e0e5de] bg-[#fffefa] p-0">
+      <DialogContent className="max-h-[92vh] max-w-3xl overflow-hidden sm:max-w-3xl rounded-panel bg-paper p-0">
         <div className="flex max-h-[92vh] flex-col">
-          <DialogHeader className="border-b border-[#e8ece6] px-6 pb-4 pt-6">
-            <DialogTitle className="serif text-2xl tracking-[-.03em] text-[#25393c]">Direct the performance</DialogTitle>
-            <DialogDescription className="text-sm leading-6 text-[#5f6f72]">
+          <DialogHeader className="border-b border-stone-150 px-6 pb-4 pt-6">
+            <DialogTitle className="serif text-2xl tracking-[-.03em] text-ink-900">Direct the performance</DialogTitle>
+            <DialogDescription className="text-sm leading-6 text-ink-500">
               {data ? data.chapter.title : "Loading…"} · Give the chapter and its scenes a setting and a mood, and any line its own delivery.
             </DialogDescription>
           </DialogHeader>
@@ -154,8 +154,8 @@ export function DirectionEditor({ projectId, chapterId, open, onOpenChange }: { 
                       {sceneIndexes.map(index => {
                         const effective = sceneDirection(direction, index);
                         return (
-                          <div key={index} className="grid items-center gap-2 rounded-xl border border-[#e8ece6] bg-[#fbfcf9] p-3 sm:grid-cols-[90px_1fr_1fr]">
-                            <span className="text-xs font-bold text-[#4d6668]">{index === 0 ? "Opening" : `Scene ${index + 1}`}</span>
+                          <div key={index} className="grid items-center gap-2 rounded-xl border border-stone-150 bg-paper-50 p-3 sm:grid-cols-[90px_1fr_1fr]">
+                            <span className="text-xs font-semibold text-ink-600">{index === 0 ? "Opening" : `Scene ${index + 1}`}</span>
                             <input className="input py-2 text-xs" aria-label={`Setting for scene ${index + 1}`} value={scenes[String(index)]?.setting ?? ""} maxLength={DIRECTION_LIMITS.setting} placeholder={effective.setting || "Setting"} onChange={event => setScene(index, { setting: event.target.value })} />
                             <input className="input py-2 text-xs" aria-label={`Mood for scene ${index + 1}`} value={scenes[String(index)]?.mood ?? ""} maxLength={DIRECTION_LIMITS.mood} placeholder={effective.mood || "Mood"} onChange={event => setScene(index, { mood: event.target.value })} />
                           </div>
@@ -183,24 +183,24 @@ export function DirectionEditor({ projectId, chapterId, open, onOpenChange }: { 
                       const sent = traits ? composeDirection(spec, traits, data.voice.instructions) : null;
                       const open = editing === line.id;
                       return (
-                        <li key={line.id} className={`rounded-xl border px-3 py-2.5 ${open ? "border-[#9fc6bb] bg-[#f3f9f5]" : "border-[#edf0eb]"}`}>
-                          {line.sceneStart && line.index > 0 && <span className={`${ui.eyebrow} mb-1 block`}>SCENE {line.scene + 1}</span>}
+                        <li key={line.id} className={`rounded-xl border px-3 py-2.5 ${open ? "border-brand-300 bg-brand-50/60" : "border-stone-150"}`}>
+                          {line.sceneStart && line.index > 0 && <span className={`${ui.eyebrow} mb-1 block`}>Scene {line.scene + 1}</span>}
                           <div className="flex items-start gap-3">
-                            <span className={`mono mt-0.5 text-[10px] ${ui.faint} ${ui.numbers}`}>{String(line.index + 1).padStart(2, "0")}</span>
+                            <span className={`mono mt-0.5 text-3xs ${ui.faint} ${ui.numbers}`}>{String(line.index + 1).padStart(2, "0")}</span>
                             <div className="min-w-0 flex-1">
-                              {line.speaker && <span className="text-[10px] font-bold text-[#4d6668]">{line.speaker} · </span>}
-                              <span className="text-[13px] leading-6 text-[#41575a]">{line.text}</span>
+                              {line.speaker && <span className="text-3xs font-semibold text-ink-600">{line.speaker} · </span>}
+                              <span className="text-[13px] leading-6 text-ink-700">{line.text}</span>
                               <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                                 {lineTags.map(tag => (
-                                  <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-[#f1ecf7] px-2 py-0.5 text-[11px] font-semibold text-[#5d4a7a]">
+                                  <span key={tag} className="inline-flex items-center gap-1 rounded-full bg-brand-50 ring-1 ring-brand-100 px-2 py-0.5 text-2xs font-semibold text-brand-800">
                                     [{tag}]
-                                    <button type="button" onClick={() => removeTag(line.id, tag)} aria-label={`Remove ${tag} from line ${line.index + 1}`} className="rounded-full hover:bg-[#e3d9ef]"><X aria-hidden="true" size={10} /></button>
+                                    <button type="button" onClick={() => removeTag(line.id, tag)} aria-label={`Remove ${tag} from line ${line.index + 1}`} className="rounded-full hover:bg-brand-100"><X aria-hidden="true" size={10} /></button>
                                   </span>
                                 ))}
                                 <button type="button" className={ui.linkButton} onClick={() => { setEditing(open ? null : line.id); setDraftTag(""); }} aria-expanded={open}>
                                   <Plus aria-hidden="true" size={11} /><span className={ui.linkText}>{lineTags.length ? "Edit delivery" : "Add delivery"}</span>
                                 </button>
-                                {sent?.fingerprint && directs && <span className={`truncate text-[10px] ${ui.faint}`}>Sends {sent.prefix ? sent.prefix.trim() : `instructions: “${sent.instructions}”`}</span>}
+                                {sent?.fingerprint && directs && <span className={`truncate text-3xs ${ui.faint}`}>Sends {sent.prefix ? sent.prefix.trim() : `instructions: “${sent.instructions}”`}</span>}
                               </div>
                               {open && (
                                 <div className="mt-2 rounded-lg bg-white p-2.5">
@@ -226,7 +226,7 @@ export function DirectionEditor({ projectId, chapterId, open, onOpenChange }: { 
             )}
           </div>
 
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#e8ece6] px-6 py-4">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-stone-150 px-6 py-4">
             <span className={`text-xs ${ui.muted}`}>
               {dirty ? <Badge tone="warn">Unsaved changes</Badge> : "Saved direction applies to the next run, re-take or regeneration."}
             </span>

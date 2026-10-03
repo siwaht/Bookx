@@ -411,11 +411,11 @@ export function SoundDesign({ projectId, canEdit, disabledReason }: { projectId:
               </div>
             )}
             {data.chapters.some(chapter => !chapter.cues.length && chapter.lines.length > 0) && (
-              <details className="mt-3 rounded-2xl border border-dashed border-[#d4ded7] bg-[#fbfcf9]">
-                <summary className="cursor-pointer px-4 py-3 text-xs font-bold text-[#34736d]">Add a sound to a chapter without any</summary>
+              <details className="mt-3 rounded-card border border-dashed border-stone-300 bg-paper-50">
+                <summary className="cursor-pointer px-4 py-3 text-xs font-semibold text-brand-700">Add a sound to a chapter without any</summary>
                 {data.chapters.filter(chapter => !chapter.cues.length && chapter.lines.length > 0).map(chapter => (
-                  <div key={chapter.id} className="border-t border-[#e8ece6] px-1 pt-2">
-                    <span className="px-3 text-xs font-semibold text-[#4b5d60]">{chapter.title}</span>
+                  <div key={chapter.id} className="border-t border-stone-150 px-1 pt-2">
+                    <span className="px-3 text-xs font-semibold text-ink-600">{chapter.title}</span>
                     <AddCueForm projectId={projectId} chapter={chapter} data={data} />
                   </div>
                 ))}

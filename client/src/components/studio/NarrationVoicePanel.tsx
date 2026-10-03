@@ -83,7 +83,7 @@ export function NarrationVoicePanel({ projectId, disabled }: { projectId: string
   return (
     <div className={`${ui.card} min-w-0`}>
       <div className="flex items-start justify-between gap-2">
-        <h3 className={`flex items-center gap-2 ${ui.heading}`}><Cpu aria-hidden="true" size={15} className="text-[#5b8b86]" /> Narration model</h3>
+        <h3 className={`flex items-center gap-2 ${ui.title}`}><Cpu aria-hidden="true" size={15} className="text-brand-600" /> Narration model</h3>
         {provider && isBuiltInProvider(provider) && current?.liveCatalog && (
           <button type="button" className={ui.linkButton} onClick={() => refresh.mutate({ provider })} disabled={refresh.isPending} title="Ask the provider for its current models (free)">
             {refresh.isPending ? <LoaderCircle aria-hidden="true" className="animate-spin" size={11} /> : <RefreshCw aria-hidden="true" size={11} />}<span className={ui.linkText}>Refresh models</span>
@@ -91,7 +91,7 @@ export function NarrationVoicePanel({ projectId, disabled }: { projectId: string
         )}
       </div>
       <p className={`mt-1 text-xs ${ui.muted}`}>
-        {project ? <>In use: <strong className={ui.strong}>{project.voiceProvider} · {ttsTraits(project.voiceProvider, project.voiceModel).label}</strong> <span className="mono text-[10px]">({project.voiceModel})</span></> : "Loading…"}
+        {project ? <>In use: <strong className={ui.strong}>{project.voiceProvider} · {ttsTraits(project.voiceProvider, project.voiceModel).label}</strong> <span className="mono text-3xs">({project.voiceModel})</span></> : "Loading…"}
       </p>
 
       <div className="mt-4 grid grid-cols-1 gap-3 text-sm">
@@ -112,15 +112,15 @@ export function NarrationVoicePanel({ projectId, disabled }: { projectId: string
             {model && !models.some(item => item.id === model) && <option value={model}>{model}</option>}
           </select>
         </label>
-        <div className="flex flex-wrap gap-1.5 text-[10px]">
+        <div className="flex flex-wrap gap-1.5 text-3xs">
           {current?.modelsLive ? <Badge tone="good">Live list from {current.label}</Badge> : current?.configured ? <Badge>Prosecast's list</Badge> : null}
           {traits.audioTags && <Badge tone="info">Audio tags</Badge>}
           {traits.instructions && <Badge tone="info">Instructions</Badge>}
           {traits.ipaInText && <Badge>IPA pronunciation</Badge>}
           <Badge>{traits.maxChars.toLocaleString()} chars per request</Badge>
         </div>
-        {current?.discoveryError && <p className="text-[11px] text-[#8a5f1c] [overflow-wrap:anywhere]">Live list unavailable: {current.discoveryError.slice(0, 140)}</p>}
-        <ul className={`space-y-1 text-[11px] leading-5 ${ui.muted}`}>
+        {current?.discoveryError && <p className="text-2xs text-gold-700 [overflow-wrap:anywhere]">Live list unavailable: {current.discoveryError.slice(0, 140)}</p>}
+        <ul className={`space-y-1 text-2xs leading-5 ${ui.muted}`}>
           {traits.notes.map(note => <li key={note}>· {note}</li>)}
         </ul>
         {modelChanged && (
@@ -132,7 +132,7 @@ export function NarrationVoicePanel({ projectId, disabled }: { projectId: string
 
       {(traits.settings.length > 0 || traits.instructions) && (
         <div className={`mt-4 space-y-3 pt-4 ${ui.divider}`}>
-          <span className={ui.eyebrow}>VOICE SETTINGS · {traits.label.toUpperCase()}</span>
+          <span className={ui.eyebrow}>Voice settings · {traits.label}</span>
           {(["stability", "similarity", "style", "speed"] as const).filter(key => traits.settings.includes(key)).map(key => (
             <RangeField
               key={key}
@@ -149,9 +149,9 @@ export function NarrationVoicePanel({ projectId, disabled }: { projectId: string
             />
           ))}
           {traits.settings.includes("speakerBoost") && (
-            <label className="flex items-center justify-between gap-3 text-[11px] font-bold text-[#526267]">
+            <label className="flex items-center justify-between gap-3 text-2xs font-semibold text-ink-600">
               Speaker boost
-              <input type="checkbox" className="h-4 w-4 accent-[#3f817a]" checked={settings.speakerBoost ?? DEFAULT_VOICE_SETTINGS.speakerBoost} disabled={disabled} onChange={event => setSettings(currentSettings => ({ ...currentSettings, speakerBoost: event.target.checked }))} />
+              <input type="checkbox" className="h-4 w-4 accent-brand-600" checked={settings.speakerBoost ?? DEFAULT_VOICE_SETTINGS.speakerBoost} disabled={disabled} onChange={event => setSettings(currentSettings => ({ ...currentSettings, speakerBoost: event.target.checked }))} />
             </label>
           )}
           {traits.instructions && (
@@ -170,8 +170,8 @@ export function NarrationVoicePanel({ projectId, disabled }: { projectId: string
       )}
 
       {balance && balance.status !== "not-connected" && (
-        <div className={`mt-4 pt-4 text-[11px] leading-5 ${ui.divider} ${ui.muted}`}>
-          <span className={ui.eyebrow}>ACCOUNT</span>
+        <div className={`mt-4 pt-4 text-2xs leading-5 ${ui.divider} ${ui.muted}`}>
+          <span className={ui.eyebrow}>Account</span>
           {balance.status === "ok" ? (
             <p className="mt-1">
               <strong className={`${ui.strong} ${ui.numbers}`}>{formatBalance(balance.remaining, balance.unit)}</strong> left

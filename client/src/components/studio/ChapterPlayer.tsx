@@ -227,7 +227,7 @@ export function ChapterPlayer({
   const nothing = totals.withAudio === 0;
 
   return (
-    <section className={`${ui.card} panel-shadow`} aria-label={`Player for ${data.chapter.title}`}>
+    <section className={ui.cardRaised} aria-label={`Player for ${data.chapter.title}`}>
       <audio
         ref={audio}
         preload="auto"
@@ -244,9 +244,9 @@ export function ChapterPlayer({
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <span className={ui.eyebrow}>CHAPTER {data.chapter.number} OF {data.chapter.chapterCount}</span>
-          <h3 className="serif mt-1 truncate text-xl tracking-[-.02em] text-[#25393c]">{data.chapter.title}</h3>
-          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px]">
+          <span className={ui.eyebrow}>Chapter {data.chapter.number} of {data.chapter.chapterCount}</span>
+          <h3 className="serif mt-1 truncate text-xl tracking-[-.02em] text-ink-900">{data.chapter.title}</h3>
+          <div className="mt-1.5 flex flex-wrap items-center gap-2 text-2xs">
             {nothing ? <Badge>Nothing narrated yet</Badge> : partial ? <Badge tone="info">Partial · {totals.withAudio} of {totals.lines} lines</Badge> : <Badge tone="good">All {totals.lines} lines narrated</Badge>}
             {totals.outdated > 0 && <Badge tone="warn">{totals.outdated} outdated</Badge>}
             {live && <Badge tone="info"><LoaderCircle aria-hidden="true" className="animate-spin motion-reduce:animate-none" size={10} /> Still rendering</Badge>}
@@ -261,7 +261,7 @@ export function ChapterPlayer({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-[#e3e8e2] bg-[#f6f9f5] p-4">
+      <div className="mt-4 rounded-2xl border border-stone-150 bg-paper-50 p-4">
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" onClick={() => data.previous && onNavigate(data.previous.id)} disabled={!data.previous} className={ui.iconButton} aria-label={data.previous ? `Previous chapter: ${data.previous.title}` : "No previous chapter"}>
             <ChevronLeft aria-hidden="true" size={16} />
@@ -271,7 +271,7 @@ export function ChapterPlayer({
             type="button"
             onClick={toggle}
             disabled={nothing}
-            className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-[#235f61] text-white transition hover:bg-[#1c5052] disabled:opacity-40"
+            className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-brand-700 text-paper transition hover:bg-brand-800 disabled:opacity-40"
             aria-label={playing ? "Pause" : waiting ? "Waiting for the next line" : "Play"}
           >
             {waiting ? <LoaderCircle aria-hidden="true" className="animate-spin motion-reduce:animate-none" size={18} /> : playing ? <Pause aria-hidden="true" size={18} /> : <Play aria-hidden="true" className="ml-0.5" size={18} />}
@@ -291,9 +291,9 @@ export function ChapterPlayer({
               disabled={nothing}
               aria-label="Position in the chapter"
               aria-valuetext={`${playerClock(elapsedMs)} of ${playerClock(totalMs)}`}
-              className="h-6 w-full cursor-pointer accent-[#3f817a] disabled:cursor-not-allowed"
+              className="h-6 w-full cursor-pointer accent-brand-600 disabled:cursor-not-allowed"
             />
-            <div className={`flex justify-between text-[11px] font-semibold text-[#5d7072] ${ui.numbers}`}>
+            <div className={`flex justify-between text-2xs font-semibold text-ink-500 ${ui.numbers}`}>
               <span>{playerClock(elapsedMs)}</span>
               <span>{partial ? `${playerClock(totalMs)} so far` : playerClock(totalMs)}</span>
             </div>
@@ -314,31 +314,31 @@ export function ChapterPlayer({
           const status = STATUS[line.status];
           const cues = cueAfter.get(line.id) ?? [];
           return (
-            <li key={line.id} data-line={line.index} className={`rounded-xl border px-3 py-2.5 ${active ? "border-[#9fc6bb] bg-[#eef7f2]" : "border-transparent hover:bg-[#f6f8f4]"}`}>
+            <li key={line.id} data-line={line.index} className={`rounded-xl border px-3 py-2.5 ${active ? "border-brand-300 bg-brand-50" : "border-transparent hover:bg-stone-50"}`}>
               <div className="flex items-start gap-3">
                 <button
                   type="button"
                   onClick={() => startLine(line.index)}
                   disabled={!line.audioUrl}
-                  className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[#d8e4dd] bg-white text-[#37746d] disabled:opacity-30"
+                  className="mt-0.5 grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-stone-200 bg-white text-brand-700 disabled:opacity-30"
                   aria-label={line.audioUrl ? `Play from line ${line.index + 1}` : `Line ${line.index + 1} has no audio yet`}
                 >
                   {active && playing ? <Headphones aria-hidden="true" size={12} /> : <Play aria-hidden="true" size={11} />}
                 </button>
                 <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-1.5 text-[10px]">
+                  <div className="flex flex-wrap items-center gap-1.5 text-3xs">
                     <span className={`mono ${ui.faint} ${ui.numbers}`}>{String(line.index + 1).padStart(2, "0")}</span>
-                    {line.speaker && <span className="font-bold text-[#4d6668]">{line.speaker}</span>}
+                    {line.speaker && <span className="font-semibold text-ink-600">{line.speaker}</span>}
                     {line.status !== "current" && <Badge tone={status.tone}>{status.label}</Badge>}
-                    {line.tags.map(tag => <span key={tag} className="rounded-full bg-[#f1ecf7] px-2 py-0.5 font-semibold text-[#5d4a7a]">[{tag}]</span>)}
+                    {line.tags.map(tag => <span key={tag} className="rounded-full bg-brand-50 ring-1 ring-brand-100 px-2 py-0.5 font-semibold text-brand-800">[{tag}]</span>)}
                     {cues.map((cue, position) => (
-                      <span key={`${cue.label}-${position}`} className="inline-flex items-center gap-1 rounded-full bg-[#f6ecd9] px-2 py-0.5 font-semibold text-[#7d5a17]">
+                      <span key={`${cue.label}-${position}`} className="inline-flex items-center gap-1 rounded-full bg-gold-100 px-2 py-0.5 font-semibold text-gold-700">
                         <Music2 aria-hidden="true" size={9} /> {cue.label} {cue.placement === "before" ? "before" : "after"}
                       </span>
                     ))}
                   </div>
-                  <p className={`mt-1 text-[13px] leading-6 ${active ? "text-[#203a3c]" : "text-[#4f6265]"}`}>{line.text}</p>
-                  {line.reason && line.status !== "current" && line.status !== "missing" && <p className={`mt-0.5 text-[11px] ${ui.faint}`}>{line.reason}</p>}
+                  <p className={`mt-1 text-[13px] leading-6 ${active ? "text-ink-900" : "text-ink-600"}`}>{line.text}</p>
+                  {line.reason && line.status !== "current" && line.status !== "missing" && <p className={`mt-0.5 text-2xs ${ui.faint}`}>{line.reason}</p>}
                 </div>
                 <button
                   type="button"

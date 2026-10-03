@@ -38,17 +38,17 @@ export function NarrationProgressPanel({ data }: { data: NarrationProgress | und
     <div className={ui.card}>
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="min-w-0">
-          <h3 className={ui.heading}>Progress</h3>
+          <h3 className={ui.title}>Progress</h3>
           <p className={`mt-1 text-sm ${ui.muted} ${ui.numbers}`}>
             {total ? `${count(completed)} of ${count(total)} lines` : "No lines yet"}
             {runChapters.length > 0 && ` · ${chaptersDone} of ${runChapters.length} chapter${runChapters.length === 1 ? "" : "s"} done`}
             {data?.regenerating && " · regenerating"}
           </p>
         </div>
-        <strong className={`text-3xl tracking-[-.04em] text-[#2d6f6a] ${ui.numbers}`}>{percent}%</strong>
+        <strong className={`text-3xl tracking-[-.04em] text-brand-700 ${ui.numbers}`}>{percent}%</strong>
       </div>
 
-      <div className={`${ui.bar} mt-3`}>
+      <div className={`${ui.bar} mt-3 h-2`}>
         <div
           className={ui.barFill}
           style={{ width: `${percent}%` }}
@@ -62,7 +62,7 @@ export function NarrationProgressPanel({ data }: { data: NarrationProgress | und
       </div>
 
       {timing?.current && active && (
-        <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-[#3d5557]">
+        <p className="mt-3 flex flex-wrap items-center gap-2 text-sm text-ink-700">
           <Badge tone="info"><Mic2 aria-hidden="true" size={10} /> Now narrating</Badge>
           <span className={ui.numbers}>
             Chapter {timing.current.chapterNumber} of {timing.current.chapterCount} · line {timing.current.segmentNumber} of {timing.current.segmentCount}
@@ -89,10 +89,10 @@ export function NarrationProgressPanel({ data }: { data: NarrationProgress | und
 
 function Fact({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: string; detail?: string }) {
   return (
-    <div className="rounded-2xl border border-[#e8ece6] bg-[#fbfcf9] p-3">
-      <dt className="mono flex items-center gap-1.5 text-[10px] tracking-[.1em] text-[#6c8486]">{icon} {label.toUpperCase()}</dt>
-      <dd className={`mt-1.5 text-lg font-bold tracking-[-.02em] text-[#304548] ${ui.numbers}`}>{value}</dd>
-      {detail && <dd className={`text-[10px] ${ui.faint}`}>{detail}</dd>}
+    <div className="rounded-2xl border border-stone-150 bg-paper-50 p-3">
+      <dt className="eyebrow flex items-center gap-1.5 text-3xs text-ink-500">{icon} {label}</dt>
+      <dd className={`mt-1.5 text-lg font-semibold tracking-[-.02em] text-ink-800 ${ui.numbers}`}>{value}</dd>
+      {detail && <dd className={`text-3xs ${ui.faint}`}>{detail}</dd>}
     </div>
   );
 }

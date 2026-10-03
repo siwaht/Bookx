@@ -1,59 +1,63 @@
 import type { ReactNode } from "react";
 
 /**
- * Shared look for the production studio panels. Kept in one place so a
- * future theme pass can restyle every studio panel by editing these strings.
+ * Shared look for the production studio panels, built on the Prosecast
+ * design tokens in index.css (paper, stone, ink, brand, gold, clay, sky).
+ * Kept in one place so a theme pass can restyle every studio panel here.
  */
 export const ui = {
-  card: "rounded-[22px] border border-[#e0e5de] bg-[#fffefa] p-5",
-  cardQuiet: "rounded-[18px] border border-[#e3e8e2] bg-[#fbfcf9] p-4",
-  heading: "font-bold text-[#2f4346]",
-  eyebrow: "mono text-[10px] tracking-[.13em] text-[#678e89]",
-  muted: "text-[#748285]",
-  faint: "text-[#8b9697]",
-  strong: "text-[#304548]",
-  label: "mb-1.5 block text-[11px] font-bold text-[#526267]",
-  divider: "border-t border-[#edf0eb]",
-  // Buttons and form controls inherit their font from the parent (index.css
-  // sets `font: inherit` outside Tailwind's layers, so text utilities on a
-  // <button> or <select> are ignored). Sizes therefore go on an inner span,
-  // or on the element around a form control.
-  chip: "inline-flex min-h-[28px] items-center gap-1 rounded-full border border-[#dce4dd] bg-white px-2.5 py-1 text-[#4b5d60] hover:border-[#a9c9c4] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2d7470]",
-  chipOn: "inline-flex min-h-[28px] items-center gap-1 rounded-full border border-[#3f817a] bg-[#e7f2ec] px-2.5 py-1 text-[#2f6d68] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#2d7470]",
-  chipText: "text-[11px] font-semibold leading-4",
-  linkButton: "inline-flex min-h-[24px] items-center gap-1 rounded-lg px-1.5 text-[#34736d] hover:bg-[#eef5f1] disabled:opacity-40",
-  linkText: "text-[11px] font-bold",
-  iconButton: "grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-[#d8e4dd] bg-[#f4faf6] text-[#37746d] hover:bg-[#e5f2eb] disabled:opacity-40",
-  bar: "h-2 overflow-hidden rounded-full bg-[#ebeeea]",
-  barFill: "h-full rounded-full bg-[#4e9287] transition-[width] duration-500 ease-out motion-reduce:transition-none",
+  card: "rounded-card border border-stone-150 bg-paper p-6 shadow-hairline",
+  /** A card that sits above the page, such as the chapter player. */
+  cardRaised: "rounded-card border border-stone-150 bg-paper p-6 shadow-soft",
+  cardQuiet: "rounded-card border border-stone-150 bg-paper-50 p-4",
+  /** Card title, the same size as the other cards in the app. */
+  title: "text-[15px] font-semibold text-ink-900",
+  /** Weight and colour only; the caller picks the size. */
+  heading: "font-semibold text-ink-900",
+  eyebrow: "eyebrow text-brand-600",
+  muted: "text-ink-500",
+  faint: "text-ink-500",
+  strong: "text-ink-800",
+  label: "mb-1.5 block text-xs font-semibold text-ink-700",
+  divider: "border-t border-stone-150",
+  dialog: "rounded-panel bg-paper",
+  chip: "inline-flex min-h-[28px] items-center gap-1 rounded-full border border-stone-200 bg-paper px-2.5 py-1 text-ink-600 transition-colors hover:border-brand-300 hover:text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600",
+  chipOn: "inline-flex min-h-[28px] items-center gap-1 rounded-full border border-brand-500 bg-brand-50 px-2.5 py-1 text-brand-700 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-600",
+  chipText: "text-2xs font-semibold",
+  linkButton: "inline-flex min-h-[24px] items-center gap-1 rounded-lg px-1.5 text-brand-700 transition-colors hover:bg-brand-50 disabled:opacity-40",
+  linkText: "text-2xs font-semibold",
+  iconButton: "grid h-9 w-9 shrink-0 place-items-center rounded-xl border border-stone-200 bg-paper text-brand-700 transition-colors hover:border-brand-300 hover:bg-brand-50 disabled:opacity-40",
+  /** Progress track; the caller sets the height (h-2, h-1.5). */
+  bar: "overflow-hidden rounded-full bg-brand-100",
+  barFill: "h-full rounded-full bg-brand-500 transition-[width] duration-500 ease-out motion-reduce:transition-none",
   numbers: "tabular-nums",
 } as const;
 
 export type Tone = "neutral" | "info" | "good" | "warn" | "bad";
 
 const TONES: Record<Tone, string> = {
-  neutral: "bg-[#eef0ed] text-[#5f6d6f]",
-  info: "bg-[#e9f0f5] text-[#3f647a]",
-  good: "bg-[#e4f2eb] text-[#2f6d5e]",
-  warn: "bg-[#fff1dc] text-[#8a5f1c]",
-  bad: "bg-[#fbe9e4] text-[#8f4a36]",
+  neutral: "bg-stone-50 text-ink-600 ring-stone-150",
+  info: "bg-sky-50 text-sky-700 ring-sky-100",
+  good: "bg-brand-50 text-brand-700 ring-brand-100",
+  warn: "bg-gold-50 text-gold-700 ring-gold-200",
+  bad: "bg-clay-50 text-clay-700 ring-clay-100",
 };
 
 /** A small status label. The text always carries the meaning; colour only repeats it. */
 export function Badge({ tone = "neutral", children, className = "" }: { tone?: Tone; children: ReactNode; className?: string }) {
-  return <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[10px] font-bold ${TONES[tone]} ${className}`}>{children}</span>;
+  return <span className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-3xs font-semibold ring-1 ${TONES[tone]} ${className}`}>{children}</span>;
 }
 
 export function Notice({ tone = "info", title, children, action }: { tone?: Exclude<Tone, "neutral">; title?: string; children: ReactNode; action?: ReactNode }) {
   const styles: Record<Exclude<Tone, "neutral">, string> = {
-    info: "border-[#cfe0db] bg-[#f2f9f6] text-[#3d6b66]",
-    good: "border-[#c9dfd5] bg-[#f4fbf7] text-[#3d6b5c]",
-    warn: "border-[#ecd9b8] bg-[#fff8ea] text-[#7a5a22]",
-    bad: "border-[#eddcd4] bg-[#fffaf7] text-[#86493a]",
+    info: "border-brand-100 bg-brand-50/60 text-brand-800",
+    good: "border-brand-200 bg-brand-50 text-brand-800",
+    warn: "border-gold-200 bg-gold-50 text-gold-700",
+    bad: "border-clay-200 bg-clay-50 text-clay-700",
   };
   return (
-    <div className={`rounded-[16px] border p-3.5 text-xs leading-5 ${styles[tone]}`} role={tone === "bad" ? "alert" : undefined}>
-      {title && <strong className="mb-1 block text-[13px]">{title}</strong>}
+    <div className={`rounded-card border p-4 text-xs leading-5 ${styles[tone]}`} role={tone === "bad" ? "alert" : undefined}>
+      {title && <strong className="mb-1 block text-sm font-semibold">{title}</strong>}
       <div>{children}</div>
       {action && <div className="mt-2.5">{action}</div>}
     </div>
@@ -90,8 +94,8 @@ export function RangeField({ id, label, value, min, max, step, onChange, format,
   return (
     <div>
       <div className="flex items-center justify-between gap-2">
-        <label htmlFor={id} className="text-[11px] font-bold text-[#526267]">{label}</label>
-        <span className={`text-[11px] font-semibold text-[#3f5a5c] ${ui.numbers}`} aria-hidden="true">{shown}</span>
+        <label htmlFor={id} className="text-xs font-semibold text-ink-700">{label}</label>
+        <span className={`text-2xs font-semibold text-ink-700 ${ui.numbers}`} aria-hidden="true">{shown}</span>
       </div>
       <input
         id={id}
@@ -103,9 +107,9 @@ export function RangeField({ id, label, value, min, max, step, onChange, format,
         disabled={disabled}
         aria-valuetext={shown}
         onChange={event => onChange(Number(event.target.value))}
-        className="mt-1.5 h-6 w-full cursor-pointer accent-[#3f817a] disabled:cursor-not-allowed disabled:opacity-50"
+        className="mt-1.5 h-6 w-full cursor-pointer accent-brand-600 disabled:cursor-not-allowed disabled:opacity-50"
       />
-      {hint && <p className={`mt-0.5 text-[10px] leading-4 ${ui.faint}`}>{hint}</p>}
+      {hint && <p className={`mt-0.5 text-3xs leading-4 ${ui.faint}`}>{hint}</p>}
     </div>
   );
 }

@@ -193,7 +193,7 @@ export function NarrationRun({
         actions={
           <>
             {project && (
-              <span className="rounded-full border border-[#dfe5de] bg-white px-3 py-1.5 text-[10px] font-bold text-[#4a6360]" title={`${project.voiceProvider} · ${project.voiceModel}`}>
+              <span className="rounded-full bg-stone-50 px-3 py-1.5 text-3xs font-semibold text-ink-600 ring-1 ring-stone-150" title={`${project.voiceProvider} · ${project.voiceModel}`}>
                 {project.voiceProvider} · {ttsTraits(project.voiceProvider, project.voiceModel).label}
               </span>
             )}

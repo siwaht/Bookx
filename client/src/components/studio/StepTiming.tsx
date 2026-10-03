@@ -19,7 +19,7 @@ export function StepTiming({ run }: { run: { totalSteps?: number; completedSteps
   const left = elapsed !== null && done > 0 && total > done ? (elapsed / done) * (total - done) : null;
   if (!total && elapsed === null) return null;
   return (
-    <span className="mt-0.5 block text-[11px] tabular-nums text-[#5f7b78]">
+    <span className="mt-0.5 block text-2xs tabular-nums text-ink-500">
       {total > 0 && `Step ${Math.min(total, done + 1)} of ${total}`}
       {elapsed !== null && ` · ${formatClock(elapsed)} so far`}
       {left !== null ? ` · about ${formatClock(left)} left` : total > 0 && done === 0 ? " · estimating…" : ""}

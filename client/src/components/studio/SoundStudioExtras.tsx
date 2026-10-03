@@ -16,7 +16,14 @@ type Cue = Chapter["cues"][number];
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 
 /** Compact selects; their text size comes from the element around them. */
-const compactSelect = "rounded-lg border border-[#dce4dd] bg-white px-2 py-1 text-[#4b5d60]";
+const compactSelect = "rounded-lg border border-stone-200 bg-white px-2 py-1 text-ink-600";
+
+const NUDGE_CHOICES = [-2000, -1000, -500, 0, 500, 1000, 2000, 3000, 5000];
+const LENGTH_CHOICES = [1000, 2000, 3000, 5000, 8000, 12000, 20000, 30000];
+/** The presets plus the cue's own value when it is not one of them, so a select never shows a value the cue does not have. */
+const withCurrent = (choices: number[], current: number | null) =>
+  current === null || choices.includes(current) ? choices : [...choices, current].sort((left, right) => left - right);
+const secondsLabel = (ms: number) => `${Number((ms / 1000).toFixed(2))} s`;
 
 function useRefresh(projectId: string) {
   const utils = trpc.useUtils();
@@ -47,12 +54,12 @@ export function SoundsSummary({ chapters, effectsOn, musicOn }: { chapters: Chap
   if (!entries.length) return null;
   return (
     <div className={ui.cardQuiet}>
-      <span className={ui.eyebrow}>WHAT PLAYS IN THIS BOOK</span>
+      <span className={ui.eyebrow}>What plays in this book</span>
       <ul className="mt-2 flex flex-wrap gap-1.5" aria-label="Sounds used in the book">
         {entries.map(entry => {
           const on = entry.kind === "sfx" ? effectsOn : musicOn;
           return (
-            <li key={`${entry.kind}-${entry.label}`} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${entry.kind === "music" ? "bg-[#f6ecd9] text-[#7d5a17]" : "bg-[#e3eef4] text-[#3f647a]"} ${on ? "" : "opacity-60"}`}>
+            <li key={`${entry.kind}-${entry.label}`} className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-2xs font-semibold ${entry.kind === "music" ? "bg-gold-100 text-gold-700" : "bg-sky-100 text-sky-700"} ${on ? "" : "opacity-60"}`}>
               {entry.kind === "music" && <Music2 aria-hidden="true" size={10} />}
               {entry.label}{entry.kind === "music" ? " music" : ""} ×{entry.count}
               <span className="font-normal">· {entry.chapters.size} ch.</span>
@@ -81,16 +88,16 @@ export function MusicSettingsPanel({ projectId, data }: { projectId: string; dat
 
   return (
     <div className={`${ui.card} min-w-0`}>
-      <span className={ui.eyebrow}>MUSIC AND MIX</span>
-      {!data.settings.music && <p className={`mt-2 text-[11px] leading-5 ${ui.muted}`}>Background music is off. These settings apply when you turn it on.</p>}
+      <span className={ui.eyebrow}>Music and mix</span>
+      {!data.settings.music && <p className={`mt-2 text-2xs leading-5 ${ui.muted}`}>Background music is off. These settings apply when you turn it on.</p>}
 
       <fieldset className="mt-3">
         <legend className={ui.label}>Music style</legend>
         <div className="grid gap-2">
           {([["swells", "Scene swells", "A few seconds of music as each scene opens, matched to its mood."], ["bed", "Continuous bed", "One track under the whole chapter, dipping whenever someone speaks."]] as const).map(([value, label, detail]) => (
-            <label key={value} className={`flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 ${options.musicMode === value ? "border-[#9fc6bb] bg-[#eef7f2]" : "border-[#e3e8e2] bg-white"}`}>
-              <input type="radio" name="music-mode" className="mt-0.5 accent-[#3f817a]" checked={options.musicMode === value} onChange={() => update({ musicMode: value })} />
-              <span><strong className="block text-xs text-[#34484b]">{label}</strong><span className={`text-[11px] leading-4 ${ui.muted}`}>{detail}</span></span>
+            <label key={value} className={`flex cursor-pointer items-start gap-2.5 rounded-xl border px-3 py-2.5 ${options.musicMode === value ? "border-brand-300 bg-brand-50" : "border-stone-150 bg-white"}`}>
+              <input type="radio" name="music-mode" className="mt-0.5 accent-brand-600" checked={options.musicMode === value} onChange={() => update({ musicMode: value })} />
+              <span><strong className="block text-xs text-ink-800">{label}</strong><span className={`text-2xs leading-4 ${ui.muted}`}>{detail}</span></span>
             </label>
           ))}
         </div>
@@ -115,7 +122,7 @@ export function MusicSettingsPanel({ projectId, data }: { projectId: string; dat
             </optgroup>
           )}
         </select>
-        {!usesTrack && <span className={`mt-1 block text-[10px] ${ui.faint}`}>Used when the bed, intro or outro is on. Scene swells pick music by each scene's mood.</span>}
+        {!usesTrack && <span className={`mt-1 block text-3xs ${ui.faint}`}>Used when the bed, intro or outro is on. Scene swells pick music by each scene's mood.</span>}
       </label>
 
       <div className="mt-3 grid grid-cols-2 gap-3">
@@ -148,7 +155,7 @@ export function MusicSettingsPanel({ projectId, data }: { projectId: string; dat
           </select>
         </label>
       </div>
-      {save.isPending && <p className={`mt-2 text-[11px] ${ui.faint}`} aria-live="polite">Saving…</p>}
+      {save.isPending && <p className={`mt-2 text-2xs ${ui.faint}`} aria-live="polite">Saving…</p>}
     </div>
   );
 }
@@ -171,15 +178,15 @@ function DeferredRange(props: { id: string; label: string; value: number; min: n
 function ToggleSeconds({ label, value, limits, onChange, hint }: { label: string; value: { enabled: boolean; seconds: number }; limits: { min: number; max: number }; onChange: (value: { enabled: boolean; seconds: number }) => void; hint: string }) {
   const id = `toggle-${label.toLowerCase()}`;
   return (
-    <div className="min-w-0 rounded-xl border border-[#e3e8e2] bg-white p-2.5">
-      <label htmlFor={id} className="flex items-center justify-between gap-2 text-xs font-bold text-[#34484b]">
+    <div className="min-w-0 rounded-xl border border-stone-150 bg-white p-2.5">
+      <label htmlFor={id} className="flex items-center justify-between gap-2 text-xs font-semibold text-ink-800">
         {label}
-        <input id={id} type="checkbox" className="h-4 w-4 accent-[#3f817a]" checked={value.enabled} onChange={event => onChange({ ...value, enabled: event.target.checked })} />
+        <input id={id} type="checkbox" className="h-4 w-4 accent-brand-600" checked={value.enabled} onChange={event => onChange({ ...value, enabled: event.target.checked })} />
       </label>
-      <label className="mt-1.5 flex items-center gap-1.5 text-[11px] text-[#5d7072]">
+      <label className="mt-1.5 flex items-center gap-1.5 text-2xs text-ink-500">
         <input
           type="number"
-          className="w-16 rounded-lg border border-[#dce4dd] bg-white px-2 py-1"
+          className="w-16 rounded-lg border border-stone-200 bg-white px-2 py-1"
           min={limits.min}
           max={limits.max}
           value={value.seconds}
@@ -191,7 +198,7 @@ function ToggleSeconds({ label, value, limits, onChange, hint }: { label: string
           }}
         /> s
       </label>
-      <span className={`mt-1 block text-[10px] leading-4 ${ui.faint}`}>{hint}</span>
+      <span className={`mt-1 block text-3xs leading-4 ${ui.faint}`}>{hint}</span>
     </div>
   );
 }
@@ -203,7 +210,7 @@ export function ChapterMusicSelect({ projectId, chapter, data }: { projectId: st
   const options = chapter.soundOptions;
   const value = options?.music === "off" ? "off" : options?.bedAssetId ? `asset:${options.bedAssetId}` : options?.bedTag ? `tag:${options.bedTag}` : "inherit";
   return (
-    <span className="min-w-0 text-[11px]">
+    <span className="min-w-0 text-2xs">
       <select
         aria-label={`Music in ${chapter.title}`}
         className={`${compactSelect} max-w-[180px]`}
@@ -236,17 +243,17 @@ export function CueExtras({ projectId, cue, data }: { projectId: string; cue: Cu
   const remove = trpc.studio.removeSoundCue.useMutation({ onSuccess: () => { refresh(); toast("Sound removed."); }, onError: error => toast.error(error.message || "Prosecast could not remove that sound.") });
   const own = data.assets.filter(asset => asset.kind === cue.kind);
   return (
-    <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+    <div className="mt-2 flex flex-wrap items-center gap-2 text-2xs">
       <select aria-label={`When ${cue.label} plays`} className={compactSelect} value={cue.placement} onChange={event => edit.mutate({ projectId, cueId: cue.id, placement: event.target.value as "before" | "after" })}>
         <option value="after">After the line</option>
         <option value="before">Before the line</option>
       </select>
       <select aria-label={`Nudge ${cue.label}`} className={compactSelect} value={cue.offsetMs} onChange={event => edit.mutate({ projectId, cueId: cue.id, offsetMs: Number(event.target.value) })}>
-        {[-2000, -1000, -500, 0, 500, 1000, 2000, 3000, 5000].map(value => <option key={value} value={value}>{value === 0 ? "On time" : `${value > 0 ? "+" : ""}${value / 1000} s`}</option>)}
+        {withCurrent(NUDGE_CHOICES, cue.offsetMs).map(value => <option key={value} value={value}>{value === 0 ? "On time" : `${value > 0 ? "+" : ""}${secondsLabel(value)}`}</option>)}
       </select>
       <select aria-label={`Length of ${cue.label}`} className={compactSelect} value={cue.lengthMs ?? ""} onChange={event => edit.mutate({ projectId, cueId: cue.id, lengthMs: event.target.value ? Number(event.target.value) : null })}>
         <option value="">Natural length</option>
-        {[1000, 2000, 3000, 5000, 8000, 12000, 20000, 30000].map(value => <option key={value} value={value}>{value / 1000} s</option>)}
+        {withCurrent(LENGTH_CHOICES, cue.lengthMs).map(value => <option key={value} value={value}>{secondsLabel(value)}</option>)}
       </select>
       {own.length > 0 && (
         <select aria-label={`Use one of your own sounds for ${cue.label}`} className={compactSelect} value={cue.custom ? cue.assetId ?? "" : ""} onChange={event => event.target.value && edit.mutate({ projectId, cueId: cue.id, assetId: event.target.value })}>
@@ -254,7 +261,7 @@ export function CueExtras({ projectId, cue, data }: { projectId: string; cue: Cu
           {own.map(asset => <option key={asset.id} value={asset.id}>{asset.title}</option>)}
         </select>
       )}
-      <button type="button" className="inline-flex min-h-[24px] items-center gap-1 rounded-lg px-2 py-1 text-[#8f4a36] hover:bg-[#fbe9e4] disabled:opacity-40" disabled={remove.isPending} onClick={() => remove.mutate({ projectId, cueId: cue.id })} aria-label={`Remove ${cue.label}`}>
+      <button type="button" className="inline-flex min-h-[24px] items-center gap-1 rounded-lg px-2 py-1 text-clay-700 hover:bg-clay-100 disabled:opacity-40" disabled={remove.isPending} onClick={() => remove.mutate({ projectId, cueId: cue.id })} aria-label={`Remove ${cue.label}`}>
         <Trash2 aria-hidden="true" size={11} /><span className={ui.linkText}>Remove</span>
       </button>
     </div>
@@ -285,7 +292,7 @@ export function AddCueForm({ projectId, chapter, data }: { projectId: string; ch
   }
   return (
     <form
-      className="m-3 grid grid-cols-1 gap-2 rounded-xl border border-[#d8e4dd] bg-white p-3 text-xs sm:grid-cols-2"
+      className="m-3 grid grid-cols-1 gap-2 rounded-xl border border-stone-200 bg-white p-3 text-xs sm:grid-cols-2"
       onSubmit={event => {
         event.preventDefault();
         if (!line || !sound) return;
@@ -367,25 +374,25 @@ export function SoundLibraryPanel({ projectId, data }: { projectId: string; data
   return (
     <div className={`${ui.card} min-w-0`}>
       <audio ref={preview} onEnded={() => setPlaying(null)} onPause={() => setPlaying(null)} className="hidden" />
-      <span className={ui.eyebrow}>YOUR SOUNDS</span>
-      <p className={`mt-2 text-[11px] leading-5 ${ui.muted}`}>Upload your own music or effects, or describe one for ElevenLabs to make. Use them for the bed, a chapter, or any cue.</p>
+      <span className={ui.eyebrow}>Your sounds</span>
+      <p className={`mt-2 text-2xs leading-5 ${ui.muted}`}>Upload your own music or effects, or describe one for ElevenLabs to make. Use them for the bed, a chapter, or any cue.</p>
 
       {data.assets.length > 0 && (
         <ul className="mt-3 space-y-1.5">
           {data.assets.map(asset => (
-            <li key={asset.id} className="flex items-center gap-2 rounded-xl border border-[#e8ece6] bg-[#fbfcf9] px-2.5 py-2">
-              <button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-[#d8e4dd] bg-white text-[#37746d]" onClick={() => toggle(asset.id, asset.url)} aria-label={playing === asset.id ? `Stop ${asset.title}` : `Play ${asset.title}`}>
+            <li key={asset.id} className="flex items-center gap-2 rounded-xl border border-stone-150 bg-paper-50 px-2.5 py-2">
+              <button type="button" className="grid h-7 w-7 shrink-0 place-items-center rounded-lg border border-stone-200 bg-white text-brand-700" onClick={() => toggle(asset.id, asset.url)} aria-label={playing === asset.id ? `Stop ${asset.title}` : `Play ${asset.title}`}>
                 {playing === asset.id ? <Pause aria-hidden="true" size={11} /> : <Play aria-hidden="true" size={11} />}
               </button>
-              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-[#34484b]">{asset.title}</span>
+              <span className="min-w-0 flex-1 truncate text-xs font-semibold text-ink-800">{asset.title}</span>
               <Badge tone={asset.kind === "music" ? "warn" : "info"}>{asset.kind === "music" ? "Music" : "Effect"}</Badge>
-              <span className={`text-[10px] ${ui.faint} ${ui.numbers}`}>{seconds(asset.durationMs)}</span>
+              <span className={`text-3xs ${ui.faint} ${ui.numbers}`}>{seconds(asset.durationMs)}</span>
             </li>
           ))}
         </ul>
       )}
 
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px]">
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-2xs">
         <select className={compactSelect} value={uploadKind} onChange={event => setUploadKind(event.target.value as "sfx" | "music")} aria-label="Kind of file to upload">
           <option value="music">Music track</option>
           <option value="sfx">Sound effect</option>
@@ -400,7 +407,7 @@ export function SoundLibraryPanel({ projectId, data }: { projectId: string; data
       </div>
 
       {generate && (
-        <form className="mt-3 grid grid-cols-1 gap-2 rounded-xl border border-[#d8e4dd] bg-white p-3 text-xs" onSubmit={event => { event.preventDefault(); setConfirming(true); }}>
+        <form className="mt-3 grid grid-cols-1 gap-2 rounded-xl border border-stone-200 bg-white p-3 text-xs" onSubmit={event => { event.preventDefault(); setConfirming(true); }}>
           <label className="block min-w-0">
             <span className={ui.label}>Kind</span>
             <select className="input select" value={generate.kind} onChange={event => setGenerate({ ...generate, kind: event.target.value as "sfx" | "music", loop: event.target.value === "music" })}>

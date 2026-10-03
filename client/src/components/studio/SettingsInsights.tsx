@@ -35,7 +35,7 @@ function ModelsInUse() {
   const inUse = trpc.providers.inUse.useQuery({});
   return (
     <div className={ui.card}>
-      <h3 className={ui.heading}>Models in use</h3>
+      <h3 className={ui.title}>Models in use</h3>
       <p className={`mt-1 text-xs ${ui.muted}`}>Account defaults. A project can choose its own narration and language models; the Generate tab shows the project's.</p>
       {!inUse.data ? <div className="skeleton mt-3 h-24 w-full" /> : (
         <dl className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -45,14 +45,14 @@ function ModelsInUse() {
             const label = row.key === "tts" && entry.provider && entry.model ? ttsTraits(entry.provider, entry.model).label : entry.model;
             return (
               <div key={row.key} className={ui.cardQuiet}>
-                <dt className="flex items-center gap-1.5 text-[11px] font-bold text-[#526267]"><Icon aria-hidden="true" size={13} /> {row.label}</dt>
-                <dd className="mt-1 text-sm font-bold text-[#304548]">{entry.provider ? `${entry.provider} · ${label}` : "Not set"}</dd>
+                <dt className="flex items-center gap-1.5 text-2xs font-semibold text-ink-600"><Icon aria-hidden="true" size={13} /> {row.label}</dt>
+                <dd className="mt-1 text-sm font-semibold text-ink-800">{entry.provider ? `${entry.provider} · ${label}` : "Not set"}</dd>
                 <dd className="mt-1 flex flex-wrap gap-1.5">
-                  {entry.model && entry.model !== label && <span className="mono text-[10px] text-[#7d8a8c]">{entry.model}</span>}
+                  {entry.model && entry.model !== label && <span className="mono text-3xs text-ink-500">{entry.model}</span>}
                   {entry.source === "fallback" && <Badge tone="warn">Fallback</Badge>}
                   {entry.provider && !entry.connected && <Badge tone="bad">Not connected</Badge>}
                 </dd>
-                {entry.note && <dd className={`mt-1 text-[11px] leading-4 ${ui.faint}`}>{entry.note}</dd>}
+                {entry.note && <dd className={`mt-1 text-2xs leading-4 ${ui.faint}`}>{entry.note}</dd>}
               </div>
             );
           })}
@@ -67,17 +67,17 @@ function BalanceRow({ balance }: { balance: AccountBalance }) {
   return (
     <li className={`py-3 ${ui.divider}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <strong className="text-sm text-[#34484b]">{balance.provider}</strong>
+        <strong className="text-sm text-ink-800">{balance.provider}</strong>
         {balance.status === "ok" ? (
-          <span className={`text-sm font-bold text-[#2d6f6a] ${ui.numbers}`}>{formatBalance(balance.remaining, balance.unit)} left</span>
+          <span className={`text-sm font-semibold text-brand-700 ${ui.numbers}`}>{formatBalance(balance.remaining, balance.unit)} left</span>
         ) : balance.status === "hidden" ? <Badge>Shared key</Badge> : balance.status === "unsupported" ? <Badge>No balance API</Badge> : <Badge tone="warn">Unavailable</Badge>}
       </div>
       {used !== null && (
-        <div className={`${ui.bar} mt-2 h-1.5`} role="progressbar" aria-valuenow={used} aria-valuemin={0} aria-valuemax={100} aria-label={`${balance.provider} quota used`}>
-          <div className={used > 90 ? "h-full rounded-full bg-[#b5654c]" : used > 70 ? "h-full rounded-full bg-[#c89a3a]" : ui.barFill} style={{ width: `${used}%` }} />
+        <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-stone-100" role="progressbar" aria-valuenow={used} aria-valuemin={0} aria-valuemax={100} aria-label={`${balance.provider} quota used`}>
+          <div className={used > 90 ? "h-full rounded-full bg-clay-500" : used > 70 ? "h-full rounded-full bg-gold-400" : ui.barFill} style={{ width: `${used}%` }} />
         </div>
       )}
-      <p className={`mt-1 text-[11px] leading-5 ${ui.muted} ${ui.numbers}`}>
+      <p className={`mt-1 text-2xs leading-5 ${ui.muted} ${ui.numbers}`}>
         {balance.status === "ok" && balance.used !== undefined && <>Used {formatBalance(balance.used, balance.unit)}{balance.limit !== undefined && <> of {formatBalance(balance.limit, balance.unit)}</>}. </>}
         {balance.resetsAt && <>Resets {new Date(balance.resetsAt).toLocaleDateString()}. </>}
         {balance.plan && <>{balance.plan}. </>}
@@ -128,7 +128,7 @@ function UsageAndBalance() {
     <div className={ui.card}>
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <h3 className={`flex items-center gap-2 ${ui.heading}`}><Wallet aria-hidden="true" size={15} className="text-[#5b8b86]" /> Usage and balance</h3>
+          <h3 className={`flex items-center gap-2 ${ui.title}`}><Wallet aria-hidden="true" size={15} className="text-brand-600" /> Usage and balance</h3>
           <p className={`mt-1 text-xs ${ui.muted}`}>What is left in each connected account, and what Prosecast has used. Checking a balance is free.</p>
         </div>
         <button type="button" className="btn-soft px-3 py-2" onClick={() => void refresh()} disabled={refreshing}>
@@ -138,16 +138,16 @@ function UsageAndBalance() {
 
       <div className="mt-3 grid grid-cols-1 gap-5 lg:grid-cols-2">
         <section aria-label="Account balances" className="min-w-0">
-          <span className={ui.eyebrow}>LEFT IN EACH ACCOUNT</span>
+          <span className={ui.eyebrow}>Left in each account</span>
           {!balances.data ? <div className="skeleton mt-2 h-20 w-full" /> : connected.length === 0 ? (
             <p className={`mt-2 text-xs ${ui.muted}`}>No provider is connected yet.</p>
           ) : <ul className="mt-1">{connected.map(balance => <BalanceRow key={balance.provider} balance={balance} />)}</ul>}
         </section>
 
         <section aria-label="Usage by Prosecast" className="min-w-0">
-          <div className="flex items-center justify-between gap-2 text-[11px]">
-            <span className={ui.eyebrow}>USED BY PROSECAST</span>
-            <select className="rounded-lg border border-[#dce4dd] bg-white px-2 py-1 text-[#4b5d60]" value={days} onChange={event => setDays(Number(event.target.value))} aria-label="Usage period">
+          <div className="flex items-center justify-between gap-2 text-2xs">
+            <span className={ui.eyebrow}>Used by Prosecast</span>
+            <select className="rounded-lg border border-stone-200 bg-white px-2 py-1 text-ink-600" value={days} onChange={event => setDays(Number(event.target.value))} aria-label="Usage period">
               <option value={1}>Today</option>
               <option value={7}>Last 7 days</option>
               <option value={30}>Last 30 days</option>
@@ -161,10 +161,10 @@ function UsageAndBalance() {
               {byProvider.map(([provider, totals]) => (
                 <li key={provider} className={`py-3 ${ui.divider}`}>
                   <div className="flex items-center justify-between gap-2">
-                    <strong className="text-sm text-[#34484b]">{provider}</strong>
-                    <span className={`text-[11px] ${ui.faint} ${ui.numbers}`}>{count(totals.calls)} calls</span>
+                    <strong className="text-sm text-ink-800">{provider}</strong>
+                    <span className={`text-2xs ${ui.faint} ${ui.numbers}`}>{count(totals.calls)} {totals.calls === 1 ? "call" : "calls"}</span>
                   </div>
-                  <p className={`mt-1 text-[11px] leading-5 ${ui.muted} ${ui.numbers}`}>
+                  <p className={`mt-1 text-2xs leading-5 ${ui.muted} ${ui.numbers}`}>
                     {[
                       totals.characters ? `${count(totals.characters)} characters` : null,
                       totals.inputTokens || totals.outputTokens ? `${count(totals.inputTokens)} in / ${count(totals.outputTokens)} out tokens` : null,
@@ -172,17 +172,17 @@ function UsageAndBalance() {
                       totals.cost !== null ? `${provider === "OpenRouter" ? `$${totals.cost.toFixed(2)}` : `${count(totals.cost)} credits`} reported` : null,
                     ].filter(Boolean).join(" · ")}
                   </p>
-                  <p className={`text-[10px] ${ui.faint}`}>{[...totals.capabilities].join(", ")}</p>
+                  <p className={`text-3xs ${ui.faint}`}>{[...totals.capabilities].join(", ")}</p>
                 </li>
               ))}
             </ul>
           )}
           {(usage.data?.projects.length ?? 0) > 1 && (
             <details className="mt-2">
-              <summary className="cursor-pointer text-[11px] font-bold text-[#34736d]">By book</summary>
+              <summary className="cursor-pointer text-2xs font-semibold text-brand-700">By book</summary>
               <ul className="mt-1 space-y-1">
                 {usage.data!.projects.map(project => (
-                  <li key={project.projectId ?? "none"} className={`flex justify-between gap-2 text-[11px] ${ui.muted} ${ui.numbers}`}>
+                  <li key={project.projectId ?? "none"} className={`flex justify-between gap-2 text-2xs ${ui.muted} ${ui.numbers}`}>
                     <span className="truncate">{project.title ?? (project.projectId ? "Deleted book" : "Not tied to a book")}</span>
                     <span>{count(project.characters)} chars · {count(project.inputTokens + project.outputTokens)} tokens</span>
                   </li>
@@ -237,7 +237,7 @@ function ModelBrowser() {
 
   return (
     <div className={ui.card}>
-      <h3 className={`flex items-center gap-2 ${ui.heading}`}><Gauge aria-hidden="true" size={15} className="text-[#5b8b86]" /> Available models</h3>
+      <h3 className={`flex items-center gap-2 ${ui.title}`}><Gauge aria-hidden="true" size={15} className="text-brand-600" /> Available models</h3>
       <p className={`mt-1 text-xs ${ui.muted}`}>Listed live by each connected provider (cached for half an hour), so new models such as Eleven v4 appear without an update.</p>
       <div className="mt-3 flex flex-wrap items-center gap-2">
         <div role="tablist" aria-label="Capability" className="flex flex-wrap gap-1.5">
@@ -248,7 +248,7 @@ function ModelBrowser() {
           ))}
         </div>
         <label className="relative ml-auto min-w-[180px] flex-1 text-sm sm:flex-none">
-          <Search aria-hidden="true" size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-[#8b9697]" />
+          <Search aria-hidden="true" size={13} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-500" />
           <input className="input" style={{ paddingLeft: "2rem" }} value={query} onChange={event => setQuery(event.target.value)} placeholder="Search models" aria-label="Search models" />
         </label>
       </div>
@@ -261,7 +261,7 @@ function ModelBrowser() {
             <section key={provider.id} className={ui.cardQuiet} aria-label={`${provider.label} models`}>
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  <strong className="text-sm text-[#34484b]">{provider.label}</strong>
+                  <strong className="text-sm text-ink-800">{provider.label}</strong>
                   {provider.configured ? <Badge tone="good">Connected</Badge> : <Badge>Not connected</Badge>}
                   {provider.modelsLive ? <Badge tone="info">Live list</Badge> : provider.liveCatalog && provider.configured ? <Badge tone="warn">Prosecast's list</Badge> : null}
                 </div>
@@ -271,14 +271,14 @@ function ModelBrowser() {
                   </button>
                 )}
               </div>
-              {provider.discoveryError && <p className="mt-1 text-[11px] text-[#8a5f1c] [overflow-wrap:anywhere]">Live list unavailable: {provider.discoveryError.slice(0, 160)}</p>}
-              <ul className="mt-2 divide-y divide-[#edf0eb]">
+              {provider.discoveryError && <p className="mt-1 text-2xs text-gold-700 [overflow-wrap:anywhere]">Live list unavailable: {provider.discoveryError.slice(0, 160)}</p>}
+              <ul className="mt-2 divide-y divide-stone-150">
                 {models.slice(0, limit).map(model => (
                   <li key={model.id} className="flex flex-wrap items-center gap-2 py-2">
                     <div className="min-w-0 flex-1">
-                      <span className="text-[13px] font-semibold text-[#34484b]">{model.label}</span>
-                      <span className="mono ml-2 text-[10px] text-[#8b9697]">{model.id}</span>
-                      <span className={`block truncate text-[11px] ${ui.muted}`}>{model.detail}</span>
+                      <span className="text-[13px] font-semibold text-ink-800">{model.label}</span>
+                      <span className="mono ml-2 text-3xs text-ink-500">{model.id}</span>
+                      <span className={`block truncate text-2xs ${ui.muted}`}>{model.detail}</span>
                     </div>
                     <div className="flex flex-wrap items-center gap-1">
                       {model.recommended && <Badge tone="good">Recommended</Badge>}
@@ -303,8 +303,8 @@ function ModelBrowser() {
                   </li>
                 ))}
               </ul>
-              {models.length > limit && <p className={`mt-1 text-[11px] ${ui.faint}`}>{models.length - limit} more; search to narrow the list.</p>}
-              {!models.length && <p className={`mt-1 text-[11px] ${ui.faint}`}>No {meta.label.toLowerCase()} models.</p>}
+              {models.length > limit && <p className={`mt-1 text-2xs ${ui.faint}`}>{models.length - limit} more; search to narrow the list.</p>}
+              {!models.length && <p className={`mt-1 text-2xs ${ui.faint}`}>No {meta.label.toLowerCase()} models.</p>}
             </section>
           );
         })}

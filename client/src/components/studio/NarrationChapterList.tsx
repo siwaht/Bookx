@@ -43,7 +43,7 @@ export function NarrationChapterList({
     <div className={ui.card}>
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className={ui.heading}>Chapters</h3>
+          <h3 className={ui.title}>Chapters</h3>
           <p className={`mt-1 text-sm ${ui.muted}`}>
             {selected.size ? `${selected.size} selected for the next run.` : "Select chapters to narrate only those; none selected renders the whole book."}
           </p>
@@ -61,18 +61,18 @@ export function NarrationChapterList({
             const listenable = chapter.renderedSegments > 0 || (chapter.durationMs ?? 0) > 0;
             const checkboxId = `chapter-select-${chapter.chapterId}`;
             return (
-              <li key={chapter.chapterId} className={`flex flex-wrap items-center gap-3 py-3.5 ${ui.divider} ${playingChapterId === chapter.chapterId ? "bg-[#f3f9f5]" : ""}`}>
+              <li key={chapter.chapterId} className={`flex flex-wrap items-center gap-3 py-3.5 ${ui.divider} ${playingChapterId === chapter.chapterId ? "bg-brand-50/60" : ""}`}>
                 <input
                   id={checkboxId}
                   type="checkbox"
-                  className="h-4 w-4 shrink-0 accent-[#3f827a]"
+                  className="h-4 w-4 shrink-0 accent-brand-600"
                   checked={selected.has(chapter.chapterId)}
                   onChange={() => onToggle(chapter.chapterId)}
                   disabled={locked}
                 />
                 <div className="min-w-0 flex-1">
-                  <label htmlFor={checkboxId} className="block cursor-pointer truncate text-sm font-bold text-[#34484b]">
-                    <span className={`mono mr-2 text-[10px] ${ui.faint}`}>{String(position + 1).padStart(2, "0")}</span>{chapter.title}
+                  <label htmlFor={checkboxId} className="block cursor-pointer truncate text-sm font-semibold text-ink-800">
+                    <span className={`mono mr-2 text-3xs ${ui.faint}`}>{String(position + 1).padStart(2, "0")}</span>{chapter.title}
                   </label>
                   <span className={`mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs ${ui.muted} ${ui.numbers}`}>
                     <Badge tone={state.tone}>{state.label}</Badge>
