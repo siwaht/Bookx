@@ -8,7 +8,7 @@ import { registerPasswordRoutes } from "./passwordAuth";
 import { registerStorageProxy } from "./storageProxy";
 import { appRouter } from "../routers";
 import { createContext } from "./context";
-import { recoverInterruptedRuns } from "../narrationWorker";
+import { releaseNarrationLeases, startNarrationRecovery } from "../narrationWorker";
 import { recoverInterruptedAnalyses } from "../analysisJobs";
 import { recoverInterruptedExports } from "../audioExport";
 import { registerExportDownloads } from "./exportDownloads";
@@ -60,7 +60,12 @@ function drainOnSigterm() {
     const check = () => {
       if (!workInProgress().busy || Date.now() > deadline) {
         console.log("[Container] Stopped");
-        process.exit(0);
+        // A book still narrating is handed on, so the next container resumes
+        // it as it starts rather than once this one's lease runs out.
+        const exit = () => process.exit(0);
+        setTimeout(exit, 5_000).unref();
+        void releaseNarrationLeases().catch(() => undefined).finally(exit);
+        return;
       }
       setTimeout(check, 2_000);
     };
@@ -136,12 +141,10 @@ async function startServer() {
   });
   if (containerMode) drainOnSigterm();
 
-  // A narration run that was interrupted by a restart is left `running` with an
-  // expired lease. Mark those resumable so the Generate screen offers to pick them
-  // up, rather than leaving a half-rendered book looking active forever.
-  void recoverInterruptedRuns().catch(error => {
-    console.error("[Narration] Recovery scan failed:", error);
-  });
+  // A narration run interrupted by a restart, a crash or a deploy is left
+  // `running` under a lease nobody renews. The sweep resumes it once that lease
+  // lapses, now and every few seconds after, so a book never just stops.
+  startNarrationRecovery();
   // Analysis runs (casting, scene cues, sounds) are idempotent, so an
   // interrupted one is marked failed and simply run again by the creator.
   void recoverInterruptedAnalyses().catch(error => {

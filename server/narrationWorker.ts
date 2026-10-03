@@ -59,6 +59,14 @@ const LEASE_MS = 90_000;
 const SEGMENT_GAP_MS = 120;
 /** Cap on stored failure/event entries so a long book cannot bloat the row. */
 const MAX_DETAIL_ENTRIES = 50;
+/** How often this process looks for runs whose worker went away. */
+const RECOVERY_SWEEP_MS = 15_000;
+/** A queued run nobody claimed within this long is treated as abandoned. */
+const UNCLAIMED_GRACE_MS = 20_000;
+/** Automatic resumes allowed without the run getting any further. */
+const MAX_RECOVERIES_WITHOUT_PROGRESS = 3;
+/** Runs interrupted longer ago than this are paused for the creator, not resumed unasked. */
+const AUTO_RESUME_WITHIN_MS = 24 * 60 * 60_000;
 
 type Db = NonNullable<Awaited<ReturnType<typeof getDb>>>;
 
@@ -69,6 +77,9 @@ export const isRunLocal = (jobId: string): boolean => activeRuns.has(jobId);
 
 /** Narration runs executing in this process, so the host is not stopped mid-way. */
 export const narrationRunsInProgress = (): number => activeRuns.size;
+
+/** Set as the process exits, so nothing new is claimed on its way out. */
+let shuttingDown = false;
 
 async function requireDb(): Promise<Db> {
   const db = await getDb();
@@ -81,6 +92,23 @@ const nowPlus = (ms: number) => new Date(Date.now() + ms);
 function appendCapped<T>(existing: T[] | undefined, entry: T): T[] {
   const next = [...(existing ?? []), entry];
   return next.length > MAX_DETAIL_ENTRIES ? next.slice(next.length - MAX_DETAIL_ENTRIES) : next;
+}
+
+/** Adds an entry to a job's event log, keeping the log bounded. */
+async function appendEvent(db: Db, jobId: string, kind: string, message: string): Promise<void> {
+  const [row] = await db
+    .select({ detail: bookxGenerationJobs.detail })
+    .from(bookxGenerationJobs)
+    .where(eq(bookxGenerationJobs.id, jobId))
+    .limit(1);
+  const detail = (row?.detail ?? {}) as GenerationJobDetail;
+  await db
+    .update(bookxGenerationJobs)
+    .set({
+      detail: { ...detail, events: appendCapped(detail.events, { at: new Date().toISOString(), kind, message }) },
+      updatedAt: new Date(),
+    })
+    .where(eq(bookxGenerationJobs.id, jobId));
 }
 
 // ---------------------------------------------------------------------------
@@ -518,8 +546,10 @@ export async function requestPause(jobId: string, projectId: string): Promise<bo
     .where(and(eq(bookxGenerationJobs.id, jobId), eq(bookxGenerationJobs.projectId, projectId)))
     .returning({ id: bookxGenerationJobs.id });
   if (!updated.length) return false;
+  const local = activeRuns.get(jobId);
   // Abort the in-flight request too, so a pause during a slow call is immediate.
-  activeRuns.get(jobId)?.abort();
+  if (local) local.abort();
+  else await settleUnattendedStop(db, jobId, "paused");
   return true;
 }
 
@@ -531,8 +561,46 @@ export async function requestCancel(jobId: string, projectId: string): Promise<b
     .where(and(eq(bookxGenerationJobs.id, jobId), eq(bookxGenerationJobs.projectId, projectId)))
     .returning({ id: bookxGenerationJobs.id });
   if (!updated.length) return false;
-  activeRuns.get(jobId)?.abort();
+  const local = activeRuns.get(jobId);
+  if (local) local.abort();
+  else await settleUnattendedStop(db, jobId, "cancelled");
   return true;
+}
+
+/**
+ * Applies a pause or cancel to a run that no worker is attending.
+ *
+ * A run whose process went away (a restart, a crash, a deploy mid-book) has
+ * nobody left to read its stop flags, so the request used to sit there and the
+ * Generate screen said "Stopping…" for good. When no live lease is held the
+ * stop takes effect here. A run another process is still working on keeps the
+ * flag, and that process acts on it at its next segment.
+ */
+async function settleUnattendedStop(db: Db, jobId: string, stop: "paused" | "cancelled"): Promise<void> {
+  const settled = await db
+    .update(bookxGenerationJobs)
+    .set({
+      status: stop,
+      pauseRequested: 0,
+      cancelRequested: 0,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      finishedAt: stop === "cancelled" ? new Date() : null,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(bookxGenerationJobs.id, jobId),
+        inArray(bookxGenerationJobs.status, stop === "cancelled" ? ["queued", "running", "paused"] : ["queued", "running"]),
+        or(isNull(bookxGenerationJobs.leaseExpiresAt), lt(bookxGenerationJobs.leaseExpiresAt, new Date())),
+      ),
+    )
+    .returning({ completedSegments: bookxGenerationJobs.completedSegments, totalSegments: bookxGenerationJobs.totalSegments });
+  const [row] = settled;
+  if (!row) return;
+  await appendEvent(db, jobId, stop, stop === "paused"
+    ? `Paused after ${row.completedSegments} of ${row.totalSegments} segments. Everything rendered so far is kept.`
+    : `Cancelled after ${row.completedSegments} of ${row.totalSegments} segments.`).catch(() => {});
 }
 
 /**
@@ -556,7 +624,9 @@ async function claimJob(db: Db, jobId: string): Promise<boolean> {
     .where(
       and(
         eq(bookxGenerationJobs.id, jobId),
-        inArray(bookxGenerationJobs.status, ["queued", "running", "paused"]),
+        // Resume and Start re-queue a paused run before driving it, so a paused
+        // (or settled) run is never claimed out from under the creator's pause.
+        inArray(bookxGenerationJobs.status, ["queued", "running"]),
         or(
           isNull(bookxGenerationJobs.leaseOwner),
           eq(bookxGenerationJobs.leaseOwner, WORKER_ID),
@@ -776,18 +846,31 @@ async function renewLease(db: Db, jobId: string): Promise<void> {
  *
  * Exits cleanly on pause, cancel, a fatal configuration error, or completion. Any
  * other exit (a crash, a killed process) leaves the lease to expire, at which point
- * the job is resumable with everything rendered so far intact.
+ * the recovery sweep resumes the job with everything rendered so far intact.
  */
 async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
-  const db = await requireDb();
-
-  if (activeRuns.has(jobId)) return; // Already running in this process.
-  if (!(await claimJob(db, jobId))) return; // Another worker owns it.
-
+  // Checked and reserved before the first await. Two calls in the same moment
+  // (a double Resume, or the recovery sweep racing a Start) both used to pass
+  // the check, and both won the claim because this process may re-claim its
+  // own lease: the book was then rendered, and paid for, twice.
+  if (activeRuns.has(jobId) || shuttingDown) return; // Already running in this process.
   // Replaced when a pause or cancel is withdrawn before the loop sees it: an
   // aborted controller would otherwise make every later segment "stop" at once.
   let controller = new AbortController();
   activeRuns.set(jobId, controller);
+
+  let db: Db;
+  try {
+    db = await requireDb();
+    if (!(await claimJob(db, jobId))) {
+      activeRuns.delete(jobId); // Another worker owns it.
+      return;
+    }
+  } catch (error) {
+    activeRuns.delete(jobId);
+    throw error;
+  }
+
   // A request can take longer than the lease (120 s against 90 s), so the lease
   // is renewed on a timer rather than only between segments.
   const leaseTimer = setInterval(() => void renewLease(db, jobId).catch(() => undefined), Math.floor(LEASE_MS / 3));
@@ -798,21 +881,7 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
   const requestTimeoutMs = options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const stallTimeoutMs = options.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS;
 
-  const recordEvent = async (kind: string, message: string) => {
-    const [row] = await db
-      .select({ detail: bookxGenerationJobs.detail })
-      .from(bookxGenerationJobs)
-      .where(eq(bookxGenerationJobs.id, jobId))
-      .limit(1);
-    const detail = (row?.detail ?? {}) as GenerationJobDetail;
-    await db
-      .update(bookxGenerationJobs)
-      .set({
-        detail: { ...detail, events: appendCapped(detail.events, { at: new Date().toISOString(), kind, message }) },
-        updatedAt: new Date(),
-      })
-      .where(eq(bookxGenerationJobs.id, jobId));
-  };
+  const recordEvent = (kind: string, message: string) => appendEvent(db, jobId, kind, message);
 
   try {
     const [job] = await db.select().from(bookxGenerationJobs).where(eq(bookxGenerationJobs.id, jobId)).limit(1);
@@ -1070,7 +1139,32 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
     }
     activeRuns.delete(jobId);
     await releaseLease(db, jobId).catch(() => {});
+    await pickUpRequeued(db, jobId, options).catch(() => {});
   }
+}
+
+/**
+ * Drives a run again if it was re-queued while this loop was winding down.
+ *
+ * A Resume (or Start) that lands just after the loop decided to stop finds the
+ * run still active here and leaves it alone, expecting this loop to carry on;
+ * the loop then exits, and the run used to sit "Queued" with nobody to render it.
+ */
+async function pickUpRequeued(db: Db, jobId: string, options: StartRunInput): Promise<void> {
+  if (shuttingDown) return;
+  const [row] = await db
+    .select({
+      status: bookxGenerationJobs.status,
+      pauseRequested: bookxGenerationJobs.pauseRequested,
+      cancelRequested: bookxGenerationJobs.cancelRequested,
+    })
+    .from(bookxGenerationJobs)
+    .where(eq(bookxGenerationJobs.id, jobId))
+    .limit(1);
+  if (row?.status !== "queued" || row.pauseRequested || row.cancelRequested) return;
+  void driveJob(jobId, options).catch(error => {
+    console.error("[Narration] Run failed to restart:", error);
+  });
 }
 
 /**
@@ -1125,38 +1219,162 @@ export async function renderSegmentNow(input: {
   return { storageKey: result.storageKey, audioUrl: result.audioUrl, durationMs: result.inspection.durationMs ?? null };
 }
 
+const lapsed = () => or(isNull(bookxGenerationJobs.leaseExpiresAt), lt(bookxGenerationJobs.leaseExpiresAt, new Date()));
+
+/** " after 12 of 40 segments", or nothing for a run that never got as far as planning. */
+const progressSoFar = (job: { completedSegments: number; totalSegments: number }) =>
+  job.totalSegments > 0 ? ` after ${job.completedSegments} of ${job.totalSegments} segments` : "";
+
+let sweeping = false;
+let recoveryTimer: NodeJS.Timeout | undefined;
+
 /**
- * Re-queues jobs whose worker vanished.
+ * Picks up runs whose worker went away mid-book: a restart, a crash, or a
+ * deploy replacing the container.
  *
- * Called on boot. A job left `running` with an expired lease is exactly the
- * "the process died halfway through my book" case: it is put back to `queued` so it
- * can be resumed, and the rewind on resume covers the segment that was in flight.
+ * This used to run once, at boot, and only re-labelled such a run "queued".
+ * Nothing ever drove it again, and the lease the dying process held was usually
+ * still valid at boot anyway, so the run was skipped: the Generate screen kept
+ * showing it as rendering, and the book simply stopped until the creator found a
+ * way to start it again. It now runs at boot and every few seconds after, and:
+ *
+ * - applies a pause or cancel that was asked for while nobody was attending it;
+ * - resumes anything else where it stopped, exactly as Resume would, so the
+ *   segment in flight is redone and everything already rendered is kept;
+ * - pauses, rather than resumes, a run that keeps going down without getting any
+ *   further, or one interrupted long ago, so the creator decides what to spend.
  */
 export async function recoverInterruptedRuns(): Promise<number> {
+  if (shuttingDown || sweeping) return 0;
+  sweeping = true;
+  try {
+    const db = await getDb();
+    if (!db) return 0;
+    const now = Date.now();
+
+    const candidates = await db
+      .select()
+      .from(bookxGenerationJobs)
+      .where(and(inArray(bookxGenerationJobs.status, ["queued", "running"]), lapsed()));
+
+    let resumed = 0;
+    for (const job of candidates) {
+      if (activeRuns.has(job.id)) continue; // This process is driving it.
+      // Queued a moment ago: whoever queued it is about to claim it.
+      if (job.status === "queued" && !job.leaseOwner && now - new Date(job.updatedAt).getTime() < UNCLAIMED_GRACE_MS) continue;
+
+      if (job.cancelRequested || job.pauseRequested) {
+        await settleUnattendedStop(db, job.id, job.cancelRequested ? "cancelled" : "paused");
+        continue;
+      }
+
+      const [project] = await db
+        .select({ ownerId: bookxProjects.ownerId })
+        .from(bookxProjects)
+        .where(eq(bookxProjects.id, job.projectId))
+        .limit(1);
+      if (!project) {
+        // The book was deleted while its run had no worker.
+        await db
+          .update(bookxGenerationJobs)
+          .set({ status: "cancelled", leaseOwner: null, leaseExpiresAt: null, finishedAt: new Date(), updatedAt: new Date() })
+          .where(and(eq(bookxGenerationJobs.id, job.id), lapsed()));
+        continue;
+      }
+
+      const detail = (job.detail ?? {}) as GenerationJobDetail;
+      const progressed = !detail.recovery || job.completedSegments > detail.recovery.completedSegments;
+      const attempt = progressed ? 1 : detail.recovery!.count + 1;
+      const lastSeen = Math.max(
+        ...[job.leaseExpiresAt, job.heartbeatAt, job.updatedAt].map(value => (value ? new Date(value).getTime() : 0)),
+      );
+      const longAgo = now - lastSeen > AUTO_RESUME_WITHIN_MS;
+
+      if (attempt > MAX_RECOVERIES_WITHOUT_PROGRESS || longAgo) {
+        const paused = await db
+          .update(bookxGenerationJobs)
+          .set({ status: "paused", leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
+          .where(and(eq(bookxGenerationJobs.id, job.id), inArray(bookxGenerationJobs.status, ["queued", "running"]), lapsed()))
+          .returning({ id: bookxGenerationJobs.id });
+        if (paused.length) {
+          await appendEvent(db, job.id, "paused", longAgo
+            ? `Paused: this run was interrupted a while ago${progressSoFar(job)}. Resume it when you are ready; everything rendered is kept.`
+            : `Paused: the run stopped unexpectedly ${attempt - 1} times in a row without getting further. Resume it when you are ready; everything rendered is kept.`).catch(() => {});
+        }
+        continue;
+      }
+
+      // Take it over the way Resume does. Conditional, so if another process got
+      // there first (or the creator acted meanwhile) this one leaves it alone.
+      const taken = await db
+        .update(bookxGenerationJobs)
+        .set({
+          status: "queued",
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          detail: {
+            ...detail,
+            recovery: { count: attempt, completedSegments: job.completedSegments },
+            events: appendCapped(detail.events, {
+              at: new Date().toISOString(),
+              kind: "recovered",
+              message: `The server restarted mid-run, so narration picked up again${progressSoFar(job)}.`,
+            }),
+          },
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(bookxGenerationJobs.id, job.id),
+            inArray(bookxGenerationJobs.status, ["queued", "running"]),
+            eq(bookxGenerationJobs.pauseRequested, 0),
+            eq(bookxGenerationJobs.cancelRequested, 0),
+            lapsed(),
+          ),
+        )
+        .returning({ id: bookxGenerationJobs.id });
+      if (!taken.length) continue;
+
+      resumed++;
+      void driveJob(job.id, { projectId: job.projectId, ownerId: project.ownerId }).catch(error => {
+        console.error("[Narration] Interrupted run failed to resume:", error);
+      });
+    }
+
+    if (resumed) console.log(`[Narration] Resumed ${resumed} interrupted run(s)`);
+    return resumed;
+  } finally {
+    sweeping = false;
+  }
+}
+
+/** Starts the recovery sweep: once now, then every few seconds for the life of the process. */
+export function startNarrationRecovery(): void {
+  if (recoveryTimer) return;
+  const sweep = () => {
+    void recoverInterruptedRuns().catch(error => {
+      console.error("[Narration] Recovery scan failed:", error);
+    });
+  };
+  sweep();
+  recoveryTimer = setInterval(sweep, RECOVERY_SWEEP_MS);
+  recoveryTimer.unref();
+}
+
+/**
+ * Lets go of this process's runs as it exits mid-book (a deploy's drain ran
+ * out), so the next process resumes them as soon as it starts instead of
+ * waiting out the lease. Nothing new is claimed after this.
+ */
+export async function releaseNarrationLeases(): Promise<void> {
+  shuttingDown = true;
+  if (recoveryTimer) clearInterval(recoveryTimer);
   const db = await getDb();
-  if (!db) return 0;
-
-  const stale = await db
-    .select({ id: bookxGenerationJobs.id, projectId: bookxGenerationJobs.projectId })
-    .from(bookxGenerationJobs)
-    .where(
-      and(
-        eq(bookxGenerationJobs.status, "running"),
-        or(isNull(bookxGenerationJobs.leaseExpiresAt), lt(bookxGenerationJobs.leaseExpiresAt, new Date())),
-      ),
-    );
-
-  for (const job of stale) {
-    await db
-      .update(bookxGenerationJobs)
-      .set({ status: "queued", leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
-      .where(eq(bookxGenerationJobs.id, job.id));
-  }
-
-  if (stale.length) {
-    console.log(`[Narration] ${stale.length} interrupted run(s) marked resumable`);
-  }
-  return stale.length;
+  if (!db) return;
+  await db
+    .update(bookxGenerationJobs)
+    .set({ leaseOwner: null, leaseExpiresAt: null, updatedAt: new Date() })
+    .where(eq(bookxGenerationJobs.leaseOwner, WORKER_ID));
 }
 
 /** Resumes a paused or interrupted job. */

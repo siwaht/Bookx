@@ -191,6 +191,11 @@ export type GenerationJobDetail = {
   events?: Array<{ at: string; kind: string; message: string }>;
   /** Voice the run is pinned to, recorded so a resume cannot drift. */
   pinnedVoice?: { provider: string; model: string; voiceId?: string };
+  /**
+   * Automatic resumes since the run last got further, so a run that keeps
+   * taking its process down with it is not restarted (and paid for) forever.
+   */
+  recovery?: { count: number; completedSegments: number };
 };
 
 export const bookxGenerationJobs = sqliteTable("bookxGenerationJobs", {
