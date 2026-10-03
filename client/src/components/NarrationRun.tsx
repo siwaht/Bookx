@@ -291,8 +291,8 @@ export function NarrationRun({
 
           <NarrationProgressPanel data={data} />
           {data?.pinnedVoice && (
-            <p className="-mt-2 px-1 text-xs text-[#7b888a]">
-              This run is pinned to <strong className="text-[#4a6360]">{data.pinnedVoice.provider}</strong> · {data.pinnedVoice.model}, so the narrator stays the same voice from start to finish.
+            <p className="-mt-2 px-1 text-xs text-ink-500">
+              This run is pinned to <strong className="font-semibold text-ink-800">{data.pinnedVoice.provider}</strong> · {data.pinnedVoice.model}, so the narrator stays the same voice from start to finish.
               {data.skippedSegments > 0 && ` ${data.skippedSegments} line${data.skippedSegments === 1 ? " was" : "s were"} reused from earlier runs.`}
             </p>
           )}
