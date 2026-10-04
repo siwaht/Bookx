@@ -10,6 +10,7 @@ import { customProviderCapabilities, customProviderHeaders, deleteCustomProvider
 import { extractJson, languageModelText } from "../languageModel";
 import { rankCatalogVoices, voiceCatalogFor } from "../voiceCatalog";
 import { CUSTOM_PROVIDER_LIMITS, builtInProviderSchema, customProviderIdSchema, isCustomProviderId, providerIdSchema, type BuiltInProviderId } from "../../shared/providers";
+import { sanitizeCredential } from "../../shared/credentials";
 import { forgetModelCatalog, hasLiveCatalog, providerModels, type CatalogModel } from "../modelCatalog";
 import { accountBalances, usageSummary } from "../usage";
 import { modelsInUse } from "../modelsInUse";
@@ -316,6 +317,11 @@ export const providersRouter = router({
   savePreference: protectedProcedure.input(z.object({ provider: builtInProviderSchema, defaultTtsModel: z.string().max(160).optional(), defaultSttModel: z.string().max(160).optional(), defaultLlmModel: z.string().max(160).optional(), fallbackProvider: builtInProviderSchema.optional(), fallbackEnabled: z.boolean().optional(), apiBaseUrl: z.union([z.string().url().max(255), z.literal("")]).optional(), apiKey: z.string().max(512).optional() })).mutation(async ({ ctx, input }) => {
     const db = await getDb();
     if (!db) throw new Error("Database unavailable");
+    // A key pasted out of a page or a chat pane arrives with invisible formatting
+    // characters that make every later request to that provider fail before it is
+    // sent, so it is stored clean. An input holding nothing but those characters
+    // counts as clearing the saved key, which is how an empty field reads.
+    const apiKey = input.apiKey === undefined ? undefined : sanitizeCredential(input.apiKey) ?? "";
     // The server calls this address itself, so it gets the same checks as a custom provider's.
     if (input.apiBaseUrl) {
       const problem = providerUrlProblem(input.apiBaseUrl);
@@ -332,13 +338,13 @@ export const providersRouter = router({
     patch("defaultLlmModel", input.defaultLlmModel);
     patch("fallbackProvider", input.fallbackProvider);
     patch("apiBaseUrl", input.apiBaseUrl);
-    patch("apiKey", input.apiKey);
+    patch("apiKey", apiKey);
     if (input.fallbackEnabled !== undefined) values.fallbackEnabled = input.fallbackEnabled ? 1 : 0;
 
     // A provider counts as configured when its key is in the environment, the
     // caller just supplied one, or one is already stored. Deriving this from the
     // request alone marked an existing saved connection unconfigured.
-    const effectiveKey = input.apiKey !== undefined ? input.apiKey : existing?.apiKey;
+    const effectiveKey = apiKey !== undefined ? apiKey : sanitizeCredential(existing?.apiKey) ?? "";
     const envKey = process.env[PROVIDER_ENV_KEYS[input.provider]]?.trim();
     values.secretConfigured = Boolean(effectiveKey) || Boolean(envKey) ? 1 : 0;
 

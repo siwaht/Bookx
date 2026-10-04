@@ -23,3 +23,24 @@ export function isSafeStorageKey(key: string): boolean {
   const parts = key.split("/");
   return parts.every(part => part.length > 0 && part !== "." && part !== ".." && !/[:*?"<>|\\]/.test(part));
 }
+
+/** The path prefix the app serves stored objects from. */
+export const STORAGE_URL_PREFIX = "/api/storage";
+
+/**
+ * The path a browser fetches an object from.
+ *
+ * The app serves this itself, under its own `/api/` prefix, rather than reusing
+ * `/manus-storage/`. On Manus that path belongs to the platform: it answers a
+ * request that carries no credentials straight from the bucket, but hands a
+ * request that carries a session to the container under a path the app never
+ * sees, so the same URL played in a private window and returned 404 for a
+ * signed-in page. `/manus-storage/` is still served for objects the platform or
+ * the Cloudflare Worker publishes there.
+ */
+export function storageUrl(key: string, options: { download?: boolean; name?: string } = {}): string {
+  const path = `${STORAGE_URL_PREFIX}/${key}`;
+  if (!options.download) return path;
+  const name = options.name ? `&name=${encodeURIComponent(options.name)}` : "";
+  return `${path}?download=1${name}`;
+}

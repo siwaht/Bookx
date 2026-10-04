@@ -65,7 +65,7 @@ describe(`Prosecast character preview`, () => {
         expect.objectContaining({
           id: character.id,
           previewStorageKey: "bookx/qa/narration/narrator-preview.mp3",
-          previewUrl: "/manus-storage/bookx/qa/narration/narrator-preview.mp3",
+          previewUrl: "/api/storage/bookx/qa/narration/narrator-preview.mp3",
         }),
       ]));
     } finally {

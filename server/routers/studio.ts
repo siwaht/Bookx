@@ -13,6 +13,7 @@ import { checkReusable } from "../narrationPlan";
 import { estimateNarration, includedChapters, loadPlannableSegments, regenerateChapters, retakeSegment } from "../narrationWorker";
 import { pronunciationHash } from "../pronunciation";
 import { storageGetBuffer, storageGetSignedUrl, storagePut } from "../storage";
+import { storageUrl } from "../../shared/storageKeys";
 import { PAUSE_PARAGRAPH_MS } from "../textSegmentation";
 import { soundTag } from "../soundLibrary";
 import { createSoundCue, deleteSoundCue, editSoundCue, generateCustomSound, soundAssets, uploadCustomSound } from "../soundDesign";
@@ -111,7 +112,7 @@ export const studioRouter = router({
         text: segment.text,
         speaker: segment.delivery?.kind === "dialogue" && segment.characterId ? names.get(segment.characterId) ?? null : narrator,
         kind: segment.delivery?.kind ?? "narration",
-        audioUrl: segment.audioStorageKey ? `/manus-storage/${segment.audioStorageKey}` : null,
+        audioUrl: segment.audioStorageKey ? storageUrl(segment.audioStorageKey) : null,
         durationMs: segment.audioDurationMs,
         gapAfterMs: Math.max(0, segment.delivery?.pauseMs ?? PAUSE_PARAGRAPH_MS),
         status,
@@ -197,7 +198,7 @@ export const studioRouter = router({
   retakeLine: protectedProcedure.input(z.object({ projectId: ids, segmentId: ids })).mutation(async ({ ctx, input }) => {
     await requireProject(ctx.user.id, input.projectId);
     const result = await retakeSegment({ projectId: input.projectId, ownerId: ctx.user.id, segmentId: input.segmentId });
-    return { durationMs: result.durationMs, audioUrl: `/manus-storage/${result.storageKey}` };
+    return { durationMs: result.durationMs, audioUrl: storageUrl(result.storageKey) };
   }),
 
   // ---- Model and voice settings ---------------------------------------------

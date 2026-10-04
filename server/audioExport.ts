@@ -29,7 +29,7 @@ import {
 import { getDb } from "./db";
 import { assembleAudio, buildSilentMp3, scanMp3, scanWav, wavHeader } from "./audioAssembly";
 import { bookMetadata, buildId3Tag, encodeChapter, joinBookFiles, measureBuffer, writeSilence } from "./exportEncoder";
-import { measureNoiseFloor, resolveFfmpeg, withTempDir } from "./ffmpeg";
+import { QUICK_LIMITS, measureNoiseFloor, resolveFfmpeg, withTempDir } from "./ffmpeg";
 import { pronunciationHash } from "./pronunciation";
 import {
   CLOSING_CREDITS_FILE_NAME,
@@ -420,7 +420,7 @@ async function runFfmpegCut(source: string, target: string, output: ExportOutput
     : output.container === "wav"
       ? ["-c:a", output.bitDepth === 24 ? "pcm_s24le" : "pcm_s16le"]
       : ["-c:a", "flac"];
-  await runFfmpeg(["-i", source, "-t", seconds, "-map", "0:a", "-map_metadata", "-1", ...codec, "-ar", String(output.sampleRate), "-ac", output.channels === "stereo" ? "2" : "1", "-f", output.container, target]);
+  await runFfmpeg(["-i", source, "-t", seconds, "-map", "0:a", "-map_metadata", "-1", ...codec, "-ar", String(output.sampleRate), "-ac", output.channels === "stereo" ? "2" : "1", "-f", output.container, target], QUICK_LIMITS);
 }
 
 async function updateProgress(db: Db, exportId: string, detail: ExportDetail) {

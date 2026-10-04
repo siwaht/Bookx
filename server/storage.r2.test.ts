@@ -144,7 +144,7 @@ describe("R2 storage through the Worker", { timeout: 60_000 }, () => {
     const data = Buffer.from("not really audio");
     const stored = await storagePut("bookx/p1/narration/seg-1.mp3", data, "audio/mpeg");
     expect(stored.key).toMatch(/^bookx\/p1\/narration\/seg-1_[0-9a-f]{8}\.mp3$/);
-    expect(stored.url).toBe(`/manus-storage/${stored.key}`);
+    expect(stored.url).toBe(`/api/storage/${stored.key}`);
     expect(log).toEqual(["PUT /object"]);
     expect(objects.get(stored.key)?.contentType).toBe("audio/mpeg");
     expect((await storageGetBuffer(stored.key)).equals(data)).toBe(true);
@@ -152,8 +152,8 @@ describe("R2 storage through the Worker", { timeout: 60_000 }, () => {
   });
 
   it("gives browsers the app's own URLs, which check ownership", async () => {
-    expect(await storageGetSignedUrl("bookx/p1/a.mp3")).toBe("/manus-storage/bookx/p1/a.mp3");
-    expect(await storageDownloadUrl("bookx/p1/a.mp3", "01 - Chapter One.mp3")).toBe("/manus-storage/bookx/p1/a.mp3?download=1&name=01%20-%20Chapter%20One.mp3");
+    expect(await storageGetSignedUrl("bookx/p1/a.mp3")).toBe("/api/storage/bookx/p1/a.mp3");
+    expect(await storageDownloadUrl("bookx/p1/a.mp3", "01 - Chapter One.mp3")).toBe("/api/storage/bookx/p1/a.mp3?download=1&name=01%20-%20Chapter%20One.mp3");
   });
 
   it("uploads anything over 50 MiB in equal parts, from a buffer or a file", async () => {

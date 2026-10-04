@@ -329,7 +329,7 @@ try {
       const anonymous = await download(`/api/exports/${spotify.row.id}/zip?projectId=${projectId}`, false);
       check(anonymous.status === 401, "the ZIP is refused without a session", `HTTP ${anonymous.status}`);
     }
-    const ranged = await fetch(new URL(`/manus-storage/${spotify.row.detail!.chapters![0]!.storageKey}`, BASE), { headers: { ...session(), range: "bytes=100-199" } });
+    const ranged = await fetch(new URL(`/api/storage/${spotify.row.detail!.chapters![0]!.storageKey}`, BASE), { headers: { ...session(), range: "bytes=100-199" } });
     const slice = Buffer.from(await ranged.arrayBuffer());
     check(ranged.status === 206 && slice.equals((await readFile(spotify.chapterFiles[0]!)).subarray(100, 200)), "audio serves byte ranges, so players can seek", `${ranged.status} ${ranged.headers.get("content-range")}`);
     storedKeys.push(spotify.row.detail!.chapters![0]!.storageKey);
@@ -339,7 +339,7 @@ try {
     const result = await exportBook("original", "original");
     const file = await probe(result.chapterFiles[0]!);
     const segment = (await api.bookx.getWorkspace.query({ projectId })).segments.find(entry => entry.chapterId === storm!.id && entry.audioStorageKey);
-    const source = await download(`/manus-storage/${segment!.audioStorageKey}`);
+    const source = await download(`/api/storage/${segment!.audioStorageKey}`);
     storedKeys.push(segment!.audioStorageKey!);
     const sourceFile = path.join(work, "segment.mp3");
     await writeFile(sourceFile, source.buffer);
@@ -422,7 +422,7 @@ try {
     await api.bookx.deleteExport.mutate({ projectId, exportId: plain.row.id });
     const rows = await api.bookx.listExports.query({ projectId });
     check(!rows.some(row => row.id === plain.row.id), "the package is gone from the list");
-    const gone = await download(`/manus-storage/${key}`);
+    const gone = await download(`/api/storage/${key}`);
     check(gone.status === 404, "and its files are deleted", `HTTP ${gone.status}`);
   });
 
@@ -443,7 +443,7 @@ try {
         check(!left.length, `deleting the project removes its files from R2 (${storedKeys.length} checked)`, left);
       }
       // 404 while the Worker still remembers the owner (a minute), 403 after.
-      const after = await download(`/manus-storage/${storedKeys[0] ?? `bookx/${projectId}/x`}`);
+      const after = await download(`/api/storage/${storedKeys[0] ?? `bookx/${projectId}/x`}`);
       check(after.status === 403 || after.status === 404, "and its file URLs stop working", `HTTP ${after.status}`);
     } else {
       const folder = path.resolve(process.env.BOOKX_LOCAL_STORAGE_DIR || path.join("data", "storage"), "bookx", projectId);

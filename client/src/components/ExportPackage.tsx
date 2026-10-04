@@ -42,8 +42,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
 }
 
-const fileHref = (storageKey: string, fileName: string) =>
-  `/manus-storage/${storageKey.split("/").map(encodeURIComponent).join("/")}?download=1&name=${encodeURIComponent(fileName)}`;
+const fileHref = (storageKey: string, fileName: string) => storageUrl(storageKey, { download: true, name: fileName });
 
 const STATE_BADGE: Record<string, { label: string; className: string }> = {
   ready: { label: "Ready", className: "bg-brand-50 text-brand-600" },
@@ -474,3 +473,4 @@ function Toggle({ checked, disabled, onChange, label, detail }: { checked: boole
     </label>
   );
 }
+import { storageUrl } from "@shared/storageKeys";

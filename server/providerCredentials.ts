@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { bookxProviderSettings } from "../drizzle/schema";
 import { BUILT_IN_PROVIDERS, type BuiltInProviderId, type ProviderId } from "../shared/providers";
 import { customProviderCapabilities, listCustomProviders, providerUrlProblem } from "./customProviders";
+import { sanitizeCredential } from "../shared/credentials";
 import { getDb } from "./db";
 import { ProviderConfigurationError } from "./narrationRetry";
 import { configuredProviders, type RoutingCapability } from "./providerRouting";
@@ -125,7 +126,7 @@ export function cloudflareAccountIdFromUrl(url?: string | null): string | null {
  */
 function cloudflareEndpointFromEnv(tokenOverride?: string): CloudflareEndpoint | null {
   const accountId = process.env.CLOUDFLARE_ACCOUNT_ID?.trim();
-  const apiToken = tokenOverride || process.env.CLOUDFLARE_API_TOKEN?.trim();
+  const apiToken = sanitizeCredential(tokenOverride) || sanitizeCredential(process.env.CLOUDFLARE_API_TOKEN);
   if (!accountId || !apiToken) return null;
   return { apiBaseUrl: cloudflareAccountUrl(accountId), mode: "native", apiKey: apiToken };
 }
@@ -144,7 +145,9 @@ export async function getCloudflareEndpoint(ownerId?: number): Promise<Cloudflar
   // token and endpoint for someone who had saved nothing.
   const row = db && ownerId != null ? await ownProviderRow(db, "Cloudflare", ownerId) : undefined;
   if (row) {
-    savedToken = row.apiKey?.trim() || undefined;
+    // A pasted token can carry invisible characters (see shared/credentials):
+    // one of them makes every Workers AI request fail before it is sent.
+    savedToken = sanitizeCredential(row.apiKey);
     models = {
       ttsModel: row.defaultTtsModel || undefined,
       sttModel: row.defaultSttModel || undefined,
@@ -298,7 +301,7 @@ export function keyHint(key?: string | null): string | undefined {
 export async function providerKeyStates(ownerId?: number): Promise<Record<BuiltInProviderId, ProviderKeyState>> {
   const states = Object.fromEntries(
     ALL_PROVIDERS.map(provider => {
-      const fromEnv = process.env[PROVIDER_ENV_KEYS[provider]]?.trim();
+      const fromEnv = sanitizeCredential(process.env[PROVIDER_ENV_KEYS[provider]]);
       return [provider, fromEnv ? { apiKey: fromEnv, source: "environment" as const } : { apiKey: null, source: null }];
     }),
   ) as Record<BuiltInProviderId, ProviderKeyState>;
@@ -309,7 +312,9 @@ export async function providerKeyStates(ownerId?: number): Promise<Record<BuiltI
 
   const rows = await db.select().from(bookxProviderSettings).where(eq(bookxProviderSettings.ownerId, ownerId));
   for (const provider of ALL_PROVIDERS) {
-    const stored = rows.find(row => row.provider === provider)?.apiKey?.trim();
+    // Read through the cleaner so a key saved before this check existed still
+    // works without the user having to paste it again.
+    const stored = sanitizeCredential(rows.find(row => row.provider === provider)?.apiKey);
     if (stored) states[provider] = { apiKey: stored, source: "app" };
   }
 

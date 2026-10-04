@@ -33,6 +33,26 @@ export class FfmpegUnavailableError extends Error {
   }
 }
 
+/**
+ * How long ffmpeg may run.
+ *
+ * `idleMs` is the real guard: it is measured from the last line the process
+ * printed, and a running ffmpeg reports progress every second, so a slow but
+ * healthy pass is never stopped. `maxMs` is only a backstop for a process that
+ * never finishes at all.
+ *
+ * This matters: a stopwatch on the clock used to stop whole-chapter encodes on
+ * a busy machine. The encode was working, and the export failed with
+ * "ffmpeg failed (exit null)" — a SIGKILL — for no reason but the wall clock.
+ */
+export type FfmpegLimits = { idleMs?: number; maxMs?: number };
+
+/** Whole-file work: a long chapter decoded or encoded on a shared CPU. */
+export const FILE_WORK_LIMITS: FfmpegLimits = { idleMs: 240_000, maxMs: 6 * 60 * 60_000 };
+
+/** A pass that reads one file and writes a short one. */
+export const QUICK_LIMITS: FfmpegLimits = { idleMs: 120_000, maxMs: 30 * 60_000 };
+
 /** Absolute path (or PATH name) of a working ffmpeg, or null when there is none. */
 export async function resolveFfmpeg(): Promise<string | null> {
   if (resolved !== undefined) return resolved;
@@ -58,39 +78,77 @@ export async function requireFfmpeg(): Promise<string> {
   return binary;
 }
 
-type ExecResult = { code: number | null; stdout: Buffer; stderr: string };
+type ExecResult = {
+  code: number | null;
+  stdout: Buffer;
+  stderr: string;
+  /** Which guard stopped the process, when one did. */
+  stopped: "idle" | "cap" | null;
+  /** The signal that ended it, when it was not a normal exit. */
+  signal: NodeJS.Signals | null;
+  ms: number;
+};
 
-function execute(binary: string, args: string[], options: { timeoutMs?: number; input?: Buffer } = {}): Promise<ExecResult> {
+function execute(binary: string, args: string[], options: FfmpegLimits & { timeoutMs?: number; input?: Buffer } = {}): Promise<ExecResult> {
   return new Promise((resolve, reject) => {
     const child = spawn(binary, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
     const stdout: Buffer[] = [];
     let stderr = "";
-    const timer = setTimeout(() => child.kill("SIGKILL"), options.timeoutMs ?? 120_000);
-    child.stdout.on("data", chunk => stdout.push(chunk as Buffer));
+    const startedAt = Date.now();
+    let lastOutputAt = startedAt;
+    let stopped: "idle" | "cap" | null = null;
+    // `timeoutMs` is the older name for the backstop, still used by callers that
+    // only ever want a hard ceiling.
+    const maxMs = options.maxMs ?? options.timeoutMs ?? 120_000;
+    const idleMs = options.idleMs ?? maxMs;
+    const watchdog = setInterval(() => {
+      const now = Date.now();
+      if (maxMs > 0 && now - startedAt >= maxMs) {
+        stopped = "cap";
+        child.kill("SIGKILL");
+      } else if (idleMs > 0 && now - lastOutputAt >= idleMs) {
+        stopped = "idle";
+        child.kill("SIGKILL");
+      }
+    }, 500);
+    child.stdout.on("data", chunk => {
+      lastOutputAt = Date.now();
+      stdout.push(chunk as Buffer);
+    });
     child.stderr.on("data", chunk => {
+      lastOutputAt = Date.now();
       // Keep the tail only; ffmpeg can be chatty on long files.
       stderr = (stderr + chunk.toString()).slice(-20_000);
     });
     child.on("error", error => {
-      clearTimeout(timer);
+      clearInterval(watchdog);
       reject(error);
     });
-    child.on("close", code => {
-      clearTimeout(timer);
-      resolve({ code, stdout: Buffer.concat(stdout), stderr });
+    child.on("close", (code, signal) => {
+      clearInterval(watchdog);
+      resolve({ code, stdout: Buffer.concat(stdout), stderr, stopped, signal, ms: Date.now() - startedAt });
     });
     if (options.input) child.stdin.end(options.input);
     else child.stdin.end();
   });
 }
 
+/** Explains a non-zero exit in terms of what actually happened. */
+function describeFailure(result: ExecResult): string {
+  const seconds = Math.max(1, Math.round(result.ms / 1000));
+  if (result.stopped === "idle") return `ffmpeg stopped responding: it printed nothing for ${seconds}s and was stopped`;
+  if (result.stopped === "cap") return `ffmpeg was still running after ${seconds}s and was stopped`;
+  if (result.signal) return `ffmpeg was killed by ${result.signal} after ${seconds}s`;
+  return `ffmpeg failed (exit ${result.code})`;
+}
+
 /** Runs ffmpeg and throws with the tail of its log when it fails. */
-export async function runFfmpeg(args: string[], options: { timeoutMs?: number; input?: Buffer } = {}): Promise<ExecResult> {
+export async function runFfmpeg(args: string[], options: FfmpegLimits & { timeoutMs?: number; input?: Buffer } = {}): Promise<ExecResult> {
   const binary = await requireFfmpeg();
   const result = await execute(binary, ["-hide_banner", "-nostdin", "-y", ...args], options);
   if (result.code !== 0) {
     const tail = result.stderr.trim().split(/\r?\n/).slice(-6).join(" | ");
-    throw new Error(`ffmpeg failed (exit ${result.code}): ${tail.slice(0, 600)}`);
+    throw new Error(`${describeFailure(result)}: ${tail.slice(0, 600)}`);
   }
   return result;
 }
@@ -142,13 +200,13 @@ export function parseNoiseFloor(stderr: string): NoiseFloor {
 }
 
 /** Measures a file's noise floor with ffmpeg's `astats` over 500 ms windows. */
-export async function measureNoiseFloor(file: string, timeoutMs?: number): Promise<NoiseFloor> {
-  const { stderr } = await runFfmpeg(["-i", file, "-af", "astats=metadata=1:reset=500,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], { timeoutMs });
+export async function measureNoiseFloor(file: string, limits: FfmpegLimits = {}): Promise<NoiseFloor> {
+  const { stderr } = await runFfmpeg(["-i", file, "-af", "astats=metadata=1:reset=500,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-", "-f", "null", "-"], { ...FILE_WORK_LIMITS, ...limits });
   return parseNoiseFloor(stderr);
 }
 
 /** Mean and peak level of an audio file, plus its decoded duration. */
-export async function measureLoudness(filePath: string): Promise<Loudness> {
-  const { stderr } = await runFfmpeg(["-i", filePath, "-af", "volumedetect", "-f", "null", "-"], { timeoutMs: 180_000 });
+export async function measureLoudness(filePath: string, limits: FfmpegLimits = {}): Promise<Loudness> {
+  const { stderr } = await runFfmpeg(["-i", filePath, "-af", "volumedetect", "-f", "null", "-"], { ...FILE_WORK_LIMITS, ...limits });
   return parseLoudness(stderr);
 }
