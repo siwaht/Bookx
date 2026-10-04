@@ -2,6 +2,7 @@ import { and, eq, like } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { bookxProviderSettings } from "../drizzle/schema";
 import { CUSTOM_PROVIDER_LIMITS, isCustomProviderId, type CustomProviderId } from "../shared/providers";
+import { sanitizeCredential } from "../shared/credentials";
 import { getDb } from "./db";
 import { ProviderConfigurationError } from "./narrationRetry";
 import type { RoutingCapability } from "./providerRouting";
@@ -113,7 +114,9 @@ function fromRow(row: SettingsRow): CustomProvider | null {
     id: row.provider,
     label: row.label?.trim() || "Custom provider",
     baseUrl: row.apiBaseUrl,
-    apiKey: row.apiKey?.trim() || null,
+    // Read through the cleaner so a key saved with invisible formatting
+    // characters still works, and is not sent into a header that rejects it.
+    apiKey: sanitizeCredential(row.apiKey) ?? null,
     ttsModel: row.defaultTtsModel?.trim() || null,
     sttModel: row.defaultSttModel?.trim() || null,
     voices,
@@ -192,7 +195,8 @@ export async function saveCustomProvider(ownerId: number, input: CustomProviderI
   if (input.id && !existing) throw new Error("That provider no longer exists");
   if (!existing && rows.length >= MAX_CUSTOM_PROVIDERS) throw new Error(`You can add up to ${MAX_CUSTOM_PROVIDERS} providers`);
 
-  const apiKey = input.apiKey === undefined ? existing?.apiKey ?? null : input.apiKey.trim() || null;
+  // The key is stored without the invisible characters a paste can carry.
+  const apiKey = sanitizeCredential(input.apiKey === undefined ? existing?.apiKey : input.apiKey) ?? null;
   const values = {
     label,
     apiBaseUrl: baseUrl,
@@ -228,6 +232,7 @@ export async function deleteCustomProvider(ownerId: number, id: CustomProviderId
 export function customProviderHeaders(provider: CustomProvider, json = true): Record<string, string> {
   const headers: Record<string, string> = {};
   if (json) headers["content-type"] = "application/json";
-  if (provider.apiKey) headers.Authorization = `Bearer ${provider.apiKey}`;
+  const apiKey = sanitizeCredential(provider.apiKey);
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   return headers;
 }

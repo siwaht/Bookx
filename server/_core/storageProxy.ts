@@ -124,7 +124,7 @@ async function serveForge(res: Response, key: string) {
 }
 
 export function registerStorageProxy(app: Express) {
-  app.get("/manus-storage/*", async (req, res) => {
+  const serveObject = async (req: Request, res: Response) => {
     const key = (req.params as Record<string, string>)[0];
     if (!key || !isSafeStorageKey(key)) {
       res.status(400).send("Missing or invalid storage key");
@@ -157,5 +157,14 @@ export function registerStorageProxy(app: Express) {
       console.error("[StorageProxy] failed:", err);
       if (!res.headersSent) res.status(502).send("Storage proxy error");
     }
-  });
+  };
+
+  // `/api/storage/*` is the path the app hands the browser (`storageUrl`), and it
+  // is the one that works on Manus: `/manus-storage/*` belongs to the platform
+  // there, which answers a credential-free request from the bucket but passes a
+  // request that carries a session to the container without that prefix, so a
+  // signed-in page could not read its own audio. Both are served, so a link built
+  // either way keeps working.
+  app.get("/api/storage/*", serveObject);
+  app.get("/manus-storage/*", serveObject);
 }

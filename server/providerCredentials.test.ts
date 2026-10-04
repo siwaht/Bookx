@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { sanitizeCredential } from "../shared/credentials";
 
 vi.mock("./db", () => ({ getDb: vi.fn().mockResolvedValue(null) }));
 
@@ -7,8 +8,10 @@ import {
   availableProviders,
   buildCloudflareSttBody,
   buildCloudflareTtsBody,
+  cloudflareHeaders,
   getCloudflareEndpoint,
   normalizeCloudflareUrl,
+  providerKeyStates,
   redactProviderApiKey,
   resolveAura2Speaker,
   resolveMelottsLanguage,
@@ -133,5 +136,38 @@ describe("redactProviderApiKey", () => {
 
   it("reports false when no key is stored", () => {
     expect(redactProviderApiKey({ provider: "OpenAI", apiKey: null })).toEqual({ provider: "OpenAI", apiKeyConfigured: false });
+  });
+});
+
+describe("a key pasted with invisible characters", () => {
+  it("is cleaned before it can reach a request header", () => {
+    // U+2060 WORD JOINER, U+200B ZERO WIDTH SPACE and U+00A0 NO-BREAK SPACE all
+    // arrive from an ordinary copy-paste, and any one of them makes fetch throw
+    // "Cannot convert argument to a ByteString" instead of calling the provider.
+    expect(sanitizeCredential("cf-\u2060live\u200bkey")).toBe("cf-livekey");
+    expect(sanitizeCredential("  key\u00a0")).toBe("key");
+    expect(sanitizeCredential("\u2060")).toBeUndefined();
+    expect(sanitizeCredential(null)).toBeUndefined();
+  });
+
+  it("leaves an ordinary key alone", () => {
+    expect(sanitizeCredential("sk-proj-abc_DEF-123")).toBe("sk-proj-abc_DEF-123");
+  });
+
+  it("is cleaned when it arrives from the environment", async () => {
+    vi.stubEnv("DEEPGRAM_API_KEY", "dg_\u2060key");
+    expect((await providerKeyStates()).Deepgram).toEqual({ apiKey: "dg_key", source: "environment" });
+  });
+
+  it("produces Cloudflare headers that fetch itself accepts", () => {
+    const endpoint = {
+      apiBaseUrl: "https://api.cloudflare.com/client/v4/accounts/abc/ai",
+      mode: "native" as const,
+      apiKey: sanitizeCredential("cf_\u2060key")!,
+    };
+    const headers = cloudflareHeaders(endpoint);
+    expect(headers.Authorization).toBe("Bearer cf_key");
+    // The exact constructor fetch uses; it threw for the uncleaned key.
+    expect(() => new Headers(headers)).not.toThrow();
   });
 });

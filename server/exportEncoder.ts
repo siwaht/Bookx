@@ -1,7 +1,7 @@
 import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { AUDIOBOOK_STANDARD, isPassthrough, type ExportOutput } from "../shared/exportOptions";
-import { parseLoudness, runFfmpeg, withTempDir } from "./ffmpeg";
+import { FILE_WORK_LIMITS, QUICK_LIMITS, parseLoudness, runFfmpeg, withTempDir, type FfmpegLimits } from "./ffmpeg";
 import { scanMp3, scanWav } from "./audioAssembly";
 
 /**
@@ -109,15 +109,19 @@ function channelsOf(audio: Buffer): number {
   return scanMp3(audio).format.channelModeBits === 3 ? 1 : 2;
 }
 
-async function measure(file: string, timeoutMs: number) {
-  const { stderr } = await runFfmpeg(["-i", file, "-af", "volumedetect", "-f", "null", "-"], { timeoutMs });
+async function measure(file: string, limits: FfmpegLimits = FILE_WORK_LIMITS) {
+  const { stderr } = await runFfmpeg(["-i", file, "-af", "volumedetect", "-f", "null", "-"], limits);
   return parseLoudness(stderr);
 }
 
 /** Encodes one assembled chapter into the delivery format. */
 export async function encodeChapter(input: { audio: Buffer; durationMs: number; output: ExportOutput; tags: ChapterTags }): Promise<EncodedChapter> {
   if (isPassthrough(input.output)) throw new Error("Passthrough exports are not re-encoded");
-  const timeoutMs = Math.max(180_000, Math.round(input.durationMs / 3));
+  // A whole chapter is decoded, filtered and encoded here: minutes of work on a
+  // shared CPU. It is guarded by progress rather than by a clock, because the
+  // old "assume three times realtime" ceiling stopped healthy encodes whenever
+  // the machine was busy, which made long exports fail with a bare SIGKILL.
+  const limits = FILE_WORK_LIMITS;
   return withTempDir(async dir => {
     const isWav = input.audio.subarray(0, 4).toString("latin1") === "RIFF";
     const source = path.join(dir, isWav ? "chapter.wav" : "chapter.mp3");
@@ -125,7 +129,7 @@ export async function encodeChapter(input: { audio: Buffer; durationMs: number; 
 
     let gainDb: number | null = null;
     if (input.output.master) {
-      const before = await measure(source, timeoutMs);
+      const before = await measure(source, limits);
       gainDb = levellingGainDb(before.meanDb, before.durationMs || input.durationMs, AUDIOBOOK_STANDARD.headMs + AUDIOBOOK_STANDARD.tailMs);
     }
 
@@ -138,9 +142,9 @@ export async function encodeChapter(input: { audio: Buffer; durationMs: number; 
       ...metadataArgs(input.tags),
       ...codecArgs(input.output),
       target,
-    ], { timeoutMs });
+    ], limits);
 
-    const after = await measure(target, timeoutMs);
+    const after = await measure(target, limits);
     return { buffer: await readFile(target), durationMs: after.durationMs, rmsDb: round1(after.meanDb), peakDb: round1(after.peakDb), gainDb };
   });
 }
@@ -152,7 +156,7 @@ export async function measureBuffer(audio: Buffer, extension: string): Promise<{
   return withTempDir(async dir => {
     const file = path.join(dir, `audio.${extension}`);
     await writeFile(file, audio);
-    const result = await measure(file, 180_000);
+    const result = await measure(file);
     return { rmsDb: round1(result.meanDb), peakDb: round1(result.peakDb), durationMs: result.durationMs };
   });
 }
@@ -241,8 +245,8 @@ export async function joinBookFiles(input: {
     ...codec,
     "-f", input.container,
     target,
-  ], { timeoutMs: 60 * 60_000 });
-  const { stderr } = await runFfmpeg(["-i", target, "-f", "null", "-"], { timeoutMs: 60 * 60_000 });
+  ], FILE_WORK_LIMITS);
+  const { stderr } = await runFfmpeg(["-i", target, "-f", "null", "-"], FILE_WORK_LIMITS);
   return { filePath: target, bytes: (await stat(target)).size, durationMs: parseLoudness(stderr).durationMs };
 }
 
@@ -255,6 +259,6 @@ export async function writeSilence(input: { dir: string; output: ExportOutput; m
     "-map_metadata", "-1",
     ...codecArgs(input.output),
     file,
-  ]);
+  ], QUICK_LIMITS);
   return file;
 }

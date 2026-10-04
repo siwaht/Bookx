@@ -29,6 +29,7 @@ import { chapterBodySchema, splitOversizedChapters } from "../chapterLimits";
 import { protectedProcedure, router } from "../_core/trpc";
 import { synthesizeNarration } from "../tts";
 import { storageDeletePrefix, storagePut } from "../storage";
+import { storageUrl } from "../../shared/storageKeys";
 import { transcribeAudioRoute } from "../providerRouting";
 import { redactProviderApiKey } from "../providerCredentials";
 import {
@@ -215,7 +216,7 @@ export const bookxRouter = router({
       project,
       chapters,
       segments,
-      characters: characters.map((character) => ({ ...character, previewUrl: character.previewStorageKey ? `/manus-storage/${character.previewStorageKey}` : null })),
+      characters: characters.map((character) => ({ ...character, previewUrl: character.previewStorageKey ? storageUrl(character.previewStorageKey) : null })),
       pronunciations,
       generationJobs,
       exports,

@@ -1,12 +1,12 @@
 // Storage helpers.
 //
 // Three backends, one set of keys (`bookx/{projectId}/…`) and one browser URL
-// shape (`/manus-storage/{key}`):
+// shape (`/api/storage/{key}`, built by `storageUrl`):
 //
 // - r2: on Cloudflare the app runs in a container, and `BOOKX_STORAGE_URL`
 //   points at a virtual host that the container's Worker answers with its R2
-//   binding. The Worker also serves `/manus-storage/*` straight from R2, so
-//   playback and downloads do not pass through the container.
+//   binding. The Worker also serves `/manus-storage/*` straight from R2 for its own
+//   links; the app now hands the browser `/api/storage/*`, which it answers itself.
 // - forge: the Manus Forge storage service. Uploads go to S3 through a
 //   presigned PUT, and reads are a 307 redirect to a presigned GET.
 // - local: a checkout writes objects to disk under `BOOKX_LOCAL_STORAGE_DIR`.
@@ -17,7 +17,7 @@ import { createReadStream } from "node:fs";
 import { copyFile, mkdir, open, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Readable } from "node:stream";
-import { isSafeStorageKey } from "../shared/storageKeys";
+import { isSafeStorageKey, storageUrl } from "../shared/storageKeys";
 import { ENV } from "./_core/env";
 
 export { isSafeStorageKey } from "../shared/storageKeys";
@@ -197,7 +197,7 @@ export async function storagePut(
   if (mode === "r2") {
     if (!isSafeStorageKey(key)) throw new Error(`Refusing to store an unsafe key: ${key}`);
     await r2PutBytes(key, typeof data === "string" ? Buffer.from(data) : data, contentType);
-    return { key, url: `/manus-storage/${key}` };
+    return { key, url: storageUrl(key) };
   }
 
   if (mode === "local") {
@@ -205,7 +205,7 @@ export async function storagePut(
     if (!target) throw new Error(`Refusing to store an unsafe key: ${key}`);
     await mkdir(path.dirname(target), { recursive: true });
     await writeFile(target, typeof data === "string" ? Buffer.from(data) : data);
-    return { key, url: `/manus-storage/${key}` };
+    return { key, url: storageUrl(key) };
   }
 
   const { forgeUrl, forgeKey } = getForgeConfig();
@@ -242,12 +242,12 @@ export async function storagePut(
     throw new Error(`Storage upload to S3 failed (${uploadResp.status})`);
   }
 
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: storageUrl(key) };
 }
 
 export async function storageGet(relKey: string): Promise<{ key: string; url: string }> {
   const key = normalizeKey(relKey);
-  return { key, url: `/manus-storage/${key}` };
+  return { key, url: storageUrl(key) };
 }
 
 /**
@@ -258,7 +258,7 @@ export async function storageGet(relKey: string): Promise<{ key: string; url: st
  */
 export async function storageGetSignedUrl(relKey: string): Promise<string> {
   const key = normalizeKey(relKey);
-  if (storageMode() !== "forge") return `/manus-storage/${key}`;
+  if (storageMode() !== "forge") return storageUrl(key);
 
   const { forgeUrl, forgeKey } = getForgeConfig();
 
@@ -281,7 +281,7 @@ export async function storageGetSignedUrl(relKey: string): Promise<string> {
 /** A URL that downloads the object under a readable file name instead of playing it. */
 export async function storageDownloadUrl(relKey: string, fileName: string): Promise<string> {
   const key = normalizeKey(relKey);
-  if (storageMode() !== "forge") return `/manus-storage/${key}?download=1&name=${encodeURIComponent(fileName)}`;
+  if (storageMode() !== "forge") return storageUrl(key, { download: true, name: fileName });
   return storageGetSignedUrl(key);
 }
 
@@ -324,7 +324,7 @@ export async function storagePutFile(relKey: string, filePath: string, contentTy
     if (!target) throw new Error(`Refusing to store an unsafe key: ${key}`);
     await mkdir(path.dirname(target), { recursive: true });
     await copyFile(filePath, target);
-    return { key, url: `/manus-storage/${key}`, bytes };
+    return { key, url: storageUrl(key), bytes };
   }
   if (mode === "r2" && bytes > R2_PART_BYTES) {
     // Read and send one part at a time, so a multi-gigabyte file never sits in memory.
@@ -341,7 +341,7 @@ export async function storagePutFile(relKey: string, filePath: string, contentTy
     } finally {
       await file.close();
     }
-    return { key, url: `/manus-storage/${key}`, bytes };
+    return { key, url: storageUrl(key), bytes };
   }
   const stored = await storagePut(relKey, await readFile(filePath), contentType);
   return { ...stored, bytes };

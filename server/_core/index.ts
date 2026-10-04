@@ -102,6 +102,23 @@ async function startServer() {
       const report = await healthReport();
       res.status(report.ok ? 200 : 503).json(report);
     });
+  } else {
+    // A plain host — Manus, or a local checkout — has no Worker to ask. This
+    // is what a deploy's readiness check calls: the database answers, a file
+    // round-trips through storage and ffmpeg runs. It is deliberately
+    // reachable without signing in, and reports only those results, the
+    // providers the app detected and the Node version.
+    //
+    // Two paths, deliberately: a bare `/healthz` is what a local checkout
+    // uses, while the Manus gateway answers that same bare path with its own
+    // probe response and never reaches the app, so the published readiness
+    // path lives under `/api/`, which the gateway leaves to the application.
+    const health = async (_req: express.Request, res: express.Response) => {
+      const report = await healthReport();
+      res.status(report.ok ? 200 : 503).json(report);
+    };
+    app.get("/healthz", health);
+    app.get("/api/healthz", health);
   }
   registerStorageProxy(app);
   registerExportDownloads(app);

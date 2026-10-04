@@ -63,7 +63,7 @@ describe("local storage round trip", () => {
     const second = await storagePut("bookx/p1/preview/cue-1.mp3", data, "audio/mpeg");
     expect(first.key).toMatch(/^bookx\/p1\/preview\/cue-1_[0-9a-f]{8}\.mp3$/);
     expect(second.key).not.toBe(first.key);
-    expect(await storageGetSignedUrl(first.key)).toBe(`/manus-storage/${first.key}`);
+    expect(await storageGetSignedUrl(first.key)).toBe(`/api/storage/${first.key}`);
     expect((await storageGetBuffer(first.key)).equals(data)).toBe(true);
     expect((await localObject(first.key))?.size).toBe(data.length);
     expect(await localObject("bookx/p1/missing.mp3")).toBeNull();

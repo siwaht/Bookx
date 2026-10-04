@@ -508,7 +508,7 @@ export function ManuscriptEditor({
                       <audio
                         controls
                         preload="none"
-                        src={`/manus-storage/${segment.audioStorageKey}`}
+                        src={storageUrl(segment.audioStorageKey)}
                         className="mt-2 h-8 w-full"
                         aria-label={`Segment ${index + 1} narration`}
                       />
@@ -560,3 +560,4 @@ function Header({ actions }: { actions: React.ReactNode }) {
     </div>
   );
 }
+import { storageUrl } from "@shared/storageKeys";

@@ -787,7 +787,8 @@ export async function soundAssets(db: Db, projectId: string) {
       kind: asset.type === "music" ? "music" as const : "sfx" as const,
       source: asset.source === "upload" ? "upload" as const : "generated" as const,
       durationMs: asset.durationMs,
-      url: `/manus-storage/${asset.storageKey}`,
+      // The filter above keeps only assets that have an object.
+      url: storageUrl(asset.storageKey!),
     }));
 }
 
@@ -884,7 +885,7 @@ async function storeCustomAsset(db: Db, input: { projectId: string; kind: SoundK
     meanVolumeDb: Math.round(measured.meanDb),
     peakVolumeDb: Math.round(measured.peakDb),
   });
-  return { id, title: input.title, durationMs: measured.durationMs, url: `/manus-storage/${stored.key}` };
+  return { id, title: input.title, durationMs: measured.durationMs, url: storageUrl(stored.key) };
 }
 
 export async function uploadCustomSound(db: Db, input: { projectId: string; kind: SoundKind; title: string; filename: string; base64: string }) {
@@ -1130,3 +1131,4 @@ export async function previewChapterSound(db: Db, input: { project: ProjectRow; 
   rememberPreview(hash, { key: stored.key, durationMs: mixed.durationMs, cues: mixed.mixedCues });
   return { url: await storageGetSignedUrl(stored.key), durationMs: mixed.durationMs, cues: mixed.mixedCues };
 }
+import { storageUrl } from "../shared/storageKeys";
