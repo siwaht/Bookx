@@ -41,7 +41,7 @@ export type SoundTagDefinition = {
 export const SAMPLE_RATE = 44_100;
 
 /** Bump to invalidate every cached sound (e.g. after changing a recipe). */
-export const SOUND_RECIPE_VERSION = "v1";
+export const SOUND_RECIPE_VERSION = "v2";
 
 // ---------------------------------------------------------------------------
 // Expression helpers. Expressions never contain ':' or '\'', so a single level
@@ -71,18 +71,44 @@ function pulse(period: number, offset: number, frequency: number, decay: number,
   return `${gain}*exp(-${decay}*${tau})*sin(2*PI*${frequency}*${tau})`;
 }
 
-/** One sustained chord with a soft crossfade in and out, for music pads. */
-function chord(notes: number[], from: number, to: number, brightness = 0.3, crossfade = 0.6): string {
-  const voice = (frequency: number) =>
-    `(sin(2*PI*${frequency}*t)+${brightness}*sin(2*PI*${round(frequency * 2)}*t)+${round(brightness / 3)}*sin(2*PI*${round(frequency * 3)}*t)+0.6*sin(2*PI*${round(frequency * 1.004)}*t))`;
-  const shape = `clip((t-${from})/${crossfade},0,1)*clip((${to}-t)/${crossfade},0,1)`;
-  return `${shape}*(${notes.map(voice).join("+")})`;
+/** One voice of a chord: the fundamental plus integer harmonics, so a looped pad stays in phase. */
+function voice(frequency: number, brightness: number): string {
+  return `(sin(2*PI*${frequency}*t)+${brightness}*sin(2*PI*${round(frequency * 2)}*t)+${round(brightness / 3)}*sin(2*PI*${round(frequency * 3)}*t))`;
 }
 
-/** Two chords in sequence over `d` seconds, gently breathing. */
+/** One sustained chord with a soft crossfade in and out, for music pads. */
+function chord(notes: number[], from: number, to: number, brightness = 0.3, crossfade = 0.6): string {
+  const shape = `clip((t-${from})/${crossfade},0,1)*clip((${to}-t)/${crossfade},0,1)`;
+  return `${shape}*(${notes.map(frequency => voice(frequency, brightness)).join("+")})`;
+}
+
+/**
+ * A chord held at full level for `d` seconds, for a looped bed: the loop point
+ * hands off to itself without a dip. The mixer fades swells in and out, so the
+ * recipe does not need its own.
+ */
+function loopChord(notes: number[], d: number, brightness: number): string {
+  return notes.map(frequency => voice(frequency, brightness)).join("+");
+}
+
+/**
+ * Three chords in an ABA arc over `d` seconds. The first chord returns at the
+ * end, so the loop point is a clean hand-off between the same chord, and the
+ * modulation period divides `d`, so the loop is seamless.
+ */
 function progression(d: number, first: number[], second: number[], brightness: number): string {
-  const middle = round(d * 0.52);
-  return `0.075*(0.88+0.12*sin(2*PI*0.4*t))*(${chord(first, 0, middle + 0.3, brightness)}+${chord(second, middle - 0.3, d, brightness)})`;
+  const segment = d / 3;
+  const crossfade = Math.min(0.5, segment / 2);
+  const chords = [first, second, first];
+  const parts = chords.map((notes, index) => {
+    const from = index * segment;
+    const to = (index + 1) * segment;
+    const fadeIn = index === 0 ? 0.001 : crossfade;
+    const fadeOut = index === chords.length - 1 ? 0.001 : crossfade;
+    const shape = `clip((t-${round(from)})/${fadeIn},0,1)*clip((${round(to)}-t)/${fadeOut},0,1)`;
+    return `${shape}*(${notes.map(frequency => voice(frequency, brightness)).join("+")})`;
+  });
+  return `0.075*(0.88+0.12*sin(2*PI*${round(1 / d)}*t))*(${parts.join("+")})`;
 }
 
 const pluck = (at: number, frequency: number, gain = 0.22) => strike(at, [[frequency, 1], [round(frequency * 2), 0.25]], 3.2, gain);
@@ -340,7 +366,7 @@ export const SOUND_TAGS: SoundTagDefinition[] = [
     prompt: "Quiet tense underscore, low sustained strings with a faint uneasy pulse, suspenseful, instrumental",
     durationSeconds: 6,
     synth: { layers: [
-      { source: tone(6, `0.09*${chord([N.D2, N.Eb2, N.A2], 0, 6, 0.45, 1.2)}`) },
+      { source: tone(6, `0.09*${loopChord([N.D2, N.Eb2, N.A2], 6, 0.45)}`) },
       { source: tone(6, `0.05*clip(t/1.5,0,1)*(0.5+0.5*sin(2*PI*7*t))*sin(2*PI*${N.A5}*t)`) },
     ], post: "lowpass=f=3000" },
   }),
@@ -349,7 +375,7 @@ export const SOUND_TAGS: SoundTagDefinition[] = [
     prompt: "Soft driving action underscore, low pulsing strings and distant drums, urgent but quiet, instrumental",
     durationSeconds: 6,
     synth: { layers: [
-      { source: tone(6, `0.12*pow(0.5+0.5*cos(2*PI*4*t),3)*${chord([N.D2, N.A2, N.D3], 0, 6, 0.5, 0.4)}`) },
+      { source: tone(6, `0.12*pow(0.5+0.5*cos(2*PI*4*t),3)*${loopChord([N.D2, N.A2, N.D3], 6, 0.5)}`) },
       { source: tone(6, "0.5*exp(-18*mod(t,0.5))*sin(2*PI*62*mod(t,0.5))") },
     ], post: "lowpass=f=2500" },
   }),
@@ -373,7 +399,7 @@ export const SOUND_TAGS: SoundTagDefinition[] = [
     prompt: "Quiet mysterious underscore, soft celesta and low pad, curious and eerie, instrumental",
     durationSeconds: 6,
     synth: { layers: [
-      { source: tone(6, `0.07*${chord([N.D3, N.F3, N.A3, N.Cs4], 0, 6, 0.25, 1.2)}`) },
+      { source: tone(6, `0.07*${loopChord([N.D3, N.F3, N.A3, N.Cs4], 6, 0.25)}`) },
       { source: tone(6, [[0.6, N.A5], [1.4, N.F5], [2.2, N.Cs6], [3.4, N.E5]].map(([at, frequency]) => pluck(at!, frequency!, 0.18)).join("+")) },
     ], post: `lowpass=f=4000,${room}` },
   }),
@@ -394,7 +420,7 @@ export const SOUND_TAGS: SoundTagDefinition[] = [
     prompt: "Dark brooding underscore, low drones and deep strings, ominous and quiet, instrumental",
     durationSeconds: 6,
     synth: { layers: [
-      { source: tone(6, `0.1*${chord([N.C2, N.G2, N.Eb3], 0, 6, 0.35, 1.4)}`) },
+      { source: tone(6, `0.1*${loopChord([N.C2, N.G2, N.Eb3], 6, 0.35)}`) },
       { source: noise(6, "brown", 151, 0.6), filters: `lowpass=f=120,${envelope("0.5*pow(sin(PI*t/6),2)")}` },
     ], post: "lowpass=f=1500" },
   }),
@@ -485,13 +511,15 @@ export function builtinSoundArgs(definition: SoundTagDefinition, output: string)
     ? `${inputs}amix=inputs=${definition.synth.layers.length}:normalize=0:duration=longest`
     : `${inputs}anull`;
   const fadeIn = definition.texture === "impact" ? 0.005 : 0.08;
-  const post = [
-    definition.synth.post,
-    `afade=t=in:st=0:d=${fadeIn}`,
-    `afade=t=out:st=${round(Math.max(0, d - 0.35))}:d=0.35`,
-    // Recipes are summed partials, so keep a hard ceiling under full scale.
-    "alimiter=limit=0.89:level=0",
-  ].filter(Boolean).join(",");
+    // Music is looped as a bed, so it must not carry a baked-in fade: the mixer
+    // fades swells and beds itself, and a baked fade would dip at every loop
+    // point. Effects keep their fades so a lone sound never clicks.
+    const post = [
+      definition.synth.post,
+      ...(definition.kind === "music" ? [] : [`afade=t=in:st=0:d=${fadeIn}`, `afade=t=out:st=${round(Math.max(0, d - 0.35))}:d=0.35`]),
+      // Recipes are summed partials, so keep a hard ceiling under full scale.
+      "alimiter=limit=0.89:level=0",
+    ].filter(Boolean).join(",");
   const graph = [...layers, `${combine},${post}[out]`].join(";");
   return [
     "-filter_complex", graph,

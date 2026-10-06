@@ -176,7 +176,15 @@ export const bookxRouter = router({
   }),
 
   deleteProject: protectedProcedure.input(projectId).mutation(async ({ ctx, input }) => {
-    const { db } = await requireProject(ctx.user.id, input.projectId);
+    const db = await getDb();
+    if (!db) throw new Error("Database unavailable");
+    const [project] = await db.select({ id: bookxProjects.id }).from(bookxProjects)
+      .where(and(eq(bookxProjects.id, input.projectId), eq(bookxProjects.ownerId, ctx.user.id))).limit(1);
+    // The row can already be gone — a redeploy wiped the database, another
+    // session removed it, or the shelf entry outlived its project. The point
+    // of the call is that the project no longer exists, so that is a success,
+    // not a failure: throwing here would wedge a stale shelf entry forever.
+    if (!project) return { success: true, alreadyGone: true };
     await db.delete(bookxSegments).where(inArray(bookxSegments.chapterId, projectChapterIds(db, input.projectId)));
     await Promise.all([
       db.delete(bookxChapters).where(eq(bookxChapters.projectId, input.projectId)),

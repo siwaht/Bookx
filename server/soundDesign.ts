@@ -612,7 +612,11 @@ export async function assembleAndMixChapter(input: {
     input.parts.map((part, index) => ({ buffer: part.buffer, label: part.label, gapAfterMs: layout.gaps[index] })),
     { gapMs: input.defaultGapMs, leadInMs: Math.max(layout.leadInMs, introMs) },
   );
-  const tailMs = Math.max(layout.tailMs, outroMs);
+  // A continuous bed fades out after the narration, so the tail must be long
+  // enough for the fade: otherwise the fade eats into the last words and the
+  // music stops before the chapter does.
+  const bedTailMs = bed && options.musicMode === "bed" ? options.musicFadeOutMs : 0;
+  const tailMs = Math.max(layout.tailMs, outroMs, bedTailMs);
   const effectMaxMs = EFFECT_MAX_MS[options.effectLength];
 
   const cues: MixCue[] = placed.map(({ entry, index }) => ({

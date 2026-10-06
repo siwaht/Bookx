@@ -299,7 +299,11 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (!persistedProjects.data?.length) return;
+    // Reconcile even when the server owns no projects at all: a shelf entry
+    // can outlive its database row (a redeploy wiped the database, or the
+    // account changed), and skipping the merge on an empty list left those
+    // stale entries on the shelf with no way to remove them.
+    if (!persistedProjects.data) return;
     const remoteProjects: Project[] = persistedProjects.data.map((project) => ({
       id: project.id,
       title: project.title,
@@ -319,7 +323,12 @@ export default function Home() {
       cover: project.kind === "podcast" ? "linear-gradient(145deg,#412f49,#966b91 58%,#e6b47b)" : "linear-gradient(145deg,#183d43,#5e9a96 56%,#d8c886)",
     }));
     setProjects((current) => {
-      const localOnly = current.filter((project) => !remoteProjects.some((remote) => remote.id === project.id) && !project.id.startsWith("project-"));
+      // Only genuinely local entries survive the merge: the starter books and
+      // a wizard project that has not been saved yet. Anything else on the
+      // shelf was a server project, so once the server does not list it the
+      // entry is stale (a wiped database, a removed row, a changed account)
+      // and must go — keeping it meant a delete could never succeed.
+      const localOnly = current.filter((project) => demoProjectIds.has(project.id) || project.id.startsWith("project-"));
       return [...remoteProjects, ...localOnly];
     });
   }, [persistedProjects.data]);
