@@ -153,9 +153,30 @@ type ElevenLabsVoice = {
   labels?: Record<string, string | undefined>;
 };
 
+/** Names of licensed voices carry the trademark sign (Burt Reynolds™). */
+const TRADEMARKED_VOICE_NAME = /[\u2122\u00AE]/;
+
+/**
+ * True for a voice ElevenLabs will not synthesise through its API.
+ *
+ * Its Voice Library holds licensed celebrity voices, which an account can add
+ * to its own voice list — so they appear in `/v1/voices` — but a render call is
+ * refused with `famous_voice_not_permitted`, "Famous voices can only be used
+ * within the Reader App". Offering one in the catalog is a promise the API will
+ * not keep: the narration run stops the moment that character speaks, which is
+ * what happened to Marcus in a podcast project. They are left out of the
+ * choices instead. Licensed voices report the `famous` category; the trademark
+ * sign catches any that arrive under another category.
+ */
+export function elevenLabsVoiceIsReaderOnly(voice: ElevenLabsVoice): boolean {
+  if (String(voice.category ?? "").trim().toLowerCase() === "famous") return true;
+  return TRADEMARKED_VOICE_NAME.test(voice.name ?? "");
+}
+
 /** Maps an ElevenLabs `/v1/voices` entry onto the catalog shape, keeping its labels. */
 export function elevenLabsVoiceToCatalog(voice: ElevenLabsVoice): CatalogVoice | null {
   if (!voice.voice_id || !voice.name) return null;
+  if (elevenLabsVoiceIsReaderOnly(voice)) return null;
   const labels = voice.labels ?? {};
   const useCase = labels.use_case || labels["use case"] || labels.usecase;
   const descriptive = [labels.description, labels.accent, labels.age, labels.gender, useCase].filter(Boolean).map(value => String(value).replace(/_/g, " "));

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AudioIntegrityError,
   DEFAULT_MAX_ATTEMPTS,
+  FATAL_FAILURE_KINDS,
   StalledStreamError,
   backoffDelayMs,
   classifyHttpFailure,
@@ -58,6 +59,28 @@ describe("classifyHttpFailure", () => {
   it("includes a truncated body for context", () => {
     const result = classifyHttpFailure(400, null, "x".repeat(400));
     expect(result.message.length).toBeLessThan(300);
+  });
+
+  it("names a refused voice instead of blaming the credentials", () => {
+    const body = JSON.stringify({
+      detail: {
+        type: "authorization_error",
+        code: "voice_access_denied",
+        message: "Famous voices can only be used within the Reader App.",
+        status: "famous_voice_not_permitted",
+        request_id: "12f8199947270",
+      },
+    });
+    const result = classifyHttpFailure(401, null, body);
+    expect(result).toMatchObject({ kind: "voice", retryable: false });
+    expect(result.message).toMatch(/Cast voices/);
+  });
+
+  it("keeps a refused voice from stopping the whole run", () => {
+    // The key and the rest of the cast are fine, so the other characters still
+    // render; only the segments using that voice fail.
+    expect(FATAL_FAILURE_KINDS.has("voice")).toBe(false);
+    expect(FATAL_FAILURE_KINDS.has("auth")).toBe(true);
   });
 });
 

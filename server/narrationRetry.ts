@@ -20,6 +20,13 @@ export type FailureKind =
   | "quota"
   /** The provider is not set up (no key, removed, no endpoint): nothing will render until it is. */
   | "config"
+  /**
+   * The provider refused the *voice*, not the key: a licensed "famous" voice
+   * that only the provider's own reader app may synthesise. Only the characters
+   * cast with it are affected, so the run carries on and fails just those
+   * segments rather than the whole book.
+   */
+  | "voice"
   | "bad-request"
   | "unknown";
 
@@ -84,6 +91,15 @@ export function classifyHttpFailure(status: number, retryAfter?: string | null, 
       retryable: true,
       message: `Provider rate limited the request (HTTP 429)${detail}`,
       retryAfterMs: parseRetryAfter(retryAfter),
+    };
+  }
+  // Read this before the auth branch: the credentials are fine, and calling it
+  // an auth failure would send the user to their API key instead of their cast.
+  if (VOICE_PERMISSION_BODY.test(body ?? "")) {
+    return {
+      kind: "voice",
+      retryable: false,
+      message: `The provider will not render this voice through its API${detail}. Pick another voice for this character in Cast voices, then retry.`,
     };
   }
   if (AUTH_STATUSES.has(status)) {
@@ -203,3 +219,10 @@ export const DEFAULT_REQUEST_TIMEOUT_MS = 120_000;
  * request timeout on every attempt.
  */
 export const DEFAULT_STALL_TIMEOUT_MS = 30_000;
+
+/**
+ * A 401/403 whose body names the voice rather than the key. ElevenLabs answers
+ * a licensed voice with `voice_access_denied` / `famous_voice_not_permitted`
+ * and "Famous voices can only be used within the Reader App".
+ */
+const VOICE_PERMISSION_BODY = /voice_access_denied|voice_not_permitted|famous_voice_not_permitted|can only be used within the reader app/i;
