@@ -69,6 +69,15 @@ const statusTone: Record<NarrationJobStatus | "idle", string> = {
   cancelled: "bg-stone-50 text-ink-500",
 };
 
+/**
+ * A recast is worth saying out loud: a voice on screen that the creator did not
+ * choose should never appear without a reason.
+ */
+function recastNote(recast: Array<{ name: string; to: string }> | undefined): string {
+  if (!recast?.length) return "";
+  return ` Recast for this provider: ${recast.map(change => `${change.name} → ${change.to}`).join(", ")}.`;
+}
+
 export function NarrationRun({
   projectId,
   canRender,
@@ -110,7 +119,7 @@ export function NarrationRun({
   const start = trpc.bookx.startNarration.useMutation({
     onSuccess: result => {
       invalidate();
-      toast.success(result.resumed ? "Picking up where the last run stopped." : "Narration started.");
+      toast.success(`${result.resumed ? "Picking up where the last run stopped." : "Narration started."}${recastNote(result.recast)}`);
     },
     onError: onError("Prosecast could not start narration."),
   });
@@ -127,7 +136,7 @@ export function NarrationRun({
     onError: onError("Prosecast could not cancel the run."),
   });
   const retry = trpc.bookx.retryFailedNarration.useMutation({
-    onSuccess: result => { invalidate(); toast.success(`Retrying ${result.reset} unrendered segment(s).`); },
+    onSuccess: result => { invalidate(); toast.success(`Retrying ${result.reset} unrendered segment(s).${recastNote(result.recast)}`); },
     onError: onError("Prosecast could not retry the unrendered segments."),
   });
 

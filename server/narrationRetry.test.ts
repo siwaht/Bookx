@@ -51,9 +51,19 @@ describe("classifyHttpFailure", () => {
   });
 
   it("treats a bad request as fatal so the run fails fast", () => {
-    expect(classifyHttpFailure(400, null, "voice not found")).toMatchObject({ kind: "bad-request", retryable: false });
+    expect(classifyHttpFailure(400, null, "field text is required")).toMatchObject({ kind: "bad-request", retryable: false });
     expect(classifyHttpFailure(404).retryable).toBe(false);
     expect(classifyHttpFailure(413).retryable).toBe(false);
+  });
+
+  it("treats a voice the provider does not have as a voice problem", () => {
+    // What a provider switch leaves behind: a voice id the new provider never
+    // heard of. It is not a malformed request, and it is not the API key.
+    for (const body of ['{"detail":"voice not found"}', "invalid voice_id", "unknown voice"]) {
+      expect(classifyHttpFailure(400, null, body)).toMatchObject({ kind: "voice", retryable: false });
+    }
+    expect(classifyHttpFailure(400, null, "voice not found").message).toMatch(/Cast voices/);
+    expect(classifyHttpFailure(400, null, "voice not found").message).toMatch(/does not have this voice/);
   });
 
   it("includes a truncated body for context", () => {

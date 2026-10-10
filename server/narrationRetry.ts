@@ -97,10 +97,11 @@ export function classifyHttpFailure(status: number, retryAfter?: string | null, 
   // an auth failure would send the user to their API key instead of their cast.
   if (VOICE_PERMISSION_BODY.test(body ?? "")) {
     const sentence = providerSentence(body);
+    const licensed = LICENSED_VOICE_BODY.test(body ?? "");
     return {
       kind: "voice",
       retryable: false,
-      message: `The provider will not render this voice through its API.${sentence ? ` ${sentence}` : ""} Pick another voice for this character in Cast voices, then retry.`,
+      message: `${licensed ? "The provider will not render this voice through its API." : "The provider does not have this voice."}${sentence ? ` ${sentence}` : ""} Pick another voice for this character in Cast voices, then retry.`,
     };
   }
   if (AUTH_STATUSES.has(status)) {
@@ -226,7 +227,16 @@ export const DEFAULT_STALL_TIMEOUT_MS = 30_000;
  * a licensed voice with `voice_access_denied` / `famous_voice_not_permitted`
  * and "Famous voices can only be used within the Reader App".
  */
-const VOICE_PERMISSION_BODY = /voice_access_denied|voice_not_permitted|famous_voice_not_permitted|can only be used within the reader app/i;
+const LICENSED_VOICE_BODY = /voice_access_denied|voice_not_permitted|famous_voice_not_permitted|can only be used within the reader app/i;
+
+/**
+ * A voice the provider has never heard of — most often an id carried over from
+ * another provider, which is what changing the provider leaves behind.
+ */
+const UNKNOWN_VOICE_BODY = /voice[_ -]?(id[_ -]?)?not[_ -]?found|invalid voice|unknown voice|voice does not exist|not a valid voice|unsupported voice/i;
+
+/** Either way the run cannot voice this character, and the fix is the same. */
+const VOICE_PERMISSION_BODY = new RegExp(`${LICENSED_VOICE_BODY.source}|${UNKNOWN_VOICE_BODY.source}`, "i");
 
 /**
  * The provider's own explanation from a JSON error body, when it has one.

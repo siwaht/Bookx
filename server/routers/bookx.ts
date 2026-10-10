@@ -20,6 +20,7 @@ import {
 import { MAX_MANUSCRIPT_BYTES, ManuscriptImportError, parseManuscript } from "../manuscriptImport";
 import { analysisProgress, requestAnalysisCancel } from "../analysisJobs";
 import { assignProjectVoices, startCastAnalysis } from "../castAnalysis";
+import { recastForProvider } from "../castForProvider";
 import { previewChapterSound, previewSoundCue, soundDesignOverview, soundSettings, startScenePlan, startSoundPreparation } from "../soundDesign";
 import { isSoundTag } from "../soundLibrary";
 import { projectSetupSchema, projectUpdateSchema } from "../../shared/bookx";
@@ -455,14 +456,19 @@ export const bookxRouter = router({
     force: z.boolean().optional(),
     rewindSegments: z.number().int().min(0).max(20).optional(),
   })).mutation(async ({ ctx, input }) => {
-    await requireProject(ctx.user.id, input.projectId);
-    return startNarrationRun({
+    const { db, project } = await requireProject(ctx.user.id, input.projectId);
+    // Changing the provider or model can leave the cast on voices this provider
+    // does not offer. Recast those before the run, so a switch re-narrates the
+    // book instead of failing on every line.
+    const recast = await recastForProvider(db, input.projectId, project.voiceProvider, ctx.user.id);
+    const started = await startNarrationRun({
       projectId: input.projectId,
       ownerId: ctx.user.id,
       chapterIds: input.chapterIds,
       force: input.force,
       rewindSegments: input.rewindSegments,
     });
+    return { ...started, recast };
   }),
 
   /** Live progress for the newest run, computed from segments rather than a timer. */
@@ -615,7 +621,8 @@ export const bookxRouter = router({
 
   /** Re-queues only the segments that never rendered, within the last run's chapters. */
   retryFailedNarration: protectedProcedure.input(projectId).mutation(async ({ ctx, input }) => {
-    const { db } = await requireProject(ctx.user.id, input.projectId);
+    const { db, project } = await requireProject(ctx.user.id, input.projectId);
+    const recast = await recastForProvider(db, input.projectId, project.voiceProvider, ctx.user.id);
     // Keep the scope of the run being retried; retrying a two-chapter run used
     // to start a whole-book render.
     const [lastJob] = await db.select({ detail: bookxGenerationJobs.detail }).from(bookxGenerationJobs)
@@ -625,7 +632,7 @@ export const bookxRouter = router({
     const chapterIds = (lastJob?.detail as { chapterIds?: string[] } | null)?.chapterIds;
     const reset = await retryFailedSegments({ projectId: input.projectId, ownerId: ctx.user.id, chapterIds });
     const started = await startNarrationRun({ projectId: input.projectId, ownerId: ctx.user.id, chapterIds });
-    return { ...started, reset };
+    return { ...started, reset, recast };
   }),
 
   /**
