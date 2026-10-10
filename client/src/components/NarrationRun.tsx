@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { isTerminalJobStatus, type ChapterProgress, type NarrationJobStatus } from "@shared/narration";
+import { failureSummary } from "@shared/narration";
 import { ttsTraits } from "@shared/direction";
 import { ChapterPlayer } from "./studio/ChapterPlayer";
 import { DirectionEditor } from "./studio/DirectionEditor";
@@ -261,7 +262,7 @@ export function NarrationRun({
               tone="error"
               icon={<AlertCircle size={16} />}
               title={`${data?.failures.length} segment(s) did not render`}
-              body="Everything else is intact. Retrying re-renders only the missing segments."
+              body={`${failureSummary(data?.failures ?? [], workspace.data?.segments ?? [], workspace.data?.characters ?? [])} Everything else is intact. Retrying re-renders only the missing segments.`}
               action={
                 <button onClick={() => retry.mutate({ projectId })} disabled={retry.isPending} className="btn-soft mt-3 disabled:opacity-50">
                   <RefreshCw className="mr-1 inline" size={13} /> Retry unrendered segments

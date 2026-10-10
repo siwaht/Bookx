@@ -176,6 +176,33 @@ export function formatClock(ms: number | null | undefined): string {
 }
 
 /**
+ * Why segments did not render, in the reader's own terms.
+ *
+ * The panel used to say only *that* something failed, which left the reader with
+ * a retry button and no idea what to change — a licensed voice the provider
+ * refuses looked identical to a dropped connection. Naming the character and the
+ * opening of the line, then the provider's explanation, turns "1 segment(s) did
+ * not render" into something the reader can act on.
+ */
+export function failureSummary(
+  failures: ReadonlyArray<{ segmentId: string; message: string }>,
+  segments: ReadonlyArray<{ id: string; text?: string | null; characterId?: string | null }> = [],
+  characters: ReadonlyArray<{ id: string; name?: string | null }> = [],
+  limit = 3,
+): string {
+  const lines = failures.slice(0, limit).map((failure) => {
+    const segment = segments.find((row) => row.id === failure.segmentId);
+    const character = characters.find((row) => row.id === segment?.characterId);
+    const opening = String(segment?.text ?? "").trim().replace(/\s+/g, " ");
+    const quoted = opening ? `“${opening.slice(0, 60)}${opening.length > 60 ? "…" : ""}”` : "";
+    const where = [character?.name, quoted].filter(Boolean).join(" — ");
+    return where ? `${where}: ${failure.message}` : failure.message;
+  });
+  const hidden = failures.length - lines.length;
+  return [lines.join(" "), hidden > 0 ? `(+${hidden} more)` : ""].filter(Boolean).join(" ");
+}
+
+/**
  * Result of auditing a project's rendered audio.
  *
  * This is the answer to "is my book actually intact?" — it is computed from the

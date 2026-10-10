@@ -74,6 +74,9 @@ describe("classifyHttpFailure", () => {
     const result = classifyHttpFailure(401, null, body);
     expect(result).toMatchObject({ kind: "voice", retryable: false });
     expect(result.message).toMatch(/Cast voices/);
+    // The provider's own sentence, not the JSON envelope it arrived in.
+    expect(result.message).toContain("Famous voices can only be used within the Reader App.");
+    expect(result.message).not.toContain('{"detail"');
   });
 
   it("keeps a refused voice from stopping the whole run", () => {

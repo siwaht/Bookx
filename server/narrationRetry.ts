@@ -96,10 +96,11 @@ export function classifyHttpFailure(status: number, retryAfter?: string | null, 
   // Read this before the auth branch: the credentials are fine, and calling it
   // an auth failure would send the user to their API key instead of their cast.
   if (VOICE_PERMISSION_BODY.test(body ?? "")) {
+    const sentence = providerSentence(body);
     return {
       kind: "voice",
       retryable: false,
-      message: `The provider will not render this voice through its API${detail}. Pick another voice for this character in Cast voices, then retry.`,
+      message: `The provider will not render this voice through its API.${sentence ? ` ${sentence}` : ""} Pick another voice for this character in Cast voices, then retry.`,
     };
   }
   if (AUTH_STATUSES.has(status)) {
@@ -226,3 +227,22 @@ export const DEFAULT_STALL_TIMEOUT_MS = 30_000;
  * and "Famous voices can only be used within the Reader App".
  */
 const VOICE_PERMISSION_BODY = /voice_access_denied|voice_not_permitted|famous_voice_not_permitted|can only be used within the reader app/i;
+
+/**
+ * The provider's own explanation from a JSON error body, when it has one.
+ *
+ * Providers wrap it differently — ElevenLabs nests it under `detail.message`,
+ * OpenAI under `error.message` — and the sentence is what belongs in front of
+ * the reader; the envelope it arrived in is not.
+ */
+export function providerSentence(body: string | null | undefined): string | undefined {
+  if (!body) return undefined;
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    const nested = (parsed.detail ?? parsed.error ?? parsed) as Record<string, unknown>;
+    const candidate = nested?.message ?? nested?.detail ?? parsed.message;
+    return typeof candidate === "string" && candidate.trim() ? candidate.trim().slice(0, 200) : undefined;
+  } catch {
+    return undefined;
+  }
+}
