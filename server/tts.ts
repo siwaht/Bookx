@@ -1,10 +1,10 @@
 import { nanoid } from "nanoid";
 import { storagePut } from "./storage";
-import { inspectAudio } from "./audioIntegrity";
+import { inspectAudio, verifyAudioPayload } from "./audioIntegrity";
 import { ProviderConfigurationError } from "./narrationRetry";
 import { resolveProvider, type ProviderId } from "./providerRouting";
 import { DEFAULT_CLOUDFLARE_TTS_MODEL, availableProviders, buildCloudflareTtsBody, cloudflareHeaders, getCloudflareEndpoint, requireProviderApiKey } from "./providerCredentials";
-import { FISH_AUDIO_DEFAULT_MODEL, GRADIUM_DEFAULT_MODEL, buildElevenLabsBody, buildProviderCall, decodeProviderAudio, openAiVoice, type ProviderCall } from "./ttsRender";
+import { FISH_AUDIO_DEFAULT_MODEL, GRADIUM_DEFAULT_MODEL, buildElevenLabsBody, buildProviderCall, decodeProviderAudio, deepgramModelFor, openAiVoice, type ProviderCall } from "./ttsRender";
 import { billedCharacters, recordUsage } from "./usage";
 
 export type TtsProvider = ProviderId;
@@ -27,8 +27,16 @@ export function validateNarrationRequest(input: NarrationRequest) {
   return { ...input, text, voiceId: input.voiceId?.trim() || undefined };
 }
 
-export async function synthesizeNarration(input: NarrationRequest): Promise<{ clipId: string; storageKey: string; audioUrl: string; provider: TtsProvider; fallback: boolean }> {
-  return synthesizeNarrationAttempt(input, new Set());
+/**
+ * A preview has to be the voice that was chosen, so it is the one caller that
+ * turns the fallback chain off: with `allowFallback: false` the answer is the
+ * provider's own result — an error saying why — instead of another provider's
+ * default voice wearing the chosen voice's label.
+ */
+export type NarrationOptions = { allowFallback?: boolean };
+
+export async function synthesizeNarration(input: NarrationRequest, options: NarrationOptions = {}): Promise<{ clipId: string; storageKey: string; audioUrl: string; provider: TtsProvider; fallback: boolean }> {
+  return synthesizeNarrationAttempt(input, new Set(), options.allowFallback !== false);
 }
 
 /**
@@ -36,7 +44,7 @@ export async function synthesizeNarration(input: NarrationRequest): Promise<{ cl
  * in this chain so a failing fallback can never re-enter a previous provider
  * and recurse forever.
  */
-async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<TtsProvider>): Promise<{ clipId: string; storageKey: string; audioUrl: string; provider: TtsProvider; fallback: boolean }> {
+async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<TtsProvider>, allowFallback: boolean): Promise<{ clipId: string; storageKey: string; audioUrl: string; provider: TtsProvider; fallback: boolean }> {
   const requested = validateNarrationRequest(input);
   if (!requested.projectId) throw new Error("A project is required to store generated narration");
   const available = await availableProviders(requested.ownerId, "text-to-speech");
@@ -71,12 +79,15 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
   }
 
   if (!response?.ok) {
+    if (!allowFallback) {
+      throw new Error(`${provider} could not render this request ${failure}. Choose a voice and model this provider offers, or switch provider.`);
+    }
     const candidates: TtsProvider[] = ["ElevenLabs", "Deepgram", "OpenAI", "Cloudflare", "Fish Audio", "Gradium"];
     for (const candidate of candidates) {
       if (tried.has(candidate) || !available.includes(candidate)) continue;
       tried.add(candidate);
       try {
-        const fallbackResult = await synthesizeNarrationAttempt({ ...request, provider: candidate, model: undefined, voiceId: undefined }, tried);
+        const fallbackResult = await synthesizeNarrationAttempt({ ...request, provider: candidate, model: undefined, voiceId: undefined }, tried, allowFallback);
         return { ...fallbackResult, fallback: true };
       } catch {
         // Continue to the next configured route; the final error keeps the original provider context.
@@ -96,6 +107,10 @@ async function synthesizeNarrationAttempt(input: NarrationRequest, tried: Set<Tt
   }
   // Stored under the container it really is, so a WAV preview is not labelled MP3.
   const isWav = inspectAudio(buffer).container === "wav";
+  // A gateway that answers 200 with a JSON error body would otherwise be stored
+  // as a clip the browser cannot play, credited to the voice that was chosen.
+  const verdict = verifyAudioPayload(buffer);
+  if (!verdict.ok) throw new Error(`${provider} did not return audio: ${verdict.reason}`);
   const clipId = nanoid();
   const stored = await storagePut(`bookx/${request.projectId}/narration/${clipId}.${isWav ? "wav" : "mp3"}`, buffer, isWav ? "audio/wav" : "audio/mpeg");
   void recordUsage({
@@ -126,7 +141,7 @@ async function providerResponse(provider: TtsProvider, request: NarrationRequest
       signal: AbortSignal.timeout(120_000),
     })
     : provider === "Deepgram"
-      ? await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(request.model || "aura-2-thalia-en")}`, {
+      ? await fetch(`https://api.deepgram.com/v1/speak?model=${encodeURIComponent(deepgramModelFor(request.model || "aura-2-thalia-en", request.voiceId))}`, {
         method: "POST",
         headers: { Authorization: `Token ${await requireProviderApiKey("Deepgram", request.ownerId)}`, "content-type": "application/json", accept: "audio/mpeg" },
         body: JSON.stringify({ text: request.text }),

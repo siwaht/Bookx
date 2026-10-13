@@ -32,6 +32,9 @@ function stubAllProviderKeys() {
   vi.stubEnv("CLOUDFLARE_API_TOKEN", "qa-token");
 }
 
+/** A payload the integrity check recognises as audio, so a fake body is not the thing under test. */
+const audioBody = (extra: number[] = []) => new Uint8Array([0x49, 0x44, 0x33, 4, 0, 0, 0, 0, 0, 0, ...extra]);
+
 describe("Prosecast narration request validation", () => {
   it("normalizes an eligible narration request", () => {
     expect(validateNarrationRequest({ provider: "OpenAI", text: "  The tide was turning.  ", voiceId: "alloy" })).toEqual({
@@ -51,7 +54,7 @@ describe("Prosecast narration request validation", () => {
     const mockedFetch = vi.fn()
       .mockResolvedValueOnce(new Response("", { status: 500 }))
       .mockResolvedValueOnce(new Response("", { status: 403 }))
-      .mockResolvedValueOnce(new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+      .mockResolvedValueOnce(new Response(audioBody([1, 2, 3]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
     vi.stubGlobal("fetch", mockedFetch);
 
     const result = await synthesizeNarration({ provider: "Cloudflare", projectId: "qa-fallback", text: "A short fallback check." });
@@ -64,7 +67,7 @@ describe("Prosecast narration request validation", () => {
     stubAllProviderKeys();
     const mockedFetch = vi.fn()
       .mockResolvedValueOnce(new Response("", { status: 503 }))
-      .mockResolvedValueOnce(new Response(new Uint8Array([4, 5, 6]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+      .mockResolvedValueOnce(new Response(audioBody([4, 5, 6]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
     vi.stubGlobal("fetch", mockedFetch);
 
     const result = await synthesizeNarration({ provider: "ElevenLabs", projectId: "qa-elevenlabs-fallback", text: "A direct provider fallback check." });
@@ -99,7 +102,7 @@ describe("provider credentials gate narration routes", () => {
 
     const mockedFetch = vi.fn()
       .mockResolvedValueOnce(new Response("", { status: 503 }))
-      .mockResolvedValueOnce(new Response(new Uint8Array([7, 8, 9]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+      .mockResolvedValueOnce(new Response(audioBody([7, 8, 9]), { status: 200, headers: { "content-type": "audio/mpeg" } }));
     vi.stubGlobal("fetch", mockedFetch);
 
     const result = await synthesizeNarration({ provider: "ElevenLabs", projectId: "qa-no-key", text: "Skip the unconfigured route." });
@@ -117,5 +120,36 @@ describe("provider credentials gate narration routes", () => {
 
     await expect(synthesizeNarration({ provider: "ElevenLabs", projectId: "qa-unconfigured", text: "Nothing is connected." }))
       .rejects.toThrow(/ElevenLabs is not connected/);
+  });
+});
+
+describe("a preview is the voice that was chosen", () => {
+  it("answers with the provider's failure instead of another provider's default voice", async () => {
+    stubAllProviderKeys();
+    const mockedFetch = vi.fn().mockResolvedValue(new Response("", { status: 403 }));
+    vi.stubGlobal("fetch", mockedFetch);
+
+    await expect(synthesizeNarration({ provider: "ElevenLabs", projectId: "qa-pinned", text: "Only this voice.", voiceId: "some-voice" }, { allowFallback: false }))
+      .rejects.toThrow(/ElevenLabs could not render this request/);
+    // Exactly one call: the chosen provider, never a stand-in.
+    expect(mockedFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a JSON error body served as audio instead of storing it as a clip", async () => {
+    stubAllProviderKeys();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response('{"err_code":"NONE"}', { status: 200, headers: { "content-type": "audio/mpeg" } })));
+
+    await expect(synthesizeNarration({ provider: "Deepgram", projectId: "qa-json", text: "Not audio." }, { allowFallback: false }))
+      .rejects.toThrow(/did not return audio/);
+  });
+
+  it("lets a Deepgram preview follow the chosen voice, which is the model", async () => {
+    stubAllProviderKeys();
+    const mockedFetch = vi.fn().mockResolvedValue(new Response(audioBody(), { status: 200, headers: { "content-type": "audio/mpeg" } }));
+    vi.stubGlobal("fetch", mockedFetch);
+
+    await synthesizeNarration({ provider: "Deepgram", projectId: "qa-voice-model", text: "Which voice is this?", voiceId: "aura-2-zeus-en", model: "aura-2-thalia-en" }, { allowFallback: false });
+
+    expect(String(mockedFetch.mock.calls[0]?.[0])).toContain("model=aura-2-zeus-en");
   });
 });

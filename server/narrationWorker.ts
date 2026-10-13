@@ -182,10 +182,17 @@ export async function ensureChapterSegments(input: {
   const limit = textLimitForModel(input.model);
 
   const [project] = await db
-    .select({ narrationStyle: bookxProjects.narrationStyle })
+    .select({ narrationStyle: bookxProjects.narrationStyle, kind: bookxProjects.kind })
     .from(bookxProjects)
     .where(eq(bookxProjects.id, input.projectId))
     .limit(1);
+
+  // A listener hears the chapter's name between chapters, so the title is
+  // narrated — from the title itself. Keeping a second copy of it at the top of
+  // the body is what made every chapter show its own title twice, once as its
+  // name and once as text. A podcast's chapter names ("Segment 1") are labels
+  // rather than lines to read aloud.
+  const announceTitles = (project?.kind ?? "audiobook") === "audiobook";
   const splitDialogue = (project?.narrationStyle ?? "single") !== "single";
 
   const chapters = await includedChapters(db, input.projectId);
@@ -202,7 +209,8 @@ export async function ensureChapterSegments(input: {
   const rebuiltChapters: string[] = [];
 
   for (const chapter of scoped) {
-    const units = segmentChapter(chapter.body || "", { maxChars: limit, splitDialogue });
+    const spokenText = [announceTitles ? chapter.title.trim() : "", chapter.body || ""].filter(Boolean).join("\n\n");
+    const units = segmentChapter(spokenText, { maxChars: limit, splitDialogue });
     const existing = await db
       .select()
       .from(bookxSegments)

@@ -67,7 +67,8 @@ describe("Prosecast podcast import and voice discovery", () => {
     try {
       const preview = await caller.bookx.previewVoice({ projectId: created.id, provider: "ElevenLabs", voiceId: "iris-narrative", text: "A clear voice helps listeners follow every moment." });
       expect(preview).toMatchObject({ voiceId: "iris-narrative", storageKey: "bookx/qa/narration/library-preview.mp3" });
-      expect(synthesizeNarration).toHaveBeenCalledWith(expect.objectContaining({ projectId: created.id, provider: "ElevenLabs", voiceId: "iris-narrative", model: "eleven_multilingual_v2" }));
+      // Pinned: the chosen voice answers, or an error says why it could not.
+      expect(synthesizeNarration).toHaveBeenCalledWith(expect.objectContaining({ projectId: created.id, provider: "ElevenLabs", voiceId: "iris-narrative", model: "eleven_multilingual_v2" }), { allowFallback: false });
     } finally {
       await caller.bookx.deleteProject({ projectId: created.id });
     }

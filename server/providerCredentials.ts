@@ -382,7 +382,10 @@ export function buildCloudflareTtsBody(model: string, text: string, voiceId?: st
   if (/aura-2|aura-1/.test(model)) {
     const speaker = resolveAura2Speaker(voiceId);
     const body: Record<string, unknown> = { text, encoding: "mp3" };
-    if (speaker && /aura-2/.test(model)) body.speaker = speaker;
+    // Aura-1 takes the same `speaker` field as Aura-2. Leaving it out meant every
+    // voice was read by the model's default speaker, so choosing another voice
+    // changed nothing a listener could hear.
+    if (speaker) body.speaker = speaker;
     return body;
   }
   if (/melotts/.test(model)) {

@@ -58,7 +58,8 @@ describe(`Prosecast character preview`, () => {
 
       const preview = await caller.bookx.previewCharacterVoice({ projectId: created.id, characterId: character.id, provider: "Deepgram" });
       expect(preview).toMatchObject({ characterId: character.id, voiceId: "Iris", storageKey: "bookx/qa/narration/narrator-preview.mp3" });
-      expect(synthesizeNarration).toHaveBeenCalledWith(expect.objectContaining({ provider: "Deepgram", voiceId: "Iris", model: "aura-2-thalia-en" }));
+      // A preview is pinned to the chosen voice: no other provider may answer for it.
+      expect(synthesizeNarration).toHaveBeenCalledWith(expect.objectContaining({ provider: "Deepgram", voiceId: "Iris", model: "aura-2-thalia-en" }), { allowFallback: false });
 
       const workspace = await caller.bookx.getWorkspace({ projectId: created.id });
       expect(workspace.characters).toEqual(expect.arrayContaining([

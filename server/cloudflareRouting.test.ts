@@ -141,6 +141,15 @@ describe("buildCloudflareTtsBody", () => {
     expect(buildCloudflareTtsBody("@cf/deepgram/aura-2-en", "hello", "thalia")).toMatchObject({ speaker: "thalia" });
   });
 
+  // Observed against the live account: `@cf/deepgram/aura-1` answers 200 and a
+  // different payload for `speaker: "athena"` than for no speaker at all. Sending
+  // no speaker (the old behaviour) meant every voice came out in the same default
+  // voice, so changing the voice changed nothing a listener could hear.
+  it("sends the speaker for Aura-1 too, not only Aura-2", () => {
+    expect(buildCloudflareTtsBody("@cf/deepgram/aura-1", "hello", "athena")).toEqual({ text: "hello", encoding: "mp3", speaker: "athena" });
+    expect(buildCloudflareTtsBody("@cf/deepgram/aura-1", "hello")).toEqual({ text: "hello", encoding: "mp3" });
+  });
+
   // Observed: melotts rejects { text } with "required properties at '/' are 'prompt'".
   it("uses prompt/lang for MeloTTS", () => {
     expect(buildCloudflareTtsBody("@cf/myshell-ai/melotts", "hello", "iris-narrative", "Spanish")).toEqual({

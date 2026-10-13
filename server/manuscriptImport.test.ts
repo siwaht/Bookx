@@ -98,8 +98,9 @@ describe("manuscript import: EPUB", () => {
     expect(byTitle["The Harbour"]).toMatchObject({ kind: "chapter", included: true });
 
     const storm = byTitle["Chapter One: The Storm"]!.body;
-    // Entities decoded, heading kept so the narrator announces the chapter.
-    expect(storm.startsWith("Chapter One: The Storm\n\n")).toBe(true);
+    // Entities decoded. The heading is no longer repeated at the top of the body:
+    // it is the chapter's name, and the narration reads it from there.
+    expect(storm.startsWith("Chapter One: The Storm")).toBe(false);
     expect(storm).toContain("“Are you coming?” Mara asked. Elias shook his head—slowly.");
     expect(storm).toContain("three days and the river rose.");
     // Footnote markers and footnote bodies are not narrated.
@@ -177,11 +178,32 @@ describe("manuscript import: text and markdown", () => {
     expect(contents?.included).toBe(false);
   });
 
+  it("does not repeat a chapter heading as the chapter's first paragraph", async () => {
+    const text = [
+      "PROLOGUE",
+      "",
+      "Nine hundred years before the inn at Korash, there was only the stone.",
+      "",
+      "CHAPTER 1 — The Scribe",
+      "",
+      "The ink was wrong, and the scribe knew it before anyone else did.",
+    ].join("\n");
+    const result = await parseManuscript({ filename: "book.txt", data: Buffer.from(text, "utf8") });
+    expect(result.chapters.map(chapter => chapter.body)).toEqual([
+      "Nine hundred years before the inn at Korash, there was only the stone.",
+      "The ink was wrong, and the scribe knew it before anyone else did.",
+    ]);
+    for (const chapter of result.chapters) {
+      expect(chapter.body.toLowerCase().startsWith(chapter.title.toLowerCase().slice(0, 12))).toBe(false);
+    }
+  });
+
   it("splits Markdown on headings and strips inline markup", async () => {
     const markdown = "# Chapter 1\n\nShe said *hello* to [the man](http://x.test).\n\n---\n\nAfter the break.\n\n# Chapter 2\n\nThe end.";
     const result = await parseManuscript({ filename: "notes.md", data: Buffer.from(markdown) });
     expect(result.chapters.map(chapter => chapter.title)).toEqual(["Chapter 1", "Chapter 2"]);
-    expect(result.chapters[0]!.body).toBe(`Chapter 1\n\nShe said hello to the man.\n\n${SCENE_BREAK}\n\nAfter the break.`);
+    // The heading names the chapter; it is not also its first paragraph.
+    expect(result.chapters[0]!.body).toBe(`She said hello to the man.\n\n${SCENE_BREAK}\n\nAfter the break.`);
   });
 
   it("treats each line as a paragraph when the text has no blank lines", () => {

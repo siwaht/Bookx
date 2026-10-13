@@ -774,14 +774,14 @@ export const bookxRouter = router({
     if (!voiceId) throw new Error("Assign a voice before generating a preview");
     const text = character.sampleLine?.trim();
     if (!text) throw new Error("Add a sample line before generating a preview");
-    const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text, voiceId, model: plan.model, ownerId: ctx.user.id });
+    const generated = await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text, voiceId, model: plan.model, ownerId: ctx.user.id }, { allowFallback: false });
     await db.update(bookxCharacters).set({ previewStorageKey: generated.storageKey, updatedAt: new Date() }).where(eq(bookxCharacters.id, character.id));
     return { ...generated, characterId: character.id, voiceId };
   }),
 
   previewVoice: protectedProcedure.input(z.object({ projectId: z.string(), provider: providerIdSchema, voiceId: z.string().min(1).max(160), model: z.string().max(160).optional(), text: z.string().trim().min(1).max(600) })).mutation(async ({ ctx, input }) => {
     const { project } = await requireProject(ctx.user.id, input.projectId);
-    const generated = await synthesizeNarration({ projectId: input.projectId, provider: input.provider, text: input.text, voiceId: input.voiceId, model: input.model || project.voiceModel, ownerId: ctx.user.id });
+    const generated = await synthesizeNarration({ projectId: input.projectId, provider: input.provider, text: input.text, voiceId: input.voiceId, model: input.model || project.voiceModel, ownerId: ctx.user.id }, { allowFallback: false });
     return { ...generated, voiceId: input.voiceId };
   }),
 
@@ -803,7 +803,7 @@ export const bookxRouter = router({
       // details; a free-standing clip is a preview and may fall back.
       const generated = segment
         ? { ...(await renderSegmentNow({ projectId: input.projectId, ownerId: ctx.user.id, segmentId: segment.id, provider: plan.provider, model: plan.model, voiceId, language: project.language })), clipId: segment.id, provider: plan.provider, fallback: false }
-        : await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text: input.text, voiceId, model: plan.model, ownerId: ctx.user.id });
+        : await synthesizeNarration({ projectId: input.projectId, provider: plan.provider, text: input.text, voiceId, model: plan.model, ownerId: ctx.user.id }, { allowFallback: false });
       await db.update(bookxGenerationJobs).set({ status: "completed", completedSegments: 1, updatedAt: new Date() }).where(eq(bookxGenerationJobs.id, jobId));
       return { jobId, characterId: input.characterId, voiceId, ...generated };
     } catch (error) {

@@ -328,6 +328,21 @@ function blocksToBody(blocks: Block[]): string {
   return paragraphs.join("\n\n");
 }
 
+/**
+ * The block that named a section is also the section's first block, so the body
+ * opened with that title as well: every chapter showed its own title twice, and
+ * the narrator read it twice. The block stays in `section.blocks` because the
+ * front-matter classifiers count words there; it is simply not part of the text.
+ */
+function dropRepeatedHeading(title: string, blocks: Block[]): Block[] {
+  const normalize = (value: string) => value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const wanted = normalize(title);
+  if (!wanted) return blocks;
+  let index = 0;
+  while (index < blocks.length && normalize(blocks[index]!.text) === wanted) index++;
+  return index ? blocks.slice(index) : blocks;
+}
+
 // ---------------------------------------------------------------------------
 // Front / back matter classification
 // ---------------------------------------------------------------------------
@@ -452,9 +467,10 @@ function finalizeSections(sections: Section[], warnings: string[]): ImportedChap
 
   const chapters = merged.sections.map((section, index) => {
     const kind = merged.kinds[index]!;
-    const body = blocksToBody(section.blocks);
+    const title = tidyTitle(section.title) || `Section ${index + 1}`;
+    const body = blocksToBody(dropRepeatedHeading(title, section.blocks));
     return {
-      title: tidyTitle(section.title) || `Section ${index + 1}`,
+      title,
       body,
       kind,
       included: kind === "chapter",
