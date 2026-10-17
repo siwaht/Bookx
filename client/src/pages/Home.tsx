@@ -276,12 +276,18 @@ export default function Home() {
   // "N lines will re-render" instead of leaving the creator guessing.
   const pendingVoiceLinesByCharacter = useMemo(() => {
     const counts = new Map<string, number>();
-    const assigned = new Map((workspaceQuery.data?.characters ?? []).map((character) => [character.id, character.voiceId ?? null]));
+    const cast = workspaceQuery.data?.characters ?? [];
+    const narratorId = cast.find((character) => character.isNarrator)?.id ?? null;
+    const assigned = new Map(cast.map((character) => [character.id, character.voiceId ?? null]));
     for (const segment of workspaceQuery.data?.segments ?? []) {
-      if (!segment.characterId || !segment.audioStorageKey || !segment.voiceId) continue;
-      const current = assigned.get(segment.characterId);
+      if (!segment.audioStorageKey || !segment.voiceId) continue;
+      // Narration carries no character id. It is the narrator's, so the narrator
+      // is who re-renders it when their voice changes.
+      const owner = segment.characterId ?? narratorId;
+      if (!owner) continue;
+      const current = assigned.get(owner);
       if (!current || current === segment.voiceId) continue;
-      counts.set(segment.characterId, (counts.get(segment.characterId) ?? 0) + 1);
+      counts.set(owner, (counts.get(owner) ?? 0) + 1);
     }
     return counts;
   }, [workspaceQuery.data]);
