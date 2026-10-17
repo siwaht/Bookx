@@ -248,7 +248,13 @@ export default function Home() {
   // read from. Previously an empty search result silently presented the five
   // starter voices as matches, and previewing one failed against the provider.
   const catalogVoices: VoiceChoice[] | null = isAuthenticated && discoveredVoiceQuery.data
-    ? discoveredVoiceQuery.data.map((voice, index) => ({ id: voice.id, name: voice.label, detail: voice.description, color: paletteColor(index) }))
+    ? discoveredVoiceQuery.data.map((voice, index) => ({ id: voice.id, name: voice.label, detail: voice.description, color: paletteColor(index), gender: voice.gender ?? null, age: voice.age ?? null, accent: voice.accent ?? null, useCase: voice.useCase ?? null }))
+    : null;
+  // The picker is deliberately not limited by the library search: a creator who
+  // types "british" in the sidebar still needs every voice to be assignable.
+  const fullCatalogQuery = trpc.providers.voiceCatalog.useQuery({ provider: catalogProvider, query: "" }, { enabled: isAuthenticated });
+  const allCatalogVoices: VoiceChoice[] | null = isAuthenticated && fullCatalogQuery.data
+    ? fullCatalogQuery.data.map((voice, index) => ({ id: voice.id, name: voice.label, detail: voice.description, color: paletteColor(index), gender: voice.gender ?? null, age: voice.age ?? null, accent: voice.accent ?? null, useCase: voice.useCase ?? null }))
     : null;
   const discoveredVoices: VoiceChoice[] = catalogVoices ?? voiceLibrary;
   const filteredVoices = useMemo(() => {
@@ -265,6 +271,20 @@ export default function Home() {
       .sort((left, right) => right.score - left.score || left.voice.name.localeCompare(right.voice.name))
       .map(({ voice }) => voice);
   }, [catalogVoices, discoveredVoices, voiceSearch]);
+  // Changing a character's voice invalidates exactly the lines they have audio
+  // for in a different voice. Counting them here is what lets the cast list say
+  // "N lines will re-render" instead of leaving the creator guessing.
+  const pendingVoiceLinesByCharacter = useMemo(() => {
+    const counts = new Map<string, number>();
+    const assigned = new Map((workspaceQuery.data?.characters ?? []).map((character) => [character.id, character.voiceId ?? null]));
+    for (const segment of workspaceQuery.data?.segments ?? []) {
+      if (!segment.characterId || !segment.audioStorageKey || !segment.voiceId) continue;
+      const current = assigned.get(segment.characterId);
+      if (!current || current === segment.voiceId) continue;
+      counts.set(segment.characterId, (counts.get(segment.characterId) ?? 0) + 1);
+    }
+    return counts;
+  }, [workspaceQuery.data]);
   // Readiness is derived from rendered audio, not from a simulated progress value,
   // so Review and Export cannot report a book as ready before it is.
   const narrationStatusQuery = trpc.bookx.narrationStatus.useQuery({ projectId: activeProject.id }, { enabled: activeProjectIsSaved });
@@ -845,16 +865,28 @@ export default function Home() {
       return false;
     }
   };
+  // Casting is a listening decision: hear the candidate on this character's own
+  // line from the manuscript before committing to it.
+  const previewVoiceForCharacter = (character: Character, voice: VoiceChoice) => {
+    const persisted = workspaceQuery.data?.characters.find((value) => value.name === character.name);
+    const provider = narrationProvider(activeProject.voiceProvider, providers);
+    if (!activeProjectIsSaved || !persisted || !provider) { playBrowserSample(voice.name); notify(`${character.name}: browser preview is playing.`); return; }
+    if (previewCharacterVoice.isPending) { notify("A voice preview is already being made."); return; }
+    previewCharacterVoice.mutate({ projectId: activeProject.id, characterId: persisted.id, provider, voiceId: voice.id, model: activeProject.voiceModel }, {
+      onSuccess: (result) => { setPreviewUrls((current) => ({ ...current, [character.name]: result.audioUrl })); toast.success(`${character.name} reads their line in ${voice.name}.`); },
+      onError: (error) => toast.error("Prosecast could not generate that preview.", { description: error.message.slice(0, 140) }),
+    });
+  };
   const changeCharacterVoice = (name: string, voice: VoiceChoice) => {
     const storedLocally = storeLocalCastOverride(name, voice);
     setCharacters((previous) => previous.map((character) => character.name === name ? { ...character, voice: voice.name, voiceId: voice.id, confidence: undefined, rationale: "Manually selected by the creator." } : character));
     const persisted = workspaceQuery.data?.characters.find((character) => character.name === name);
     if (activeProjectCanPersist && persisted) updateCharacter.mutate({ projectId: activeProject.id, characterId: persisted.id, voiceId: voice.id, voiceName: voice.name, assignmentSource: "manual" }, {
-      onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
+      onSuccess: () => { utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }); toast.success(`${name} now speaks with ${voice.name}.`, { description: "Only their lines are re-rendered; every other line keeps its audio." }); },
       onError: () => { storeLocalCastOverride(name, voice); notify("Your voice change is saved in this browser until the project can sync."); },
     });
     else if (activeProjectCanPersist) updateCharacterByName.mutate({ projectId: activeProject.id, name, voiceId: voice.id, voiceName: voice.name, assignmentSource: "manual" }, {
-      onSuccess: () => utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }),
+      onSuccess: () => { utils.bookx.getWorkspace.invalidate({ projectId: activeProject.id }); toast.success(`${name} now speaks with ${voice.name}.`, { description: "Only their lines are re-rendered; every other line keeps its audio." }); },
       onError: () => { storeLocalCastOverride(name, voice); notify("Your voice change is saved in this browser until the project can sync."); },
     });
     else if (!storedLocally) notify("Your voice change is active for this session.");
@@ -920,7 +952,7 @@ export default function Home() {
               onNext={() => setTab("cast")}
             />
           )}
-          {tab === "cast" && <CastingReview characters={characters.map((character) => ({ ...character, previewUrl: previewUrls[character.name] }))} voices={filteredVoices} voicesLoading={isAuthenticated && discoveredVoiceQuery.isLoading} query={voiceSearch} setQuery={setVoiceSearch} prompt={voicePrompt} setPrompt={setVoicePrompt} onFindSimilar={findSimilarVoices} onAutoCast={autoCast} onAddCharacter={addCharacter} isCasting={isCasting || castRunning} modelLabel={`${activeProject.languageModelProvider || "Cloudflare"} Â· ${activeProject.languageModel || "@cf/openai/gpt-oss-120b"}`} onPreview={previewCharacter} onPreviewVoice={previewLibraryVoice} onVoiceChange={changeCharacterVoice} libraryPreviewUrls={libraryPreviewUrls} analysis={activeProjectIsSaved && castAnalysisQuery.data ? castAnalysisQuery.data : null} onCancelAnalysis={cancelCastAnalysis} narrationStyle={narrationStyle} onNarrationStyleChange={activeProjectIsSaved ? changeNarrationStyle : undefined} onAssignDefaults={activeProjectIsSaved ? assignDefaults : undefined} assigningDefaults={assignDefaultVoices.isPending} onRemoveCharacter={removeCharacter} />}
+          {tab === "cast" && <CastingReview characters={characters.map((character) => ({ ...character, previewUrl: previewUrls[character.name], pendingVoiceLines: character.id ? pendingVoiceLinesByCharacter.get(character.id) ?? 0 : 0 }))} voices={filteredVoices} allVoices={allCatalogVoices ?? discoveredVoices} onPreviewVoiceFor={previewVoiceForCharacter} voicesLoading={isAuthenticated && discoveredVoiceQuery.isLoading} query={voiceSearch} setQuery={setVoiceSearch} prompt={voicePrompt} setPrompt={setVoicePrompt} onFindSimilar={findSimilarVoices} onAutoCast={autoCast} onAddCharacter={addCharacter} isCasting={isCasting || castRunning} modelLabel={`${activeProject.languageModelProvider || "Cloudflare"} Â· ${activeProject.languageModel || "@cf/openai/gpt-oss-120b"}`} onPreview={previewCharacter} onPreviewVoice={previewLibraryVoice} onVoiceChange={changeCharacterVoice} libraryPreviewUrls={libraryPreviewUrls} analysis={activeProjectIsSaved && castAnalysisQuery.data ? castAnalysisQuery.data : null} onCancelAnalysis={cancelCastAnalysis} narrationStyle={narrationStyle} onNarrationStyleChange={activeProjectIsSaved ? changeNarrationStyle : undefined} onAssignDefaults={activeProjectIsSaved ? assignDefaults : undefined} assigningDefaults={assignDefaultVoices.isPending} onRemoveCharacter={removeCharacter} />}
           {tab === "pronunciation" && <Pronunciation rules={rules} draft={ruleDraft} setDraft={setRuleDraft} onAdd={addRule} onDelete={deleteRule} />}
           {tab === "generation" && (
             <NarrationRun
