@@ -14,12 +14,14 @@
  */
 
 /**
- * Concurrent requests per provider account. ElevenLabs' smallest paid plans
- * allow 3 to 5, so 3 is safe for most accounts; the others are generous APIs.
- * Override with `TTS_CONCURRENCY`, e.g. `ElevenLabs=5,OpenAI=8,default=2`.
+ * Concurrent requests per provider account. ElevenLabs allows 5 on the
+ * Creator plan for every model (10 for Flash and Turbo); Free allows 2 and
+ * Starter 3, so set `TTS_CONCURRENCY=ElevenLabs=3` on a smaller plan. The
+ * others are generous APIs. Override with `TTS_CONCURRENCY`, e.g.
+ * `ElevenLabs=10,OpenAI=8,default=2`.
  */
 const DEFAULT_LIMITS: Record<string, number> = {
-  ElevenLabs: 3,
+  ElevenLabs: 5,
   OpenAI: 4,
   Deepgram: 4,
   Cloudflare: 2,

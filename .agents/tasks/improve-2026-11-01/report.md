@@ -24,7 +24,7 @@ The local database (`data/bookx.sqlite`) has no projects, segments or jobs left,
 
 ### 2. Books narrated together hit provider concurrency limits (server)
 
-New file `server/providerSlots.ts` adds a first-come-first-served cap on concurrent TTS requests per owner and provider. Every narration run, retake and clip in the process shares it. The defaults are ElevenLabs 3, OpenAI 4, Deepgram 4 and others 2; override them with `TTS_CONCURRENCY`.
+New file `server/providerSlots.ts` adds a first-come-first-served cap on concurrent TTS requests per owner and provider. Every narration run, retake and clip in the process shares it. The defaults are ElevenLabs 5 (the account is on the Creator plan, which allows 5 on every model), OpenAI 4, Deepgram 4 and others 2; override them with `TTS_CONCURRENCY`.
 
 `renderSegmentAudio` (`server/ttsRender.ts`) takes a slot before the request timeout starts, and gives it back once the body has been read. Before this change, several books on one ElevenLabs account each sent requests freely, got HTTP 429 `too_many_concurrent_requests`, and backed off. That made runs stall and resume.
 
