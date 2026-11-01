@@ -471,6 +471,49 @@ export const bookxRouter = router({
     return { ...started, recast };
   }),
 
+  /**
+   * Every book on this account with a live narration run. Several books can
+   * narrate at once; this is the list the dashboard shows them in.
+   */
+  narrationQueue: protectedProcedure.query(async ({ ctx }) => {
+    const db = await getDb();
+    if (!db) return [];
+    const rows = await db
+      .select({
+        jobId: bookxGenerationJobs.id,
+        projectId: bookxGenerationJobs.projectId,
+        title: bookxProjects.title,
+        status: bookxGenerationJobs.status,
+        provider: bookxGenerationJobs.provider,
+        model: bookxGenerationJobs.model,
+        totalSegments: bookxGenerationJobs.totalSegments,
+        completedSegments: bookxGenerationJobs.completedSegments,
+        failedSegments: bookxGenerationJobs.failedSegments,
+        pauseRequested: bookxGenerationJobs.pauseRequested,
+        cancelRequested: bookxGenerationJobs.cancelRequested,
+        updatedAt: bookxGenerationJobs.updatedAt,
+      })
+      .from(bookxGenerationJobs)
+      .innerJoin(bookxProjects, eq(bookxProjects.id, bookxGenerationJobs.projectId))
+      .where(and(eq(bookxProjects.ownerId, ctx.user.id), inArray(bookxGenerationJobs.status, ["queued", "running", "paused"])))
+      .orderBy(desc(bookxGenerationJobs.updatedAt))
+      .limit(50);
+    return rows.map(row => ({
+      jobId: row.jobId,
+      projectId: row.projectId,
+      title: row.title,
+      // The query only returns live runs.
+      status: row.status as "queued" | "running" | "paused",
+      voice: row.provider && row.model ? `${row.provider} · ${row.model}` : null,
+      totalSegments: row.totalSegments,
+      completedSegments: row.completedSegments,
+      failedSegments: row.failedSegments,
+      percent: row.totalSegments ? Math.min(100, Math.round((row.completedSegments / row.totalSegments) * 100)) : 0,
+      stopping: Boolean(row.pauseRequested || row.cancelRequested),
+      updatedAt: new Date(row.updatedAt).toISOString(),
+    }));
+  }),
+
   /** Live progress for the newest run, computed from segments rather than a timer. */
   narrationStatus: protectedProcedure.input(projectId).query(async ({ ctx, input }): Promise<NarrationProgress> => {
     const { db } = await requireProject(ctx.user.id, input.projectId);

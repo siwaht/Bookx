@@ -17,6 +17,7 @@ import {
 import { ABSOLUTE_TEXT_LIMIT } from "../shared/narration";
 import { DEFAULT_VOICE_SETTINGS, effectiveVoiceSettings, ttsTraits, type VoiceSettings } from "../shared/direction";
 import { billedCharacters, recordUsage } from "./usage";
+import { acquireProviderSlot } from "./providerSlots";
 
 /**
  * A single, provider-pinned render of one segment.
@@ -444,6 +445,10 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
   const requestTimeoutMs = request.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const stallTimeoutMs = request.stallTimeoutMs ?? DEFAULT_STALL_TIMEOUT_MS;
 
+  // Wait for the account's turn before the clock starts: time spent queued
+  // behind other books is not provider time, and must not count as a timeout.
+  const release = await acquireProviderSlot(request.provider, request.ownerId, request.signal);
+
   // Combine the caller's cancellation with this attempt's own deadline.
   const controller = new AbortController();
   const onAbort = () => controller.abort();
@@ -468,6 +473,8 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
 
     const declared = Number.parseInt(response.headers.get("content-length") || "", 10);
     const raw = await readWithStallWatchdog(response, stallTimeoutMs, request.signal);
+    // The provider is done with this request; storing it needs no slot.
+    release();
 
     const buffer = decodeProviderAudio(call, raw, response.headers.get("content-type") || "");
 
@@ -501,5 +508,6 @@ export async function renderSegmentAudio(request: PinnedRenderRequest): Promise<
   } finally {
     clearTimeout(deadline);
     request.signal?.removeEventListener("abort", onAbort);
+    release();
   }
 }

@@ -28,6 +28,7 @@ import { availableProviders } from "./providerCredentials";
 import { hashSegmentText, segmentChapter, type SegmentUnit } from "./textSegmentation";
 import { attributeSpeakersHeuristically, type CastMember } from "./speakerAttribution";
 import { renderSegmentAudio } from "./ttsRender";
+import { providerConcurrency } from "./providerSlots";
 import { textLimitForModel } from "../shared/narration";
 import { applyPronunciationRules, pronunciationHash, type PronunciationRule } from "./pronunciation";
 import { chapterDirectionSpecs, directionFor, directionHashFor } from "./direction";
@@ -96,21 +97,48 @@ function appendCapped<T>(existing: T[] | undefined, entry: T): T[] {
   return next.length > MAX_DETAIL_ENTRIES ? next.slice(next.length - MAX_DETAIL_ENTRIES) : next;
 }
 
+/**
+ * Lines one run renders at once. The account-wide cap in `providerSlots`
+ * still bounds the total across books. `NARRATION_RUN_CONCURRENCY=1` restores
+ * strictly one line at a time.
+ */
+function runConcurrency(): number {
+  const configured = Number(process.env.NARRATION_RUN_CONCURRENCY);
+  return Number.isInteger(configured) && configured >= 1 ? Math.min(8, configured) : 3;
+}
+
+/** Pending read-modify-write of each job's `detail`, so parallel lanes cannot drop each other's entries. */
+const detailWrites = new Map<string, Promise<void>>();
+
+async function withDetailLock(jobId: string, work: () => Promise<void>): Promise<void> {
+  const previous = detailWrites.get(jobId) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(work);
+  const settled = current.catch(() => undefined);
+  detailWrites.set(jobId, settled);
+  try {
+    await current;
+  } finally {
+    if (detailWrites.get(jobId) === settled) detailWrites.delete(jobId);
+  }
+}
+
 /** Adds an entry to a job's event log, keeping the log bounded. */
 async function appendEvent(db: Db, jobId: string, kind: string, message: string): Promise<void> {
-  const [row] = await db
-    .select({ detail: bookxGenerationJobs.detail })
-    .from(bookxGenerationJobs)
-    .where(eq(bookxGenerationJobs.id, jobId))
-    .limit(1);
-  const detail = (row?.detail ?? {}) as GenerationJobDetail;
-  await db
-    .update(bookxGenerationJobs)
-    .set({
-      detail: { ...detail, events: appendCapped(detail.events, { at: new Date().toISOString(), kind, message }) },
-      updatedAt: new Date(),
-    })
-    .where(eq(bookxGenerationJobs.id, jobId));
+  await withDetailLock(jobId, async () => {
+    const [row] = await db
+      .select({ detail: bookxGenerationJobs.detail })
+      .from(bookxGenerationJobs)
+      .where(eq(bookxGenerationJobs.id, jobId))
+      .limit(1);
+    const detail = (row?.detail ?? {}) as GenerationJobDetail;
+    await db
+      .update(bookxGenerationJobs)
+      .set({
+        detail: { ...detail, events: appendCapped(detail.events, { at: new Date().toISOString(), kind, message }) },
+        updatedAt: new Date(),
+      })
+      .where(eq(bookxGenerationJobs.id, jobId));
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -973,10 +1001,21 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
 
     let completed = plan.reusable.length;
     let failed = 0;
-    let renderedBytes = 0;
-    let renderedDurationMs = 0;
-    let currentChapter: string | null = null;
     const orderedPosition = new Map(plan.ordered.map((candidate, index) => [candidate.id, index]));
+
+    // Lines still to render per chapter, so a chapter's counts are rolled up as
+    // soon as its last line lands, not only when the whole run ends.
+    const remainingInChapter = new Map<string, number>();
+    for (const segment of plan.pending) remainingInChapter.set(segment.chapterId, (remainingInChapter.get(segment.chapterId) ?? 0) + 1);
+
+    // Positions (in book order) of the lines being rendered right now. The
+    // cursor is the earliest of them, so a resume rewinds to before anything
+    // that was in flight and keeps every later line that finished.
+    const inFlight = new Set<number>();
+    // Why the lanes stopped taking lines. Held in an object so the checks after
+    // the lanes finish see what the lanes wrote.
+    const run: { halt: { kind: "stop"; stop: Exclude<StopReason, null> } | { kind: "fatal"; message: string } | null } = { halt: null };
+    let nextPending = 0;
 
     const stopRun = async (stop: Exclude<StopReason, null>) => {
       // Someone else's job now: leave its status and flags for its new owner.
@@ -996,23 +1035,23 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         : `Cancelled after ${completed} of ${plan.totalSegments} segments.`);
     };
 
-    for (const [position, segment] of plan.pending.entries()) {
-      const stop = await readStopRequest(db, jobId);
-      if (stop) {
-        await stopRun(stop);
-        return;
-      }
+    /** The earliest line in flight, as the job's cursor. */
+    const cursorFields = (fallback: { id: string; index: number }) => {
+      const earliest = inFlight.size ? Math.min(...inFlight) : fallback.index;
+      return { cursorSegmentId: plan.ordered[earliest]?.id ?? fallback.id, cursorIndex: earliest };
+    };
 
-      if (currentChapter && currentChapter !== segment.chapterId) {
-        await rollUpChapter(db, currentChapter);
-      }
-      currentChapter = segment.chapterId;
+    /**
+     * Renders one pending line and checkpoints it. Several run at once (see
+     * `lanes` below); everything they share is updated between awaits, so the
+     * counts stay exact.
+     */
+    const renderOne = async (segment: PlannableSegment, position: number): Promise<void> => {
       touchedChapters.add(segment.chapterId);
 
-      // Record the cursor *before* rendering. If the process dies during this
-      // segment, the resume knows exactly which one was in flight and rewinds
-      // from there rather than guessing.
       const orderedIndex = orderedPosition.get(segment.id) ?? -1;
+      const bookIndex = orderedIndex >= 0 ? orderedIndex : position;
+      inFlight.add(bookIndex);
       // Neighbouring text in the same chapter lets the provider match intonation
       // across the join, which matters once dialogue and its tag are separate units.
       const previousUnit = orderedIndex > 0 ? plan.ordered[orderedIndex - 1] : undefined;
@@ -1021,20 +1060,22 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         previousText: previousUnit?.chapterId === segment.chapterId ? previousUnit.text : undefined,
         nextText: nextUnit?.chapterId === segment.chapterId ? nextUnit.text : undefined,
       };
+      // Record the cursor *before* rendering. If the process dies during this
+      // line, the resume knows which lines were in flight and rewinds from the
+      // earliest of them rather than guessing.
       await db
         .update(bookxGenerationJobs)
         .set({
           // A Resume or Start while this loop was running re-queued the row.
           status: "running",
-          cursorSegmentId: segment.id,
-          cursorIndex: orderedIndex >= 0 ? orderedIndex : position,
+          ...cursorFields({ id: segment.id, index: bookIndex }),
           leaseExpiresAt: nowPlus(LEASE_MS),
           heartbeatAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(bookxGenerationJobs.id, jobId));
 
-      const render = () => renderWithRetries({
+      const render = (used: AbortController) => renderWithRetries({
         db,
         jobId,
         projectId: job.projectId,
@@ -1049,67 +1090,76 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
         maxAttempts,
         requestTimeoutMs,
         stallTimeoutMs,
-        controller,
+        controller: used,
         onEvent: recordEvent,
         voiceSettings: project.voiceSettings,
       });
 
-      let result = await render();
-      // A pause or cancel aborts the request in flight. If it still stands, stop
+      let used = controller;
+      let result = await render(used);
+      // A pause or cancel aborts the requests in flight. If it still stands, stop
       // here. If it was withdrawn first (a quick Resume clears it), carry on with
-      // a fresh controller and voice this segment again. Skipping it instead used
+      // a fresh controller and voice this line again. Skipping it instead used
       // to let the rest of the book "finish" without a single line rendered.
-      while (!result.ok && controller.signal.aborted) {
-        const stopNow = await readStopRequest(db, jobId);
-        if (stopNow) {
-          await stopRun(stopNow);
+      // `used` is the controller this line rendered with: another lane may
+      // already have replaced the shared one, and only one replacement is needed.
+      while (!result.ok && used.signal.aborted) {
+        if (run.halt) {
+          // Another lane stopped the run; this line stays pending for the resume.
+          inFlight.delete(bookIndex);
           return;
         }
-        controller = new AbortController();
-        activeRuns.set(jobId, controller);
-        result = await render();
+        const stopNow = await readStopRequest(db, jobId);
+        if (stopNow) {
+          run.halt ??= { kind: "stop", stop: stopNow };
+          inFlight.delete(bookIndex);
+          return;
+        }
+        if (controller === used) {
+          controller = new AbortController();
+          activeRuns.set(jobId, controller);
+        }
+        used = controller;
+        result = await render(used);
       }
+      inFlight.delete(bookIndex);
 
       if (result.ok) {
         completed++;
-        renderedBytes += result.bytes;
-        renderedDurationMs += result.durationMs;
       } else {
         failed++;
-        const [row] = await db
-          .select({ detail: bookxGenerationJobs.detail })
-          .from(bookxGenerationJobs)
-          .where(eq(bookxGenerationJobs.id, jobId))
-          .limit(1);
-        const detail = (row?.detail ?? {}) as GenerationJobDetail;
-        await db
-          .update(bookxGenerationJobs)
-          .set({
-            detail: {
-              ...detail,
-              failures: appendCapped(detail.failures, {
-                segmentId: segment.id,
-                chapterId: segment.chapterId,
-                message: result.classification.message.slice(0, 300),
-                at: new Date().toISOString(),
-              }),
-            },
-            updatedAt: new Date(),
-          })
-          .where(eq(bookxGenerationJobs.id, jobId));
-
-        if (result.fatal) {
+        const classification = result.classification;
+        await withDetailLock(jobId, async () => {
+          const [row] = await db
+            .select({ detail: bookxGenerationJobs.detail })
+            .from(bookxGenerationJobs)
+            .where(eq(bookxGenerationJobs.id, jobId))
+            .limit(1);
+          const detail = (row?.detail ?? {}) as GenerationJobDetail;
           await db
             .update(bookxGenerationJobs)
             .set({
-              status: "failed",
-              completedSegments: completed,
-              failedSegments: failed,
-              finishedAt: new Date(),
+              detail: {
+                ...detail,
+                failures: appendCapped(detail.failures, {
+                  segmentId: segment.id,
+                  chapterId: segment.chapterId,
+                  message: classification.message.slice(0, 300),
+                  at: new Date().toISOString(),
+                }),
+              },
               updatedAt: new Date(),
             })
             .where(eq(bookxGenerationJobs.id, jobId));
-          await recordEvent("fatal", `Stopped: ${result.classification.message}`);
+        });
+
+        if (result.fatal) {
+          // Every other line would fail the same way: stop the lanes and the
+          // requests they have in flight.
+          if (!run.halt) {
+            run.halt = { kind: "fatal", message: classification.message };
+            controller.abort();
+          }
           return;
         }
       }
@@ -1122,13 +1172,73 @@ async function driveJob(jobId: string, options: StartRunInput): Promise<void> {
           failedSegments: failed,
           renderedBytes: sql`${bookxGenerationJobs.renderedBytes} + ${result.ok ? result.bytes : 0}`,
           renderedDurationMs: sql`${bookxGenerationJobs.renderedDurationMs} + ${result.ok ? result.durationMs : 0}`,
+          ...(inFlight.size ? cursorFields({ id: segment.id, index: bookIndex }) : {}),
           leaseExpiresAt: nowPlus(LEASE_MS),
           heartbeatAt: new Date(),
           updatedAt: new Date(),
         })
         .where(eq(bookxGenerationJobs.id, jobId));
 
-      if (SEGMENT_GAP_MS > 0) await new Promise(resolve => setTimeout(resolve, SEGMENT_GAP_MS));
+      const left = (remainingInChapter.get(segment.chapterId) ?? 1) - 1;
+      remainingInChapter.set(segment.chapterId, left);
+      if (left <= 0) await rollUpChapter(db, segment.chapterId);
+    };
+
+    /** One lane: takes the next pending line until there are none or the run stops. */
+    const lane = async (): Promise<void> => {
+      while (!run.halt && nextPending < plan.pending.length) {
+        const stop = await readStopRequest(db, jobId);
+        if (stop) {
+          if (!run.halt) {
+            run.halt = { kind: "stop", stop };
+            // Stop the other lanes' requests too, so a pause is immediate.
+            controller.abort();
+          }
+          return;
+        }
+        // Another lane may have taken the last line, or stopped, during the read.
+        if (run.halt || nextPending >= plan.pending.length) return;
+        const position = nextPending++;
+        await renderOne(plan.pending[position]!, position);
+        if (SEGMENT_GAP_MS > 0 && !run.halt) await new Promise(resolve => setTimeout(resolve, SEGMENT_GAP_MS));
+      }
+    };
+
+    // Lines render a few at a time. The provider's account-wide cap
+    // (providerSlots) still applies across every book, so more lanes than the
+    // account allows would only queue.
+    const laneCount = Math.max(1, Math.min(runConcurrency(), providerConcurrency(provider), plan.pending.length));
+    if (laneCount > 1) await recordEvent("lanes", `Rendering ${laneCount} lines at a time`);
+    // A lane that throws (a database error) stops the others before the run is
+    // failed, so no lane keeps rendering after the lease is released.
+    const laneErrors: unknown[] = [];
+    await Promise.all(Array.from({ length: laneCount }, () => lane().catch(error => {
+      laneErrors.push(error);
+      if (!run.halt) {
+        run.halt = { kind: "fatal", message: error instanceof Error ? error.message : "Narration run failed" };
+        controller.abort();
+      }
+    })));
+    if (laneErrors.length) throw laneErrors[0];
+
+    const halt = run.halt;
+    if (halt?.kind === "stop") {
+      await stopRun(halt.stop);
+      return;
+    }
+    if (halt?.kind === "fatal") {
+      await db
+        .update(bookxGenerationJobs)
+        .set({
+          status: "failed",
+          completedSegments: completed,
+          failedSegments: failed,
+          finishedAt: new Date(),
+          updatedAt: new Date(),
+        })
+        .where(eq(bookxGenerationJobs.id, jobId));
+      await recordEvent("fatal", `Stopped: ${halt.message}`);
+      return;
     }
 
     for (const chapterId of touchedChapters) await rollUpChapter(db, chapterId);

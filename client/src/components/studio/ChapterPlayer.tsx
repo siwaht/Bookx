@@ -54,7 +54,15 @@ export function ChapterPlayer({
     onError: error => toast.error(error.message || "Prosecast could not re-take that line."),
   });
 
-  const audio = useRef<HTMLAudioElement | null>(null);
+  // Two players: one plays the current line while the other has already loaded
+  // the next. With a single element, every line boundary waited for a fresh
+  // request and decode on top of the pause, which is what made the chapter
+  // stop and start, worst on a slow connection.
+  const players = useRef<Array<HTMLAudioElement | null>>([null, null]);
+  const activeSlot = useRef(0);
+  const setPlayer = useMemo(() => [0, 1].map(slot => (element: HTMLAudioElement | null) => { players.current[slot] = element; }), []);
+  const activePlayer = () => players.current[activeSlot.current] ?? null;
+  const standbyPlayer = () => players.current[1 - activeSlot.current] ?? null;
   const gapTimer = useRef<number | undefined>(undefined);
   const listRef = useRef<HTMLOListElement | null>(null);
   const [index, setIndex] = useState(0);
@@ -87,6 +95,7 @@ export function ChapterPlayer({
   // Reset when another chapter is opened.
   useEffect(() => {
     clearGap();
+    for (const element of players.current) element?.pause();
     setIndex(0);
     setPosition(0);
     setPlaying(false);
@@ -95,7 +104,7 @@ export function ChapterPlayer({
 
   useEffect(() => () => {
     clearGap();
-    audio.current?.pause();
+    for (const element of players.current) element?.pause();
   }, []);
 
   /** The next line with audio at or after `from`, or -1. */
@@ -104,30 +113,63 @@ export function ChapterPlayer({
     return -1;
   }, [lines]);
 
+  /** Loads the line after `target` into the standby player, so it can start without a wait. */
+  const preloadAfter = useCallback((target: number) => {
+    const standby = standbyPlayer();
+    const next = nextPlayable(target + 1);
+    const url = next >= 0 ? lines[next]?.audioUrl : null;
+    if (!standby || !url || standby.src.endsWith(url)) return;
+    standby.preload = "auto";
+    standby.src = url;
+  }, [lines, nextPlayable]);
+
   const startLine = useCallback((target: number, offsetMs = 0) => {
-    const element = audio.current;
     const line = lines[target];
     clearGap();
+    let element = activePlayer();
     if (!element || !line?.audioUrl) return;
+    const standby = standbyPlayer();
+    // The standby player already holds this line: switch to it.
+    if (standby && standby.src.endsWith(line.audioUrl) && !element.src.endsWith(line.audioUrl)) {
+      element.pause();
+      activeSlot.current = 1 - activeSlot.current;
+      element = standby;
+      if (element.error) element.load(); // A failed preload gets one fresh try.
+    }
     setIndex(target);
     setWaiting(false);
     if (!element.src.endsWith(line.audioUrl)) element.src = line.audioUrl;
     element.currentTime = offsetMs / 1000;
     void element.play().then(() => setPlaying(true)).catch(() => setPlaying(false));
-  }, [lines]);
+    preloadAfter(target);
+  }, [lines, preloadAfter]);
+
+  // A later line can arrive while this one plays (the run is still going):
+  // load it as soon as it exists.
+  useEffect(() => {
+    if (playing) preloadAfter(index);
+  }, [playing, index, preloadAfter]);
 
   const advance = useCallback(() => {
     const line = lines[index];
     const next = nextPlayable(index + 1);
-    if (next >= 0 && (next === index + 1 || !live)) {
+    // While the run goes on, a line still to be narrated is waited for. A line
+    // that failed will not arrive, so it is skipped instead of waited on forever.
+    let coming = -1;
+    if (live) {
+      const end = next < 0 ? lines.length : next;
+      for (let candidate = index + 1; candidate < end; candidate++) {
+        if (lines[candidate]!.status !== "failed") { coming = candidate; break; }
+      }
+    }
+    if (next >= 0 && coming < 0) {
       gapTimer.current = window.setTimeout(() => startLine(next), line?.gapAfterMs ?? 0);
       return;
     }
-    // The next line is not narrated yet: wait for it if the run is still going.
-    if (live && index + 1 < lines.length) {
+    if (coming >= 0) {
       setWaiting(true);
       setPlaying(false);
-      setIndex(index + 1);
+      setIndex(coming);
       setPosition(0);
       return;
     }
@@ -135,10 +177,13 @@ export function ChapterPlayer({
     setPosition(0);
   }, [index, lines, live, nextPlayable, startLine]);
 
-  // A line that was being waited for has arrived.
+  // A line that was being waited for has arrived, failed, or the run stopped.
   useEffect(() => {
-    if (waiting && lines[index]?.audioUrl) startLine(index);
-  }, [waiting, lines, index, startLine]);
+    if (!waiting) return;
+    const line = lines[index];
+    if (line?.audioUrl) startLine(index);
+    else if (line?.status === "failed" || !live) setWaiting(false);
+  }, [waiting, lines, index, live, startLine]);
 
   // Keep the current line in view.
   useEffect(() => {
@@ -147,7 +192,7 @@ export function ChapterPlayer({
   }, [index]);
 
   const toggle = () => {
-    const element = audio.current;
+    const element = activePlayer();
     if (!element) return;
     if (playing) {
       element.pause();
@@ -187,7 +232,7 @@ export function ChapterPlayer({
     else {
       setIndex(target);
       setPosition(offset);
-      const element = audio.current;
+      const element = activePlayer();
       if (element && lines[target]?.audioUrl) {
         if (!element.src.endsWith(lines[target]!.audioUrl!)) element.src = lines[target]!.audioUrl!;
         element.currentTime = offset / 1000;
@@ -228,19 +273,24 @@ export function ChapterPlayer({
 
   return (
     <section className={ui.cardRaised} aria-label={`Player for ${data.chapter.title}`}>
-      <audio
-        ref={audio}
-        preload="auto"
-        onTimeUpdate={event => setPosition(event.currentTarget.currentTime * 1000)}
-        onEnded={advance}
-        // The end of a line also fires "pause"; only a real pause stops the chapter.
-        onPause={event => { if (!event.currentTarget.ended && !gapTimer.current) setPlaying(false); }}
-        onError={() => {
-          setPlaying(false);
-          toast.error("That line's audio could not be played. Try again, or re-take the line.");
-        }}
-        className="hidden"
-      />
+      {/* Only the active player's events count; the standby one is just loading the next line. */}
+      {[0, 1].map(slot => (
+        <audio
+          key={slot}
+          ref={setPlayer[slot]}
+          preload="auto"
+          onTimeUpdate={event => { if (event.currentTarget === activePlayer()) setPosition(event.currentTarget.currentTime * 1000); }}
+          onEnded={event => { if (event.currentTarget === activePlayer()) advance(); }}
+          // The end of a line also fires "pause"; only a real pause stops the chapter.
+          onPause={event => { if (event.currentTarget === activePlayer() && !event.currentTarget.ended && !gapTimer.current) setPlaying(false); }}
+          onError={event => {
+            if (event.currentTarget !== activePlayer()) return;
+            setPlaying(false);
+            toast.error("That line's audio could not be played. Try again, or re-take the line.");
+          }}
+          className="hidden"
+        />
+      ))}
 
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
